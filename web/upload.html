@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Otoq Media Uploader</title>
+  <style>
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      line-height: 1.6;
+      color: #333;
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 20px;
+      background-color: #f5f5f5;
+    }
+    h1, h2 {
+      color: #2c3e50;
+    }
+    .container {
+      background-color: white;
+      border-radius: 5px;
+      padding: 20px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    .form-group {
+      margin-bottom: 15px;
+    }
+    label {
+      display: block;
+      margin-bottom: 5px;
+      font-weight: bold;
+    }
+    input[type="file"], textarea {
+      width: 100%;
+      padding: 8px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      box-sizing: border-box;
+    }
+    textarea {
+      height: 100px;
+      resize: vertical;
+    }
+    button {
+      background-color: #3498db;
+      color: white;
+      border: none;
+      padding: 10px 15px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 16px;
+    }
+    button:hover {
+      background-color: #2980b9;
+    }
+    .progress-container {
+      margin-top: 20px;
+      display: none;
+    }
+    .progress-bar {
+      height: 20px;
+      background-color: #e0e0e0;
+      border-radius: 10px;
+      margin-bottom: 10px;
+      overflow: hidden;
+    }
+    .progress {
+      height: 100%;
+      background-color: #2ecc71;
+      width: 0%;
+      transition: width 0.3s;
+    }
+    .results {
+      margin-top: 20px;
+      display: none;
+    }
+    .result-item {
+      padding: 10px;
+      border-bottom: 1px solid #eee;
+    }
+    .result-item.success {
+      border-left: 4px solid #2ecc71;
+    }
+    .result-item.error {
+      border-left: 4px solid #e74c3c;
+    }
+    .instructions {
+      background-color: #f8f9fa;
+      padding: 15px;
+      border-radius: 5px;
+      margin-bottom: 20px;
+      border-left: 4px solid #3498db;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Otoq Media Uploader</h1>
+    
+    <div class="instructions">
+      <h2>Upload Instructions</h2>
+      <p>Upload audio or video files to add to the bot's media library. Files will be automatically processed for Discord compatibility.</p>
+      <ul>
+        <li>You can select multiple files at once</li>
+        <li>Enter one title per line in the titles field, matching the order of your files</li>
+        <li>Max file size after processing: 9MB</li>
+        <li>Files that exceed the size limit will be automatically compressed or trimmed</li>
+      </ul>
+    </div>
+    
+    <form id="uploadForm">
+      <div class="form-group">
+        <label for="files">Select Files:</label>
+        <input type="file" id="files" name="files" multiple accept="audio/*,video/*" required>
+      </div>
+      
+      <div class="form-group">
+        <label for="titles">Titles (one per line, matching file order):</label>
+        <textarea id="titles" name="titles" placeholder="Enter titles here, one per line..."></textarea>
+      </div>
+      
+      <button type="submit" id="uploadButton">Upload Files</button>
+    </form>
+    
+    <div class="progress-container" id="progressContainer">
+      <h3>Upload Progress</h3>
+      <div class="progress-bar">
+        <div class="progress" id="progressBar"></div>
+      </div>
+      <p id="progressText">0%</p>
+    </div>
+    
+    <div class="results" id="results">
+      <h3>Upload Results</h3>
+      <div id="resultsList"></div>
+    </div>
+  </div>
+
+  <script>
+    document.getElementById('uploadForm').addEventListener('submit', function(e) {
+      e.preventDefault();
+      
+      const fileInput = document.getElementById('files');
+      const titlesInput = document.getElementById('titles');
+      
+      if (!fileInput.files.length) {
+        alert('Please select at least one file.');
+        return;
+      }
+      
+      // Create form data
+      const formData = new FormData();
+      
+      // Add all files
+      for (let i = 0; i < fileInput.files.length; i++) {
+        formData.append('files', fileInput.files[i]);
+      }
+      
+      // Parse titles
+      const titles = titlesInput.value.trim().split('\n').filter(title => title.trim());
+      
+      // Add titles as JSON if there are any
+      if (titles.length > 0) {
+        formData.append('titles', JSON.stringify(titles));
+      }
+      
+      // Show progress container
+      document.getElementById('progressContainer').style.display = 'block';
+      document.getElementById('results').style.display = 'none';
+      document.getElementById('uploadButton').disabled = true;
+      
+      // Create and send request
+      const xhr = new XMLHttpRequest();
+      
+      xhr.upload.addEventListener('progress', function(e) {
+        if (e.lengthComputable) {
+          const percent = Math.round((e.loaded / e.total) * 100);
+          document.getElementById('progressBar').style.width = percent + '%';
+          document.getElementById('progressText').textContent = percent + '%';
+        }
+      });
+      
+      xhr.addEventListener('load', function() {
+        document.getElementById('uploadButton').disabled = false;
+        
+        // Show results
+        document.getElementById('results').style.display = 'block';
+        const resultsList = document.getElementById('resultsList');
+        resultsList.innerHTML = '';
+        
+        if (xhr.status === 200) {
+          try {
+            const response = JSON.parse(xhr.responseText);
+            
+            if (response.results && response.results.length > 0) {
+              response.results.forEach(result => {
+                const resultItem = document.createElement('div');
+                resultItem.className = `result-item ${result.success ? 'success' : 'error'}`;
+                
+                let content = `<strong>${result.title || 'File'}</strong>: `;
+                content += result.success ? 
+                  `Successfully uploaded (ID: ${result.id})` : 
+                  `Failed - ${result.message || 'Unknown error'}`;
+                
+                resultItem.innerHTML = content;
+                resultsList.appendChild(resultItem);
+              });
+            } else {
+              resultsList.innerHTML = '<div class="result-item error">No results returned from server.</div>';
+            }
+          } catch (e) {
+            resultsList.innerHTML = '<div class="result-item error">Error parsing server response.</div>';
+          }
+        } else {
+          resultsList.innerHTML = `<div class="result-item error">Upload failed with status: ${xhr.status}</div>`;
+        }
+      });
+      
+      xhr.addEventListener('error', function() {
+        document.getElementById('uploadButton').disabled = false;
+        document.getElementById('results').style.display = 'block';
+        document.getElementById('resultsList').innerHTML = 
+          '<div class="result-item error">Upload failed. Network error.</div>';
+      });
+      
+      xhr.open('POST', '/api/upload', true);
+      xhr.send(formData);
+    });
+  </script>
+</body>
+</html>

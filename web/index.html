@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Otoq Discord Bot</title>
+  <style>
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      line-height: 1.6;
+      color: #333;
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 20px;
+      background-color: #f5f5f5;
+    }
+    h1, h2 {
+      color: #2c3e50;
+    }
+    .container {
+      background-color: white;
+      border-radius: 5px;
+      padding: 20px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    .card {
+      margin-bottom: 20px;
+      padding: 15px;
+      border-radius: 5px;
+      background-color: #f8f9fa;
+      border-left: 4px solid #3498db;
+    }
+    a.button {
+      display: inline-block;
+      background-color: #3498db;
+      color: white;
+      text-decoration: none;
+      padding: 10px 15px;
+      border-radius: 4px;
+      margin-top: 10px;
+    }
+    a.button:hover {
+      background-color: #2980b9;
+    }
+    .command {
+      background-color: #f1f1f1;
+      padding: 5px 10px;
+      border-radius: 3px;
+      font-family: monospace;
+      margin: 2px 0;
+      display: inline-block;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Otoq Discord Bot</h1>
+    
+    <div class="card">
+      <h2>Media Management</h2>
+      <p>Upload and manage your media files for the Discord bot.</p>
+      <a href="/upload" class="button">Upload Media</a>
+    </div>
+    
+    <div class="card">
+      <h2>Bot Commands</h2>
+      <p>These commands can be used in Discord:</p>
+      <ul>
+        <li><span class="command">NOW play [search term]</span> - Play a media file</li>
+        <li><span class="command">NOW play [search term] {amplify=2,reverse=1}</span> - Apply effects</li>
+        <li><span class="command">NOW clip=4s [search term]</span> - Create a clip</li>
+        <li><span class="command">NOW quiz</span> - Start a music quiz</li>
+        <li><span class="command">NOW quiz {reverse=1}</span> - Quiz with effects</li>
+        <li><span class="command">NOW stop</span> - Stop a running quiz</li>
+      </ul>
+    </div>
+    
+    <div class="card">
+      <h2>Media Statistics</h2>
+      <div id="stats">
+        <p>Loading statistics...</p>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Fetch media statistics on page load
+    window.addEventListener('DOMContentLoaded', async () => {
+      try {
+        const response = await fetch('/api/media');
+        const data = await response.json();
+        
+        if (Array.isArray(data)) {
+          const statsDiv = document.getElementById('stats');
+          statsDiv.innerHTML = `
+            <p>Total media files: ${data.length}</p>
+            <p>Latest uploads:</p>
+            <ul>
+              ${data.slice(0, 5).map(item => `<li>${item.title}</li>`).join('')}
+            </ul>
+          `;
+        } else {
+          throw new Error('Invalid data format');
+        }
+      } catch (error) {
+        document.getElementById('stats').innerHTML = '<p>Error loading statistics</p>';
+      }
+    });
+  </script>
+</body>
+</html>
