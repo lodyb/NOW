@@ -1,7 +1,7 @@
-# Otoq - Discord Bot for Media Collection and Quiz Games
+# NOW - Discord Bot for Media Collection and Quiz Games
 
 ## Overview
-Otoq is a Discord bot designed for collecting media (video and audio), providing tools for playing and augmenting the media, and turning it into interactive quiz games for Discord servers.
+NOW is a Discord bot designed for collecting media (video and audio), providing tools for playing and augmenting the media, and turning it into interactive quiz games for Discord servers.
 
 ## Technical Architecture
 - **Framework**: discord.js with TypeScript

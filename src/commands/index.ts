@@ -79,7 +79,7 @@ function sendHelpMessage(message: Message<boolean>): void {
   const channel = message.channel as TextChannel | DMChannel | NewsChannel;
   channel.send({
     embeds: [{
-      title: '🎵 Otoq Bot Commands 🎵',
+      title: '🎵 NOW Bot Commands 🎵',
       description: 'All commands start with the prefix `NOW`',
       color: 0x3498db,
       fields: [

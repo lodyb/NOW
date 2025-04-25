@@ -38,7 +38,7 @@ log "${GREEN}Creating required directories...${NC}"
 mkdir -p uploads normalized
 
 # SQLite database will be created automatically by TypeORM if it doesn't exist
-log "${GREEN}Using SQLite database at: ${DB_PATH:-./otoq.sqlite}${NC}"
+log "${GREEN}Using SQLite database at: ${DB_PATH:-./now.sqlite}${NC}"
 
 # Check if ffmpeg is installed
 if ! command -v ffmpeg &> /dev/null; then
@@ -48,14 +48,14 @@ if ! command -v ffmpeg &> /dev/null; then
 fi
 
 # Start the bot
-log "${GREEN}Starting Otoq Discord Bot...${NC}"
+log "${GREEN}Starting NOW Discord Bot...${NC}"
 if [ "$1" == "--pm2" ]; then
   # Start with PM2
-  pm2 start dist/index.js --name otoq --time
+  pm2 start dist/index.js --name now --time
   log "${GREEN}Bot started with PM2!${NC}"
-  log "Use 'pm2 logs otoq' to view logs"
-  log "Use 'pm2 stop otoq' to stop the bot"
-  log "Use 'pm2 restart otoq' to restart the bot"
+  log "Use 'pm2 logs now' to view logs"
+  log "Use 'pm2 stop now' to stop the bot"
+  log "Use 'pm2 restart now' to restart the bot"
 else
   # Start normally
   node dist/index.js

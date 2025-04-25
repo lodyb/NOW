@@ -86,6 +86,22 @@ function applyFilters(command: ffmpeg.FfmpegCommand, options: Record<string, str
 }
 
 /**
+ * Helper function to resolve file path correctly
+ */
+function resolveMediaPath(filePath: string): string {
+  const normalizedDir = process.env.NORMALIZED_DIR || './normalized';
+  
+  // Check if the path already includes the normalized directory
+  if (filePath.startsWith('normalized/') || filePath.startsWith('./normalized/')) {
+    // Path already contains the normalized prefix, just resolve from project root
+    return path.resolve(process.cwd(), filePath);
+  } else {
+    // Path doesn't contain the prefix, join with normalized directory
+    return path.resolve(normalizedDir, filePath);
+  }
+}
+
+/**
  * Handles the play command
  * @param message The Discord message
  */
@@ -126,7 +142,9 @@ export async function playCommand(message: Message): Promise<void> {
     
     // Get the file path
     const filePath = media.normalizedPath || media.filePath;
-    const fullPath = path.resolve(process.env.NORMALIZED_DIR || './normalized', filePath);
+    const fullPath = resolveMediaPath(filePath);
+    
+    logger.info(`Trying to access file at: ${fullPath}`);
     
     if (!fs.existsSync(fullPath)) {
       message.reply(`Error: File for "${media.title}" not found on the server.`);
@@ -143,7 +161,7 @@ export async function playCommand(message: Message): Promise<void> {
     }
     
     // Process with ffmpeg for special options
-    const tempFile = path.join(os.tmpdir(), `otoq_${Date.now()}_${path.basename(fullPath)}`);
+    const tempFile = path.join(os.tmpdir(), `now_${Date.now()}_${path.basename(fullPath)}`);
     
     try {
       await new Promise<void>((resolve, reject) => {

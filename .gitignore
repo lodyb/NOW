@@ -38,3 +38,7 @@ public/build
 .env.test.local
 .env.production.local
 volume_cache.json
+
+# media
+normalized
+uploads

@@ -67,6 +67,22 @@ class QuizSession {
   }
 
   /**
+   * Helper function to resolve file path correctly
+   */
+  private resolveMediaPath(filePath: string): string {
+    const normalizedDir = process.env.NORMALIZED_DIR || './normalized';
+    
+    // Check if the path already includes the normalized directory
+    if (filePath.startsWith('normalized/') || filePath.startsWith('./normalized/')) {
+      // Path already contains the normalized prefix, just resolve from project root
+      return path.resolve(process.cwd(), filePath);
+    } else {
+      // Path doesn't contain the prefix, join with normalized directory
+      return path.resolve(normalizedDir, filePath);
+    }
+  }
+
+  /**
    * Starts the quiz
    */
   async start(message: Message<boolean>): Promise<void> {
@@ -266,7 +282,7 @@ class QuizSession {
       
       // Try to find the file
       const filePath = this.currentMedia.normalizedPath || this.currentMedia.filePath;
-      const fullPath = path.resolve(process.env.NORMALIZED_DIR || './normalized', filePath);
+      const fullPath = this.resolveMediaPath(filePath);
       
       if (!fs.existsSync(fullPath)) {
         logger.error(`File for media ID ${this.currentMedia.id} not found at ${fullPath}`);

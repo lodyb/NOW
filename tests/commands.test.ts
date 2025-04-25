@@ -103,7 +103,7 @@ const createMockMessage = () => ({
 
 const createMockClient = () => ({
   user: {
-    tag: 'Otoq#0000',
+    tag: 'NOW#0000',
   },
 });
 

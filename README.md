@@ -1,6 +1,6 @@
-# Otoq Discord Bot
+# NOW Discord Bot
 
-Otoq is a powerful Discord bot for collecting, playing, and managing media files (video and audio) with interactive quiz functionality.
+NOW is a powerful Discord bot for collecting, playing, and managing media files (video and audio) with interactive quiz functionality.
 
 ## Features
 
@@ -30,8 +30,8 @@ Otoq is a powerful Discord bot for collecting, playing, and managing media files
 
 1. Clone this repository:
    ```
-   git clone https://github.com/yourusername/otoq-discord-bot.git
-   cd otoq-discord-bot
+   git clone https://github.com/lodyb/now.git
+   cd now
    ```
 
 2. Install dependencies:
@@ -47,7 +47,7 @@ Otoq is a powerful Discord bot for collecting, playing, and managing media files
    # Database Configuration
    DB_HOST=localhost
    DB_PORT=5432
-   DB_NAME=otoq
+   DB_NAME=now
    DB_USER=postgres
    DB_PASSWORD=your_password
    
@@ -63,7 +63,7 @@ Otoq is a powerful Discord bot for collecting, playing, and managing media files
 
 4. Create the PostgreSQL database:
    ```
-   createdb otoq
+   createdb now
    ```
 
 5. Build the TypeScript project:
@@ -83,7 +83,7 @@ Otoq is a powerful Discord bot for collecting, playing, and managing media files
 
 ## Command Usage
 
-Otoq uses the prefix `NOW` for all commands.
+NOW uses the prefix `NOW` for all commands.
 
 ### Media Playback
 
@@ -138,7 +138,7 @@ Otoq uses the prefix `NOW` for all commands.
 
 ## Media Processing
 
-Otoq processes media files to ensure compatibility with Discord's limitations:
+NOW processes media files to ensure compatibility with Discord's limitations:
 
 - Files are normalized to consistent volume levels
 - Video files are re-encoded to H264 for compatibility
@@ -150,7 +150,7 @@ Otoq processes media files to ensure compatibility with Discord's limitations:
 ## Project Structure
 
 ```
-otoq-discord-bot/
+now/
 ├── src/                    # Source code
 │   ├── commands/           # Bot commands implementation
 │   │   ├── clip.ts         # Clip command handler

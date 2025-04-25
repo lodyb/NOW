@@ -62,6 +62,22 @@ function extractClipOptions(content: string): {
 }
 
 /**
+ * Helper function to resolve file path correctly
+ */
+function resolveMediaPath(filePath: string): string {
+  const normalizedDir = process.env.NORMALIZED_DIR || './normalized';
+  
+  // Check if the path already includes the normalized directory
+  if (filePath.startsWith('normalized/') || filePath.startsWith('./normalized/')) {
+    // Path already contains the normalized prefix, just resolve from project root
+    return path.resolve(process.cwd(), filePath);
+  } else {
+    // Path doesn't contain the prefix, join with normalized directory
+    return path.resolve(normalizedDir, filePath);
+  }
+}
+
+/**
  * Handles the clip command
  * @param message The Discord message
  */
@@ -99,7 +115,9 @@ export async function clipCommand(message: Message): Promise<void> {
     
     // Get the file path
     const filePath = media.normalizedPath || media.filePath;
-    const fullPath = path.resolve(process.env.NORMALIZED_DIR || './normalized', filePath);
+    const fullPath = resolveMediaPath(filePath);
+    
+    logger.info(`Trying to access file for clip at: ${fullPath}`);
     
     if (!fs.existsSync(fullPath)) {
       message.reply(`Error: File for "${media.title}" not found on the server.`);

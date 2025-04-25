@@ -1,12 +1,12 @@
 {
-  "name": "otoq-discord-bot",
+  "name": "now-discord-bot",
   "version": "1.0.0",
   "description": "Discord bot for media collection and quiz games",
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
-    "start:pm2": "pm2 start dist/index.js --name otoq",
+    "start:pm2": "pm2 start dist/index.js --name now",
     "dev": "ts-node-dev --respawn src/index.ts",
     "test": "jest",
     "test:watch": "jest --watch",

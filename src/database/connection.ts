@@ -13,7 +13,7 @@ import path from 'path';
 config();
 
 // Set up SQLite database path - store in project root by default
-const dbPath = process.env.DB_PATH || path.join(process.cwd(), 'otoq.sqlite');
+const dbPath = process.env.DB_PATH || path.join(process.cwd(), 'now.sqlite');
 
 export const AppDataSource = new DataSource({
   type: 'sqlite',
