@@ -42,3 +42,6 @@ volume_cache.json
 # media
 normalized
 uploads
+
+# database
+*.sqlite
