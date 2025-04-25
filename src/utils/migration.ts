@@ -210,12 +210,15 @@ async function migrate() {
         logger.info(`Copying file from ${sourceFilePath} to ${destFilePath}`);
         await copyFile(sourceFilePath, destFilePath);
 
-        // Process the file to create a normalized version
-        logger.info(`Normalizing file ${destFilePath}`);
-        const normalizedPath = await normalizeMedia(destFilePath, normalizedDir);
+        // Just copy the file to normalized dir instead of processing it
+        const normalizedFileName = path.basename(destFilePath);
+        const normalizedFilePath = path.join(normalizedDir, normalizedFileName);
+        
+        logger.info(`Copying to normalized directory: ${destFilePath} -> ${normalizedFilePath}`);
+        fs.copyFileSync(destFilePath, normalizedFilePath);
         
         // Relative path for storage in DB
-        const relativeNormalizedPath = path.relative(process.cwd(), normalizedPath);
+        const relativeNormalizedPath = path.relative(process.cwd(), normalizedFilePath);
 
         // Parse metadata if it exists and is a string
         let metadataObj = {

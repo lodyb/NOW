@@ -6,6 +6,7 @@ import { AppDataSource } from '../database/connection';
 import { Media } from '../database/entities/Media';
 import { logger } from '../utils/logger';
 import os from 'os';
+import { normalizeMediaIfNeeded } from '../services/media/normalizer';
 
 // Parse ffmpeg options from string
 function parseOptions(optionsStr: string): Record<string, string | number | boolean> {
@@ -151,7 +152,32 @@ export async function playCommand(message: Message): Promise<void> {
       return;
     }
     
-    // If no special options, just send the file directly
+    // Check file size for Discord compatibility (Discord limit is ~8MB)
+    const stats = fs.statSync(fullPath);
+    const discordSizeLimit = (parseInt(process.env.MAX_FILE_SIZE || '8') * 1024 * 1024);
+    
+    // If no special options and file size is over limit, normalize on demand
+    if (Object.keys(options).length === 0 && stats.size > discordSizeLimit) {
+      try {
+        channel.send(`File is too large for Discord (${(stats.size / (1024 * 1024)).toFixed(2)}MB), processing for compatibility...`);
+        
+        // Normalize the file on demand
+        const normalizedDir = process.env.NORMALIZED_DIR || './normalized';
+        const normalizedPath = await normalizeMediaIfNeeded(fullPath, normalizedDir);
+        
+        await channel.send({
+          content: `Now playing: "${media.title}" (processed for Discord compatibility)`,
+          files: [normalizedPath]
+        });
+        return;
+      } catch (error) {
+        logger.error(`Error normalizing oversized file: ${error instanceof Error ? error.message : String(error)}`);
+        channel.send('The file is too large for Discord and could not be processed. You can still use it in quiz mode.');
+        return;
+      }
+    }
+    
+    // If no special options and file is under limit, just send the file directly
     if (Object.keys(options).length === 0) {
       await channel.send({
         content: `Now playing: "${media.title}"`,
@@ -161,7 +187,7 @@ export async function playCommand(message: Message): Promise<void> {
     }
     
     // Process with ffmpeg for special options
-    const tempFile = path.join(os.tmpdir(), `now_${Date.now()}_${path.basename(fullPath)}`);
+    const tempFile = path.join(os.tmpdir(), `otoq_${Date.now()}_${path.basename(fullPath)}`);
     
     try {
       await new Promise<void>((resolve, reject) => {
@@ -177,20 +203,48 @@ export async function playCommand(message: Message): Promise<void> {
           .run();
       });
       
-      // Send the processed file
-      await channel.send({
-        content: `Now playing: "${media.title}" with custom filters`,
-        files: [tempFile]
-      });
-      
-      // Clean up the temp file after a delay
-      setTimeout(() => {
-        try {
-          fs.unlinkSync(tempFile);
-        } catch (error) {
-          logger.error(`Error deleting temp file: ${error instanceof Error ? error.message : String(error)}`);
-        }
-      }, 10000);
+      // Check if processed file is within Discord's limit
+      const processedStats = fs.statSync(tempFile);
+      if (processedStats.size > discordSizeLimit) {
+        // File is still too large, try to normalize it
+        channel.send(`Processed file is still too large (${(processedStats.size / (1024 * 1024)).toFixed(2)}MB), applying additional compression...`);
+        
+        const normalizedDir = path.dirname(tempFile);
+        const compressedPath = await normalizeMediaIfNeeded(tempFile, normalizedDir);
+        
+        // Send the compressed file
+        await channel.send({
+          content: `Now playing: "${media.title}" with custom filters (compressed for Discord)`,
+          files: [compressedPath]
+        });
+        
+        // Clean up the temp files after a delay
+        setTimeout(() => {
+          try {
+            fs.unlinkSync(tempFile);
+            if (compressedPath !== tempFile) {
+              fs.unlinkSync(compressedPath);
+            }
+          } catch (error) {
+            logger.error(`Error deleting temp files: ${error instanceof Error ? error.message : String(error)}`);
+          }
+        }, 10000);
+      } else {
+        // Send the processed file
+        await channel.send({
+          content: `Now playing: "${media.title}" with custom filters`,
+          files: [tempFile]
+        });
+        
+        // Clean up the temp file after a delay
+        setTimeout(() => {
+          try {
+            fs.unlinkSync(tempFile);
+          } catch (error) {
+            logger.error(`Error deleting temp file: ${error instanceof Error ? error.message : String(error)}`);
+          }
+        }, 10000);
+      }
       
     } catch (error) {
       logger.error(`Error processing media: ${error instanceof Error ? error.message : String(error)}`);
