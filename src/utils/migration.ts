@@ -25,7 +25,7 @@ args.forEach(arg => {
 
 // Check required arguments
 if (!sourceDbPath || !sourceFilesDir) {
-  console.error('Usage: ts-node src/utils/migration.js --source-db=path/to/old.sqlite --source-files=path/to/media/dir');
+  console.error('Usage: node dist/utils/migration.js --source-db=path/to/old.sqlite --source-files=path/to/media/dir');
   process.exit(1);
 }
 
@@ -103,6 +103,53 @@ async function copyFile(source: string, dest: string): Promise<void> {
     // Start the copy
     rd.pipe(wr);
   });
+}
+
+/**
+ * Insert a media record and return the inserted ID
+ * This handles differences in SQLite versions and the RETURNING clause
+ */
+async function insertMediaAndGetId(
+  title: string,
+  filePath: string,
+  normalizedPath: string,
+  year: number | null,
+  metadata: string
+): Promise<number> {
+  try {
+    // First try with RETURNING clause (works in newer SQLite)
+    try {
+      const result = await AppDataSource.manager.query(
+        `INSERT INTO media(title, filePath, normalizedPath, year, metadata, createdAt) 
+         VALUES (?, ?, ?, ?, ?, datetime('now')) RETURNING id`,
+        [title, filePath, normalizedPath, year, metadata]
+      );
+      
+      if (result && result[0] && typeof result[0].id === 'number') {
+        return result[0].id;
+      }
+    } catch (e) {
+      logger.warn(`RETURNING clause not supported, falling back to last_insert_rowid(): ${e}`);
+    }
+    
+    // Fallback: Use insert and then query last insert ID (works in all SQLite versions)
+    await AppDataSource.manager.query(
+      `INSERT INTO media(title, filePath, normalizedPath, year, metadata, createdAt) 
+       VALUES (?, ?, ?, ?, ?, datetime('now'))`,
+      [title, filePath, normalizedPath, year, metadata]
+    );
+    
+    // Get the last inserted ID
+    const lastIdResult = await AppDataSource.manager.query('SELECT last_insert_rowid() as id');
+    if (lastIdResult && lastIdResult[0] && typeof lastIdResult[0].id === 'number') {
+      return lastIdResult[0].id;
+    }
+    
+    throw new Error('Could not determine inserted ID');
+  } catch (error) {
+    logger.error(`Error inserting media: ${error instanceof Error ? error.message : String(error)}`);
+    throw error;
+  }
 }
 
 /**
@@ -187,24 +234,14 @@ async function migrate() {
           logger.warn(`Could not parse metadata for ${sourceMedia.title}: ${e}`);
         }
         
-        // Insert new media using raw SQL (avoid entity relationship issues)
-        const result = await AppDataSource.manager.query(
-          `INSERT INTO media(title, filePath, normalizedPath, year, metadata, createdAt) 
-           VALUES (?, ?, ?, ?, ?, datetime('now')) RETURNING id`,
-          [
-            sourceMedia.title,
-            destFilePath,
-            relativeNormalizedPath,
-            sourceMedia.year || null,
-            JSON.stringify(metadataObj)
-          ]
+        // Insert new media and get the ID using our robust function
+        const newMediaId = await insertMediaAndGetId(
+          sourceMedia.title,
+          destFilePath,
+          relativeNormalizedPath,
+          sourceMedia.year || null,
+          JSON.stringify(metadataObj)
         );
-        
-        const newMediaId = result[0]?.id;
-        
-        if (!newMediaId) {
-          throw new Error('Failed to get ID of inserted media');
-        }
         
         logger.info(`Saved media entry with ID ${newMediaId}`);
 
