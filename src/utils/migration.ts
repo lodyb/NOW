@@ -1,6 +1,4 @@
 import { DataSource } from 'typeorm';
-import { Media } from '../database/entities/Media';
-import { MediaAnswer } from '../database/entities/MediaAnswer';
 import { normalizeMedia } from '../services/media/normalizer';
 import { logger } from './logger';
 import { AppDataSource } from '../database/connection';
@@ -27,7 +25,7 @@ args.forEach(arg => {
 
 // Check required arguments
 if (!sourceDbPath || !sourceFilesDir) {
-  console.error('Usage: ts-node src/utils/migration.ts --source-db=path/to/old.sqlite --source-files=path/to/media/dir');
+  console.error('Usage: ts-node src/utils/migration.js --source-db=path/to/old.sqlite --source-files=path/to/media/dir');
   process.exit(1);
 }
 
@@ -43,9 +41,6 @@ if (!fs.existsSync(sourceDbPath)) {
   process.exit(1);
 }
 
-// Define the normalized directory in source files (to avoid processing these files)
-const sourceNormalizedDir = path.join(sourceFilesDir, 'normalized');
-
 // Define the upload directory from env or default
 const uploadDir = process.env.UPLOAD_DIR || './uploads';
 const normalizedDir = process.env.NORMALIZED_DIR || './normalized';
@@ -59,32 +54,30 @@ if (!fs.existsSync(normalizedDir)) {
   fs.mkdirSync(normalizedDir, { recursive: true });
 }
 
-// Create a source database connection
+// Create a source database connection (without entities)
 const SourceDataSource = new DataSource({
   type: 'sqlite',
   database: sourceDbPath,
-  entities: [Media, MediaAnswer],
   synchronize: false,
-  logging: false,
+  logging: false
 });
 
-// Define source DB table schemas - needed for SQLite with different column names
-// This helps map old database columns to our TypeORM entities
-class OldMedia {
-  id!: number;
-  title!: string;
-  file_path!: string;
+// Define source DB data types
+interface OldMedia {
+  id: number;
+  title: string;
+  file_path: string;
   normalized_path?: string;
   year?: number;
   metadata?: string;
-  created_at!: string;
+  created_at: string;
 }
 
-class OldMediaAnswer {
-  id!: number;
-  media_id!: number;
-  answer!: string;
-  is_primary!: number | boolean; // SQLite might represent boolean as 0/1
+interface OldMediaAnswer {
+  id: number;
+  media_id: number;
+  answer: string;
+  is_primary: number | boolean; // SQLite might represent boolean as 0/1
 }
 
 /**
@@ -131,7 +124,7 @@ async function migrate() {
     }
     logger.info(`Connected to destination database`);
 
-    // Get all media entries from source using raw SQL query to handle column name differences
+    // Get all media entries from source using raw SQL query
     const oldMediaEntries: OldMedia[] = await SourceDataSource.manager.query(
       `SELECT id, title, file_path, normalized_path, year, metadata, created_at FROM media`
     );
@@ -153,7 +146,7 @@ async function migrate() {
           continue;
         }
         
-        // Construct the full source file path - sourceDir is now asserted as a string
+        // Construct the full source file path
         const sourceFilePath = path.join(sourceDir, sourceFileName);
         
         if (!fs.existsSync(sourceFilePath)) {
@@ -177,37 +170,43 @@ async function migrate() {
         // Relative path for storage in DB
         const relativeNormalizedPath = path.relative(process.cwd(), normalizedPath);
 
-        // Create a new media entry in the destination database
-        const newMedia = new Media();
-        newMedia.title = sourceMedia.title;
-        newMedia.filePath = destFilePath;
-        newMedia.normalizedPath = relativeNormalizedPath;
-        
-        // Copy over other metadata if available
-        if (sourceMedia.year) newMedia.year = sourceMedia.year;
-        
         // Parse metadata if it exists and is a string
-        let metadataObj = {};
+        let metadataObj = {
+          originalName: sourceFileName,
+          size: fs.statSync(destFilePath).size,
+          uploadedBy: 'migration',
+          uploadDate: new Date().toISOString()
+        };
+        
         try {
           if (sourceMedia.metadata && typeof sourceMedia.metadata === 'string') {
-            metadataObj = JSON.parse(sourceMedia.metadata);
+            const parsedMetadata = JSON.parse(sourceMedia.metadata);
+            metadataObj = { ...metadataObj, ...parsedMetadata };
           }
         } catch (e) {
           logger.warn(`Could not parse metadata for ${sourceMedia.title}: ${e}`);
         }
         
-        // Create metadata object
-        newMedia.metadata = {
-          originalName: sourceFileName,
-          size: fs.statSync(destFilePath).size,
-          uploadedBy: 'migration',
-          uploadDate: new Date().toISOString(),
-          ...metadataObj
-        };
+        // Insert new media using raw SQL (avoid entity relationship issues)
+        const result = await AppDataSource.manager.query(
+          `INSERT INTO media(title, filePath, normalizedPath, year, metadata, createdAt) 
+           VALUES (?, ?, ?, ?, ?, datetime('now')) RETURNING id`,
+          [
+            sourceMedia.title,
+            destFilePath,
+            relativeNormalizedPath,
+            sourceMedia.year || null,
+            JSON.stringify(metadataObj)
+          ]
+        );
         
-        // Save the new media entry
-        const savedMedia = await AppDataSource.manager.save(newMedia);
-        logger.info(`Saved media entry with ID ${savedMedia.id}`);
+        const newMediaId = result[0]?.id;
+        
+        if (!newMediaId) {
+          throw new Error('Failed to get ID of inserted media');
+        }
+        
+        logger.info(`Saved media entry with ID ${newMediaId}`);
 
         // Get all associated answers using raw SQL query
         const answers: OldMediaAnswer[] = await SourceDataSource.manager.query(
@@ -215,23 +214,19 @@ async function migrate() {
           [sourceMedia.id]
         );
 
-        // Save each answer
+        // Save each answer using raw SQL
         for (const answer of answers) {
-          const newAnswer = new MediaAnswer();
-          newAnswer.media = savedMedia;
-          newAnswer.answer = answer.answer;
+          const isPrimary = typeof answer.is_primary === 'number' ? 
+            answer.is_primary === 1 : 
+            !!answer.is_primary;
           
-          // Handle the is_primary field which could be a number (0/1) or boolean
-          if (typeof answer.is_primary === 'number') {
-            newAnswer.isPrimary = answer.is_primary === 1;
-          } else {
-            newAnswer.isPrimary = !!answer.is_primary;
-          }
-          
-          await AppDataSource.manager.save(newAnswer);
+          await AppDataSource.manager.query(
+            `INSERT INTO media_answers(answer, isPrimary, mediaId) VALUES (?, ?, ?)`,
+            [answer.answer, isPrimary ? 1 : 0, newMediaId]
+          );
         }
         
-        logger.info(`Saved ${answers.length} answers for media ${savedMedia.id}`);
+        logger.info(`Saved ${answers.length} answers for media ${newMediaId}`);
         
       } catch (error) {
         logger.error(`Error processing media ${sourceMedia.title}: ${error instanceof Error ? error.message : String(error)}`);
