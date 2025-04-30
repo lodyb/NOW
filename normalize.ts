@@ -185,26 +185,46 @@ async function encodeMedia(
     if (isVideo) {
       // Video encoding settings
       if (hasNvenc) {
-        // Use NVIDIA hardware acceleration
-        command += ` -c:v h264_nvenc -preset ${preset || 'p1'} -rc vbr -b:v ${videoBitrate}`;
-        command += ` -maxrate:v ${parseInt(videoBitrate) * 1.5}k -bufsize ${parseInt(videoBitrate) * 2}k`;
-        command += ' -spatial-aq 1 -temporal-aq 1';
+        // Use NVIDIA hardware acceleration with proper VBR settings
+        command += ` -c:v h264_nvenc -preset ${preset || 'p1'} -rc:v vbr`;
+        
+        // VBR settings (using CQ mode for better quality/size balance)
+        const cqValue = getQualityLevel(videoBitrate);
+        command += ` -cq:v ${cqValue} -b:v ${videoBitrate}`;
+        command += ` -maxrate:v ${parseInt(videoBitrate) * 2}k -bufsize ${parseInt(videoBitrate) * 4}k`;
+        command += ' -spatial-aq 1 -temporal-aq 1 -weighted_pred 1 -b_ref_mode middle';
       } else {
-        // Software encoding fallback
-        command += ` -c:v libx264 -preset medium -crf 23 -b:v ${videoBitrate}`;
-        command += ` -maxrate:v ${parseInt(videoBitrate) * 1.5}k -bufsize ${parseInt(videoBitrate) * 2}k`;
+        // Software encoding fallback using x264 with VBR
+        // Using CRF mode which is true VBR - lower values = higher quality
+        const crf = getQualityLevel(videoBitrate);
+        command += ` -c:v libx264 -preset medium -crf ${crf}`;
+        // Even with CRF mode, setting a maxrate prevents outlier bitrate spikes
+        command += ` -maxrate:v ${parseInt(videoBitrate) * 2}k -bufsize ${parseInt(videoBitrate) * 4}k`;
       }
       
       // Common video settings
       command += ` -vf "scale=-1:${height},format=yuv420p"`;
       command += ' -movflags +faststart';
     } else {
-      // Audio-only, copy video stream if it exists
+      // Audio-only, remove video streams
       command += ' -vn';
     }
     
-    // Audio settings (always use opus)
-    command += ` -c:a libopus -b:a ${audioBitrate} -vbr on -compression_level 10 -application audio`;
+    // Audio settings - use variable bitrate for opus
+    // For opus, VBR is enabled by default but we'll explicitly set it
+    command += ` -c:a libopus -b:a ${audioBitrate} -vbr on`;
+    
+    // Per your requirements, use appropriate compression level based on audio bitrate
+    if (audioBitrate === '128k') {
+      // For highest quality attempt, use higher compression level
+      command += ' -compression_level 6 -application audio';
+    } else if (audioBitrate === '96k') {
+      // For medium quality attempt, balance compression
+      command += ' -compression_level 8 -application audio';
+    } else {
+      // For lowest quality attempt, use maximum compression
+      command += ' -compression_level 10 -application audio';
+    }
     
     // Output file
     command += ` "${outputPath}"`;
@@ -217,6 +237,21 @@ async function encodeMedia(
   } catch (error) {
     logger.error(`FFmpeg encoding error: ${error instanceof Error ? error.message : String(error)}`);
     return false;
+  }
+}
+
+// Helper function to determine the quality level based on the bitrate
+function getQualityLevel(videoBitrate: string): number {
+  // For NVENC, CQ values range from 1 (best) to 51 (worst)
+  // For libx264, CRF values also range from 1 (best) to 51 (worst)
+  // We'll use more reasonable ranges in the middle to ensure good quality
+  
+  if (videoBitrate === '1500k') {
+    return 23; // High quality (good compromise for first attempt)
+  } else if (videoBitrate === '1000k') {
+    return 28; // Medium quality
+  } else {
+    return 33; // Lower quality
   }
 }
 
