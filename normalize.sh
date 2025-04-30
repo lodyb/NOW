@@ -34,8 +34,12 @@ mkdir -p temp
 echo "Starting normalization process..."
 echo "Log output will be saved to combined.log"
 
-# Run the normalize script with required TypeScript options for decorators
-NODE_OPTIONS="--require ts-node/register --require tsconfig-paths/register" npx ts-node --transpile-only -r tsconfig-paths/register normalize.ts
+# Run the normalize script with settings to properly handle TypeORM decorators
+npx ts-node \
+  --transpile-only \
+  -r tsconfig-paths/register \
+  --compiler-options '{"experimentalDecorators":true,"emitDecoratorMetadata":true}' \
+  normalize.ts
 
 echo
 echo "Normalization process complete!"
