@@ -3,8 +3,8 @@ import { execSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import { logger } from '../../utils/logger';
-import { Media } from '../../database/entities/Media';
-import { AppDataSource } from '../../database/connection';
+import { Media } from '../../database/types';
+import { saveMedia, findMediaById } from '../../database/repositories/mediaRepository';
 
 /**
  * Maximum file size for Discord (in MB)
@@ -552,10 +552,12 @@ export async function processMediaFile(
           
           // Update database with the relative path - ensure consistent extension
           const relativePath = path.relative(process.cwd(), finalOutputPath);
-          media.normalizedPath = relativePath;
           
-          if (verbose) logger.info(`Saving path in database: ${relativePath}`);
-          await AppDataSource.getRepository(Media).save(media);
+          // Update the media object with the new path
+          await saveMedia({
+            id: media.id,
+            normalizedPath: relativePath
+          });
           
           logger.info(`Successfully normalized ${media.title} (${fileSizeText})`);
           return true;
@@ -598,15 +600,18 @@ export async function processSingleFile(
     return null;
   }
   
-  // Create a complete Media object with all required properties
+  // Create a temporary Media object
   const fileName = path.basename(filePath);
-  const tempMedia = new Media();
-  tempMedia.id = 0; // Temporary ID that won't be used
-  tempMedia.filePath = filePath;
-  tempMedia.title = fileName;
-  tempMedia.normalizedPath = undefined;
-  tempMedia.metadata = {}; // Empty metadata object
-  tempMedia.createdAt = new Date();
+  const tempMedia: Media = {
+    id: 0, // Temporary ID that won't be used
+    filePath: filePath,
+    title: fileName,
+    normalizedPath: null,
+    uncompressedPath: null, // Add this required property
+    year: null, // Add this required property
+    metadata: {},
+    createdAt: new Date()
+  };
   
   // Make sure the output directory exists
   if (!fs.existsSync(outputDir)) {
@@ -709,9 +714,9 @@ export async function processAllMedia(verbose = false): Promise<{
   const hasNvenc = await hasNvidiaGpu();
   logger.info(`NVIDIA GPU encoding: ${hasNvenc ? 'Available' : 'Not available'}`);
   
-  // Get all media records from the database
-  const mediaRepository = AppDataSource.getRepository(Media);
-  const allMedia = await mediaRepository.find();
+  // Get all media records from the database using our new repository
+  const { getQuery } = await import('../../database/connection');
+  const allMedia = await getQuery<Media>('SELECT * FROM media');
   
   logger.info(`Found ${allMedia.length} media files to process`);
   

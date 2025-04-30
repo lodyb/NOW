@@ -2,11 +2,10 @@ import { Message, TextChannel, DMChannel, NewsChannel } from 'discord.js';
 import path from 'path';
 import fs from 'fs';
 import ffmpeg from 'fluent-ffmpeg';
-import { AppDataSource } from '../database/connection';
-import { Media } from '../database/entities/Media';
 import { logger } from '../utils/logger';
 import os from 'os';
 import { normalizeMediaIfNeeded } from '../services/media/normalizer';
+import { findMediaByTitle } from '../database/repositories/mediaRepository';
 
 // Parse ffmpeg options from string
 function parseOptions(optionsStr: string): Record<string, string | number | boolean> {
@@ -123,23 +122,15 @@ export async function playCommand(message: Message): Promise<void> {
       channel.send(`Processing media with options: ${JSON.stringify(options)}...`);
     }
     
-    // Find media in database
-    const mediaRepository = AppDataSource.getRepository(Media);
-    const query = mediaRepository
-      .createQueryBuilder('media')
-      .leftJoinAndSelect('media.answers', 'answers')
-      .where('media.title LIKE :search OR answers.answer LIKE :search', {
-        search: `%${searchTerm}%`
-      })
-      .orderBy('RANDOM()')
-      .take(1);
+    // Find media in database using our new repository function
+    const mediaList = await findMediaByTitle(searchTerm, 1);
     
-    const media = await query.getOne();
-    
-    if (!media) {
+    if (!mediaList.length) {
       message.reply(`No media found matching "${searchTerm}". Try a different search term.`);
       return;
     }
+    
+    const media = mediaList[0];
     
     // Get the file path
     const filePath = media.normalizedPath || media.filePath;

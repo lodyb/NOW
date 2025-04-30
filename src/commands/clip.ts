@@ -1,11 +1,10 @@
 import { Message, TextChannel, DMChannel, NewsChannel } from 'discord.js';
 import path from 'path';
 import fs from 'fs';
-import { AppDataSource } from '../database/connection';
-import { Media } from '../database/entities/Media';
 import { logger } from '../utils/logger';
 import { createClip } from '../services/media/clipper';
 import ffmpeg from 'fluent-ffmpeg';
+import { findMediaByTitle } from '../database/repositories/mediaRepository';
 
 // Parse time string to seconds
 function parseTimeString(time: string): number {
@@ -95,23 +94,15 @@ export async function clipCommand(message: Message): Promise<void> {
     const channel = message.channel as TextChannel | DMChannel | NewsChannel;
     await channel.send(`Searching for "${searchTerm}" and creating a ${clipDuration}s clip...`);
     
-    // Find media in database
-    const mediaRepository = AppDataSource.getRepository(Media);
-    const query = mediaRepository
-      .createQueryBuilder('media')
-      .leftJoinAndSelect('media.answers', 'answers')
-      .where('media.title LIKE :search OR answers.answer LIKE :search', {
-        search: `%${searchTerm}%`
-      })
-      .orderBy('RANDOM()')
-      .take(1);
+    // Find media in database using our new repository function
+    const mediaList = await findMediaByTitle(searchTerm, 1);
     
-    const media = await query.getOne();
-    
-    if (!media) {
+    if (!mediaList.length) {
       message.reply(`No media found matching "${searchTerm}". Try a different search term.`);
       return;
     }
+    
+    const media = mediaList[0];
     
     // Get the file path
     const filePath = media.normalizedPath || media.filePath;

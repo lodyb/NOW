@@ -4,11 +4,11 @@ import { MediaTag } from './MediaTag';
 @Entity('tags')
 export class Tag {
   @PrimaryGeneratedColumn()
-  id!: number;
+  id: number = 0;
 
   @Column({ unique: true })
-  name!: string;
+  name: string = '';
 
   @OneToMany(() => MediaTag, (mediaTag) => mediaTag.tag)
-  mediaTags!: MediaTag[];
+  mediaTags!: MediaTag[]; // Using ! instead of = []
 }

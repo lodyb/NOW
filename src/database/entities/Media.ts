@@ -5,28 +5,28 @@ import { MediaTag } from './MediaTag';
 @Entity('media')
 export class Media {
   @PrimaryGeneratedColumn()
-  id!: number;
+  id: number = 0;
 
   @Column()
-  title!: string;
+  title: string = '';
 
   @Column()
-  filePath!: string;
+  filePath: string = '';
 
-  @Column({ nullable: true })
-  normalizedPath?: string;
+  @Column({ type: 'text', nullable: true, default: null })
+  normalizedPath: string | null = null;
   
-  @Column({ nullable: true })
-  uncompressedPath?: string;
+  @Column({ type: 'text', nullable: true, default: null })
+  uncompressedPath: string | null = null;
 
-  @Column({ nullable: true })
-  year?: number;
+  @Column({ type: 'integer', nullable: true, default: null })
+  year: number | null = null;
 
-  @Column({ type: 'json', nullable: true })
-  metadata!: Record<string, any>;
+  @Column({ type: 'simple-json', nullable: true, default: '{}' })
+  metadata: Record<string, any> = {};
 
   @CreateDateColumn()
-  createdAt!: Date;
+  createdAt: Date = new Date();
 
   @OneToMany(() => MediaAnswer, (mediaAnswer) => mediaAnswer.media)
   answers!: MediaAnswer[];

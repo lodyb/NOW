@@ -3,23 +3,23 @@ import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn } from 'typeor
 @Entity('game_sessions')
 export class GameSession {
   @PrimaryGeneratedColumn()
-  id!: number;
+  id: number = 0;
 
   @Column()
-  guildId!: string;
+  guildId: string = '';
 
   @Column()
-  channelId!: string;
+  channelId: string = '';
 
   @CreateDateColumn()
-  startedAt!: Date;
+  startedAt: Date = new Date();
 
-  @Column({ nullable: true })
-  endedAt?: Date;
+  @Column({ nullable: true, default: null })
+  endedAt: Date | null = null;
 
   @Column({ default: 0 })
-  rounds!: number;
+  rounds: number = 0;
 
   @Column({ default: 1 })
-  currentRound!: number;
+  currentRound: number = 1;
 }

@@ -1,17 +1,18 @@
-import { Entity, PrimaryGeneratedColumn, Column, ManyToOne } from 'typeorm';
+import { Entity, PrimaryGeneratedColumn, Column, ManyToOne, JoinColumn } from 'typeorm';
 import { Media } from './Media';
 
 @Entity('media_answers')
 export class MediaAnswer {
   @PrimaryGeneratedColumn()
-  id!: number;
+  id: number = 0;
 
   @ManyToOne(() => Media, (media) => media.answers, { onDelete: 'CASCADE' })
-  media!: Media;
+  @JoinColumn({ name: 'media_id' })
+  media!: Media; // Using ! instead of = new Media()
 
   @Column()
-  answer!: string;
+  answer: string = '';
 
   @Column({ default: false })
-  isPrimary!: boolean;
+  isPrimary: boolean = false;
 }

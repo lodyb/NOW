@@ -4,21 +4,13 @@ import {
   createAudioPlayer, 
   createAudioResource,
   AudioPlayerStatus,
-  entersState,
   VoiceConnectionStatus,
   NoSubscriberBehavior,
   VoiceConnection,
   AudioPlayer,
-  AudioResource,
-  demuxProbe,
   StreamType,
   DiscordGatewayAdapterCreator
 } from '@discordjs/voice';
-import { AppDataSource } from '../database/connection';
-import { Media } from '../database/entities/Media';
-import { MediaAnswer } from '../database/entities/MediaAnswer';
-import { User } from '../database/entities/User';
-import { GameSession } from '../database/entities/GameSession';
 import { logger } from '../utils/logger';
 import path from 'path';
 import fs from 'fs';
@@ -27,6 +19,12 @@ import { processMedia } from '../services/media/processor';
 import { createClip as clipperCreateClip } from '../services/media/clipper';
 // Import libsodium-wrappers for voice encryption
 import sodium from 'libsodium-wrappers';
+
+// Import our new database repositories
+import { Media } from '../database/types';
+import { getRandomMedia, getMediaCount } from '../database/repositories/mediaRepository';
+import { saveGameSession, updateGameSessionRound, endGameSession } from '../database/repositories/gameSessionRepository';
+import { findUserById, saveUser, incrementUserStats } from '../database/repositories/userRepository';
 
 // Map to store active quiz sessions
 const activeQuizzes = new Map<string, QuizSession>();
@@ -121,13 +119,15 @@ class QuizSession {
       
       this.connection.subscribe(this.player);
 
-      // Create a new game session in the database
-      const gameSession = new GameSession();
-      gameSession.guildId = this.guildId;
-      gameSession.channelId = this.channelId;
+      // Create a new game session in the database using our repository
+      const gameSessionId = await saveGameSession({
+        guildId: this.guildId,
+        channelId: this.channelId,
+        rounds: 0,
+        currentRound: 1
+      });
       
-      const savedSession = await AppDataSource.getRepository(GameSession).save(gameSession);
-      this.gameSessionId = savedSession.id;
+      this.gameSessionId = gameSessionId;
 
       // Indicate we're active now
       this.isActive = true;
@@ -175,15 +175,9 @@ class QuizSession {
     if (this.roundTimer) clearTimeout(this.roundTimer);
     if (this.hintTimer) clearTimeout(this.hintTimer);
     
-    // Update game session in database
+    // Update game session in database using our repository
     if (this.gameSessionId) {
-      await AppDataSource.getRepository(GameSession).update(
-        this.gameSessionId,
-        { 
-          endedAt: new Date(),
-          rounds: this.currentRound
-        }
-      );
+      await endGameSession(this.gameSessionId, this.currentRound);
     }
     
     // Disconnect from voice
@@ -209,24 +203,24 @@ class QuizSession {
     // Update user stats in database
     for (const [userId, score] of this.scores.entries()) {
       try {
-        const userRepository = AppDataSource.getRepository(User);
-        let user = await userRepository.findOne({ where: { id: userId } });
+        // Using our repository to find and update user
+        const user = await findUserById(userId);
         
         if (user) {
-          user.correctAnswers += score;
-          user.gamesPlayed += 1;
-          await userRepository.save(user);
+          // Update existing user
+          await incrementUserStats(userId, score, 1);
         } else {
           // Get username from the guild
           const member = await this.voiceChannel.guild.members.fetch(userId);
           const username = member?.displayName || 'Unknown User';
           
-          user = new User();
-          user.id = userId;
-          user.username = username;
-          user.correctAnswers = score;
-          user.gamesPlayed = 1;
-          await userRepository.save(user);
+          // Create a new user
+          await saveUser({
+            id: userId,
+            username: username,
+            correctAnswers: score,
+            gamesPlayed: 1
+          });
         }
       } catch (error) {
         logger.error(`Error updating stats for user ${userId}:`, error);
@@ -265,13 +259,10 @@ class QuizSession {
       
       logger.info(`Starting quiz round ${this.currentRound}`);
       
-      // Update game session in database
+      // Update game session in database using our repository
       if (this.gameSessionId) {
         try {
-          await AppDataSource.getRepository(GameSession).update(
-            this.gameSessionId,
-            { currentRound: this.currentRound }
-          );
+          await updateGameSessionRound(this.gameSessionId, this.currentRound);
           logger.info(`Updated game session ${this.gameSessionId} to round ${this.currentRound}`);
         } catch (dbError) {
           logger.error(`Database error updating game session: ${dbError}`);
@@ -279,11 +270,9 @@ class QuizSession {
         }
       }
       
-      // Get a random media item from the database
-      const mediaRepository = AppDataSource.getRepository(Media);
-      
+      // Get a random media item from the database using our repository
       try {
-        const count = await mediaRepository.count();
+        const count = await getMediaCount();
         logger.info(`Found ${count} media items in database`);
         
         if (count === 0) {
@@ -293,24 +282,17 @@ class QuizSession {
         }
         
         // Get a random media item
-        const randomIndex = Math.floor(Math.random() * count);
-        logger.info(`Attempting to fetch media at index ${randomIndex}`);
+        const mediaList = await getRandomMedia(1);
         
-        const media = await mediaRepository.find({
-          relations: ['answers'],
-          take: 1,
-          skip: randomIndex
-        });
-        
-        if (!media || media.length === 0) {
+        if (!mediaList.length) {
           logger.error('Failed to fetch media item from database');
           channel.send('Failed to fetch a media item. The quiz cannot continue.');
           this.stop(channel);
           return;
         }
         
-        logger.info(`Successfully fetched media: ${media[0].title}, ID: ${media[0].id}`);
-        this.currentMedia = media[0];
+        logger.info(`Successfully fetched media: ${mediaList[0].title}, ID: ${mediaList[0].id}`);
+        this.currentMedia = mediaList[0];
       } catch (mediaError) {
         logger.error(`Error fetching media from database: ${mediaError}`);
         channel.send('There was an error accessing the media database. The quiz cannot continue.');
@@ -320,8 +302,8 @@ class QuizSession {
       
       // Try to find the file - prioritize uncompressed path for higher quality quiz audio
       // Fall back to normalized path, then original path if necessary
-      let filePath = this.currentMedia.uncompressedPath || this.currentMedia.normalizedPath || this.currentMedia.filePath;
-      logger.info(`Using media file path: ${filePath} (${this.currentMedia.uncompressedPath ? 'uncompressed' : this.currentMedia.normalizedPath ? 'normalized' : 'original'})`);
+      let filePath = this.currentMedia.normalizedPath || this.currentMedia.filePath;
+      logger.info(`Using media file path: ${filePath}`);
       
       const fullPath = this.resolveMediaPath(filePath);
       logger.info(`Looking for media file at resolved path: ${fullPath}`);
@@ -333,9 +315,8 @@ class QuizSession {
           
           // Try fallback paths if the selected path doesn't exist
           const fallbackPaths = [
-            this.currentMedia.normalizedPath,
-            this.currentMedia.uncompressedPath,
-            this.currentMedia.filePath
+            this.currentMedia.filePath,
+            this.currentMedia.normalizedPath
           ].filter(p => p && p !== filePath);
           
           let fallbackFound = false;

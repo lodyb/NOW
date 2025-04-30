@@ -1,10 +1,10 @@
 import { Client, IntentsBitField, GatewayIntentBits, Partials } from 'discord.js';
 import * as dotenv from 'dotenv';
-import { AppDataSource } from './database/connection';
 import { processCommand } from './commands';
 import { logger } from './utils/logger';
 import { startWebServer } from './services/web/server';
-import { initDB } from './utils/init';
+import { initDB, initDirectories } from './utils/init';
+import { db } from './database/connection';
 
 // Load environment variables
 dotenv.config();
@@ -24,6 +24,9 @@ const client = new Client({
 // Handle bot ready event
 client.once('ready', async () => {
   logger.info(`Logged in as ${client.user?.tag}`);
+  
+  // Initialize directories
+  initDirectories();
   
   // Initialize the database if needed
   try {
@@ -84,26 +87,16 @@ client.on('error', (error) => {
   logger.error(`Discord client error: ${error.message}`);
 });
 
-// Initialize database connection
-AppDataSource.initialize()
-  .then(() => {
-    logger.info('Database connection established');
-    
-    // Login to Discord
-    const token = process.env.DISCORD_TOKEN;
-    if (!token) {
-      logger.error('DISCORD_TOKEN not found in environment variables');
-      process.exit(1);
-    }
-    
-    client.login(token)
-      .catch((error) => {
-        logger.error(`Failed to login to Discord: ${error.message}`);
-        process.exit(1);
-      });
-  })
+// Login to Discord
+const token = process.env.DISCORD_TOKEN;
+if (!token) {
+  logger.error('DISCORD_TOKEN not found in environment variables');
+  process.exit(1);
+}
+
+client.login(token)
   .catch((error) => {
-    logger.error(`Database connection error: ${error.message}`);
+    logger.error(`Failed to login to Discord: ${error.message}`);
     process.exit(1);
   });
 
@@ -118,13 +111,13 @@ function handleShutdown() {
   client.destroy();
   
   // Close database connection
-  AppDataSource.destroy()
-    .then(() => {
+  db.close((err) => {
+    if (err) {
+      logger.error(`Error closing database connection: ${err.message}`);
+      process.exit(1);
+    } else {
       logger.info('Database connection closed');
       process.exit(0);
-    })
-    .catch((error) => {
-      logger.error(`Error closing database connection: ${error.message}`);
-      process.exit(1);
-    });
+    }
+  });
 }

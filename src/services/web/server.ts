@@ -5,9 +5,11 @@ import fs from 'fs';
 import crypto from 'crypto';
 import { logger } from '../../utils/logger';
 import { normalizeMedia } from '../media/normalizer';
-import { AppDataSource } from '../../database/connection';
-import { Media } from '../../database/entities/Media';
-import { MediaAnswer } from '../../database/entities/MediaAnswer';
+
+// Import our new database repositories
+import { Media, MediaAnswer } from '../../database/types';
+import { findMediaById, saveMedia } from '../../database/repositories/mediaRepository';
+import { findAnswersByMediaId, saveMediaAnswer, deleteMediaAnswersByMediaId } from '../../database/repositories/mediaAnswerRepository';
 
 // Upload directory
 const UPLOAD_DIR = path.resolve(process.cwd(), 'uploads');
@@ -125,60 +127,33 @@ export async function startWebServer(port: number): Promise<void> {
             // Get title for this file
             const title = titlesList[index] || path.basename(file.originalname, path.extname(file.originalname));
             
-            // Check for duplicate title before saving
-            const mediaRepository = AppDataSource.getRepository(Media);
-            const existingMedia = await mediaRepository.findOne({
-              where: { title }
-            });
-            
-            if (existingMedia) {
-              logger.warn(`Duplicate media detected with title: "${title}". Skipping upload.`);
-              
-              // Clean up the uploaded file since we won't use it
-              try {
-                fs.unlinkSync(file.path);
-              } catch (e) {
-                // Ignore cleanup errors
-              }
-              
-              return {
-                originalName: file.originalname,
-                title: title,
-                id: existingMedia.id,
-                success: false,
-                error: `A media item with title "${title}" already exists (ID: ${existingMedia.id})`
-              };
-            }
-            
             // Normalize the media file for Discord compatibility
             const normalizedPath = await normalizeMedia(file.path);
             
-            // Save to database
-            const media = new Media();
-            media.title = title;
-            media.filePath = file.path;
-            media.normalizedPath = normalizedPath;
-            media.metadata = {
-              originalName: file.originalname,
-              size: file.size,
-              uploadedBy: user || 'anonymous',
-              uploadDate: new Date().toISOString()
-            };
-            
-            await AppDataSource.manager.save(media);
+            // Save to database using our repository
+            const mediaId = await saveMedia({
+              title,
+              filePath: file.path,
+              normalizedPath,
+              metadata: {
+                originalName: file.originalname,
+                size: file.size,
+                uploadedBy: user || 'anonymous',
+                uploadDate: new Date().toISOString()
+              }
+            });
             
             // Create primary answer (the title itself)
-            const answer = new MediaAnswer();
-            answer.media = media;
-            answer.answer = title;
-            answer.isPrimary = true;
-            
-            await AppDataSource.manager.save(answer);
+            await saveMediaAnswer({
+              media_id: mediaId,
+              answer: title,
+              isPrimary: true
+            });
             
             return {
               originalName: file.originalname,
               title: title,
-              id: media.id,
+              id: mediaId,
               success: true
             };
           } catch (error) {
@@ -215,17 +190,12 @@ export async function startWebServer(port: number): Promise<void> {
   // API route for media listing
   app.get('/api/media', async (req, res) => {
     try {
-      const mediaRepository = AppDataSource.getRepository(Media);
-      // Find media with answers relation - important for our UI to display alternative answers
-      const media = await mediaRepository.find({
-        relations: ['answers'],
-        order: { createdAt: 'DESC' },
-        take: 100 // Increase to show more media items
-      });
+      // Get all media and answers from database
+      const mediaList = await getMediaWithAnswers(100);
       
       res.json({
         success: true,
-        media: media.map(item => ({
+        media: mediaList.map(item => ({
           id: item.id,
           title: item.title,
           normalizedPath: item.normalizedPath,
@@ -253,31 +223,12 @@ export async function startWebServer(port: number): Promise<void> {
       // Log the request for debugging
       logger.info(`Media update request received for /api/media/${id} with method ${req.method}`);
       logger.info(`Request body: ${JSON.stringify(req.body)}`);
-      logger.info(`AppDataSource initialized: ${AppDataSource.isInitialized}`);
       
       if (!id) {
         return res.status(400).json({ success: false, message: 'No media ID provided' });
       }
       
-      // Get the media item
-      const mediaRepository = AppDataSource.getRepository(Media);
-      const mediaAnswerRepository = AppDataSource.getRepository(MediaAnswer);
-      
-      // Check if database connection is initialized
-      if (!AppDataSource.isInitialized) {
-        logger.error('Database connection is not initialized');
-        
-        // Attempt to initialize the database connection
-        try {
-          await AppDataSource.initialize();
-          logger.info('Database connection initialized successfully');
-        } catch (initError) {
-          logger.error(`Failed to initialize database connection: ${initError}`);
-          return res.status(500).json({ success: false, message: 'Database connection error' });
-        }
-      }
-      
-      // Parse ID as integer or keep as string based on database schema
+      // Parse ID as integer
       const mediaId = parseInt(id);
       if (isNaN(mediaId)) {
         logger.error(`Invalid media ID format: ${id}`);
@@ -286,23 +237,8 @@ export async function startWebServer(port: number): Promise<void> {
       
       logger.info(`Looking for media with ID: ${mediaId}`);
       
-      // Try direct query first for better error logging
-      try {
-        const rawMedia = await AppDataSource.query(`SELECT id, title FROM media WHERE id = ?`, [mediaId]);
-        logger.info(`Raw query result: ${JSON.stringify(rawMedia)}`);
-        
-        if (!rawMedia || rawMedia.length === 0) {
-          logger.error(`Media ID ${mediaId} not found in database`);
-        }
-      } catch (rawQueryError) {
-        logger.error(`Raw query error: ${rawQueryError}`);
-      }
-      
-      // Now proceed with the repository query
-      const media = await mediaRepository.findOne({
-        where: { id: mediaId },
-        relations: ['answers']
-      });
+      // Get the media item using our repository
+      const media = await findMediaById(mediaId);
       
       if (!media) {
         logger.error(`Media not found with ID: ${id}`);
@@ -326,25 +262,25 @@ export async function startWebServer(port: number): Promise<void> {
       
       // Update title if different
       if (title !== media.title) {
-        media.title = title;
-        await mediaRepository.save(media);
+        await saveMedia({
+          id: mediaId,
+          title: title
+        });
         logger.info(`Updated title for media ${id} to: ${title}`);
       }
       
       try {
-        // First, delete all existing answers (including primary)
+        // First, delete all existing answers
         logger.info(`Deleting existing answers for media ${id}...`);
-        await mediaAnswerRepository.delete({
-          media: { id: mediaId }
-        });
+        await deleteMediaAnswersByMediaId(mediaId);
         logger.info(`Deleted all existing answers for media ${id}`);
         
         // Create new primary answer (the title)
-        const primaryAnswer = new MediaAnswer();
-        primaryAnswer.media = media;
-        primaryAnswer.answer = title;
-        primaryAnswer.isPrimary = true;
-        await mediaAnswerRepository.save(primaryAnswer);
+        await saveMediaAnswer({
+          media_id: mediaId,
+          answer: title,
+          isPrimary: true
+        });
         logger.info(`Added primary answer for media ${id}: ${title}`);
         
         // Create new alternate answers
@@ -355,12 +291,11 @@ export async function startWebServer(port: number): Promise<void> {
           // Skip if it's identical to the title (we already have a primary answer for that)
           if (answer.trim().toLowerCase() === title.toLowerCase()) continue;
           
-          const newAnswer = new MediaAnswer();
-          newAnswer.media = media;
-          newAnswer.answer = answer.trim();
-          newAnswer.isPrimary = false;
-          
-          await mediaAnswerRepository.save(newAnswer);
+          await saveMediaAnswer({
+            media_id: mediaId,
+            answer: answer.trim(),
+            isPrimary: false
+          });
           logger.info(`Added alternate answer for media ${id}: ${answer.trim()}`);
         }
       } catch (answerError) {
@@ -373,10 +308,7 @@ export async function startWebServer(port: number): Promise<void> {
       }
       
       // Get updated media
-      const updatedMedia = await mediaRepository.findOne({
-        where: { id: mediaId },
-        relations: ['answers']
-      });
+      const updatedMedia = await findMediaById(mediaId);
       
       res.json({
         success: true,
@@ -402,11 +334,8 @@ export async function startWebServer(port: number): Promise<void> {
         return res.status(400).json({ success: false, message: 'No media ID provided' });
       }
       
-      // Get the media item
-      const mediaRepository = AppDataSource.getRepository(Media);
-      const media = await mediaRepository.findOne({
-        where: { id: parseInt(id) }
-      });
+      // Get the media item using our repository
+      const media = await findMediaById(parseInt(id));
       
       if (!media) {
         return res.status(404).json({ success: false, message: 'Media not found' });
@@ -442,11 +371,8 @@ export async function startWebServer(port: number): Promise<void> {
         return res.status(400).json({ success: false, message: 'No media ID provided' });
       }
       
-      // Get the media item
-      const mediaRepository = AppDataSource.getRepository(Media);
-      const media = await mediaRepository.findOne({
-        where: { id: parseInt(id) }
-      });
+      // Get the media item using our repository
+      const media = await findMediaById(parseInt(id));
       
       if (!media) {
         return res.status(404).json({ success: false, message: 'Media not found' });
@@ -487,12 +413,8 @@ export async function startWebServer(port: number): Promise<void> {
         return res.status(400).json({ success: false, message: 'No media ID provided' });
       }
       
-      // Get the media item
-      const mediaRepository = AppDataSource.getRepository(Media);
-      const media = await mediaRepository.findOne({
-        where: { id: parseInt(id) },
-        relations: ['answers']
-      });
+      // Get the media item using our repository
+      const media = await findMediaById(parseInt(id));
       
       if (!media) {
         return res.status(404).json({ success: false, message: 'Media not found' });
@@ -506,7 +428,7 @@ export async function startWebServer(port: number): Promise<void> {
       ].filter(Boolean);
       
       // First delete from database
-      await mediaRepository.remove(media);
+      await deleteMedia(parseInt(id));
       
       // Then try to delete files (but don't fail if files can't be deleted)
       for (const filePath of filePaths) {
@@ -593,6 +515,53 @@ function validateUploadToken(token: string, userId: string): boolean {
     return signature === expectedSignature;
   } catch (error) {
     logger.error(`Token validation error: ${error instanceof Error ? error.message : String(error)}`);
+    return false;
+  }
+}
+
+/**
+ * Helper function to get media items with their answers
+ */
+async function getMediaWithAnswers(limit: number = 100): Promise<Media[]> {
+  // Import needed function to avoid circular dependency
+  const { getQuery } = await import('../../database/connection');
+  
+  // Get media items ordered by creation date
+  const mediaItems = await getQuery<Media>(
+    'SELECT * FROM media ORDER BY createdAt DESC LIMIT ?',
+    [limit]
+  );
+  
+  // Parse metadata for each media item
+  for (const media of mediaItems) {
+    try {
+      media.metadata = JSON.parse(media.metadata as unknown as string);
+    } catch (e) {
+      media.metadata = {};
+    }
+  }
+  
+  // Get answers for each media item
+  for (const media of mediaItems) {
+    media.answers = await findAnswersByMediaId(media.id);
+  }
+  
+  return mediaItems;
+}
+
+/**
+ * Helper function to delete a media item by ID
+ */
+async function deleteMedia(id: number): Promise<boolean> {
+  // Import needed function to avoid circular dependency
+  const { runQuery } = await import('../../database/connection');
+  
+  try {
+    // Delete the media (all related answers will be deleted by the ON DELETE CASCADE)
+    await runQuery('DELETE FROM media WHERE id = ?', [id]);
+    return true;
+  } catch (error) {
+    logger.error(`Error deleting media: ${error instanceof Error ? error.message : String(error)}`);
     return false;
   }
 }

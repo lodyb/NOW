@@ -1,4 +1,4 @@
-import { AppDataSource } from '../database/connection';
+import { initializeDatabase } from '../database/connection';
 import { logger } from './logger';
 import fs from 'fs';
 import path from 'path';
@@ -8,12 +8,8 @@ import path from 'path';
  */
 export async function initDB(): Promise<void> {
   try {
-    // Make sure the database connection is established
-    if (!AppDataSource.isInitialized) {
-      logger.info('Initializing database connection...');
-      await AppDataSource.initialize();
-    }
-
+    // Initialize the database connection
+    await initializeDatabase();
     logger.info('Database initialization completed successfully');
   } catch (error) {
     logger.error(`Database initialization error: ${error instanceof Error ? error.message : String(error)}`);
