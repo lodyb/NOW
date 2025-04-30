@@ -87,16 +87,49 @@ async function processMediaFile(media: Media, hasNvenc: boolean): Promise<boolea
   // Determine if it's video or audio
   const isVideo = await isVideoFile(originalPath);
   
+  // Determine final output path - for audio files, we convert to .ogg
+  let finalOutputPath = outputPath;
+  const inputExt = path.extname(originalPath).toLowerCase();
+  if (!isVideo) {
+    // For audio files, we'll output as .ogg with Opus codec
+    finalOutputPath = outputPath.replace(/\.(wav|mp3|ogg|flac|m4a)$/i, '.ogg');
+    logger.info(`Will convert ${inputExt} to .ogg with Opus codec for better compatibility`);
+  }
+  
   // Try various encoding settings until successful
   const attempts = [
     // First attempt: 720p high quality
-    { height: 720, videoBitrate: '1500k', audioBitrate: '128k', preset: isVideo ? 'p1' : undefined, trimDuration: null },
+    { 
+      height: 720, 
+      videoQuality: 'high',     // Quality-based parameter for VBR
+      audioQuality: 'high', 
+      preset: isVideo ? 'p1' : undefined, 
+      trimDuration: null 
+    },
     // Second attempt: 720p medium quality
-    { height: 720, videoBitrate: '1000k', audioBitrate: '96k', preset: isVideo ? 'p2' : undefined, trimDuration: null },
+    { 
+      height: 720, 
+      videoQuality: 'medium',   // Quality-based parameter for VBR
+      audioQuality: 'medium', 
+      preset: isVideo ? 'p2' : undefined, 
+      trimDuration: null 
+    },
     // Third attempt: 360p lower quality
-    { height: 360, videoBitrate: '800k', audioBitrate: '64k', preset: isVideo ? 'p3' : undefined, trimDuration: null },
+    { 
+      height: 360, 
+      videoQuality: 'low',      // Quality-based parameter for VBR
+      audioQuality: 'low', 
+      preset: isVideo ? 'p3' : undefined, 
+      trimDuration: null 
+    },
     // Final attempt: 360p lower quality + trim to 4 minutes
-    { height: 360, videoBitrate: '800k', audioBitrate: '64k', preset: isVideo ? 'p3' : undefined, trimDuration: 240 }
+    { 
+      height: 360, 
+      videoQuality: 'low',      // Quality-based parameter for VBR
+      audioQuality: 'low', 
+      preset: isVideo ? 'p3' : undefined, 
+      trimDuration: 240 
+    }
   ];
   
   for (let i = 0; i < attempts.length; i++) {
@@ -117,22 +150,40 @@ async function processMediaFile(media: Media, hasNvenc: boolean): Promise<boolea
         isVideo,
         hasNvenc, 
         attempt.height,
-        attempt.videoBitrate,
-        attempt.audioBitrate,
+        attempt.videoQuality,
+        attempt.audioQuality,
         attempt.preset,
         attempt.trimDuration
       );
       
       if (success) {
+        // Check the actual temp output path (might have changed extension)
+        const actualTempPath = !isVideo
+          ? tempOutputPath.replace(/\.(wav|mp3|ogg|flac|m4a)$/i, '.ogg') 
+          : tempOutputPath;
+          
+        // Check if file exists
+        if (!validFile(actualTempPath)) {
+          logger.error(`Expected output file not found: ${actualTempPath}`);
+          continue;
+        }
+          
         // Check if file size is acceptable
-        const stats = fs.statSync(tempOutputPath);
+        const stats = fs.statSync(actualTempPath);
         if (stats.size <= MAX_FILE_SIZE_BYTES) {
           // Move from temp to final location
-          fs.renameSync(tempOutputPath, outputPath);
+          fs.renameSync(actualTempPath, finalOutputPath);
           
           // Update database with the relative path
-          const relativePath = path.relative(process.cwd(), outputPath);
+          // For audio files, make sure we're using the .ogg extension in the database
+          const dbPath = !isVideo 
+            ? finalOutputPath.replace(/\.(wav|mp3|ogg|flac|m4a)$/i, '.ogg')
+            : finalOutputPath;
+            
+          const relativePath = path.relative(process.cwd(), dbPath);
           media.normalizedPath = relativePath;
+          
+          logger.info(`Saving path in database: ${relativePath}`);
           await AppDataSource.getRepository(Media).save(media);
           
           logger.info(`Successfully normalized ${media.title} (${Math.round(stats.size / 1024 / 1024 * 100) / 100}MB)`);
@@ -168,12 +219,25 @@ async function encodeMedia(
   isVideo: boolean,
   hasNvenc: boolean,
   height: number,
-  videoBitrate: string,
-  audioBitrate: string,
+  videoQuality: string,
+  audioQuality: string,
   preset?: string,
   trimDuration?: number | null
 ): Promise<boolean> {
   try {
+    // Get file extension and prepare output path with correct extension
+    const inputExt = path.extname(inputPath).toLowerCase();
+    let outputExt = path.extname(outputPath).toLowerCase();
+    
+    // For audio files, ensure we're using .ogg format with Opus codec
+    let tempOutputPath = outputPath;
+    if (!isVideo) {
+      // Convert all audio formats to .ogg
+      tempOutputPath = outputPath.replace(/\.(wav|mp3|ogg|flac|m4a)$/i, '.ogg');
+      outputExt = '.ogg';
+      logger.info(`Converting audio from ${inputExt} to .ogg with Opus codec for better compatibility`);
+    }
+    
     let command = `ffmpeg -y -i "${inputPath}" -hide_banner -loglevel ${FFMPEG_LOG_LEVEL}`;
     
     // Add trim duration if specified
@@ -183,57 +247,90 @@ async function encodeMedia(
     }
     
     if (isVideo) {
-      // Video encoding settings
+      // Video scale filter
+      command += ` -vf "scale=-1:${height},format=yuv420p"`;
+      
       if (hasNvenc) {
-        // Use NVIDIA hardware acceleration with proper VBR settings
-        command += ` -c:v h264_nvenc -preset ${preset || 'p1'} -rc:v vbr`;
+        // Use NVIDIA hardware acceleration with true VBR settings
+        // Map quality levels to appropriate CQ values for NVENC
+        let cqValue = 23; // Default for high quality
         
-        // VBR settings (using CQ mode for better quality/size balance)
-        const cqValue = getQualityLevel(videoBitrate);
-        command += ` -cq:v ${cqValue} -b:v ${videoBitrate}`;
-        command += ` -maxrate:v ${parseInt(videoBitrate) * 2}k -bufsize ${parseInt(videoBitrate) * 4}k`;
-        command += ' -spatial-aq 1 -temporal-aq 1 -weighted_pred 1 -b_ref_mode middle';
+        if (videoQuality === 'high') {
+          cqValue = 23; // Better quality (lower value = higher quality for CQ)
+        } else if (videoQuality === 'medium') {
+          cqValue = 28; // Medium quality
+        } else { // 'low'
+          cqValue = 33; // Lower quality
+        }
+        
+        command += ` -c:v h264_nvenc -preset ${preset || 'p1'} -rc:v vbr -cq:v ${cqValue}`;
+        
+        // Add baseline bitrate and limits
+        const bitrate = videoQuality === 'high' ? '1500k' : videoQuality === 'medium' ? '1000k' : '800k';
+        const maxrate = parseInt(bitrate) * 2 + 'k';
+        const bufsize = parseInt(bitrate) * 4 + 'k';
+        
+        command += ` -b:v ${bitrate} -maxrate:v ${maxrate} -bufsize:v ${bufsize}`;
+        command += ' -spatial-aq 1 -temporal-aq 1';
       } else {
-        // Software encoding fallback using x264 with VBR
-        // Using CRF mode which is true VBR - lower values = higher quality
-        const crf = getQualityLevel(videoBitrate);
+        // Software encoding fallback with x264 CRF mode (true VBR)
+        // Map quality levels to appropriate CRF values for libx264
+        let crf = 23; // Default for high quality
+        
+        if (videoQuality === 'high') {
+          crf = 23; // Better quality (lower value = higher quality for CRF)
+        } else if (videoQuality === 'medium') {
+          crf = 28; // Medium quality
+        } else { // 'low'
+          crf = 33; // Lower quality
+        }
+        
         command += ` -c:v libx264 -preset medium -crf ${crf}`;
-        // Even with CRF mode, setting a maxrate prevents outlier bitrate spikes
-        command += ` -maxrate:v ${parseInt(videoBitrate) * 2}k -bufsize ${parseInt(videoBitrate) * 4}k`;
+        
+        // Add bitrate limits to prevent spikes
+        const bitrate = videoQuality === 'high' ? '1500k' : videoQuality === 'medium' ? '1000k' : '800k';
+        const maxrate = parseInt(bitrate) * 2 + 'k';
+        const bufsize = parseInt(bitrate) * 4 + 'k';
+        
+        command += ` -maxrate:v ${maxrate} -bufsize:v ${bufsize}`;
       }
       
       // Common video settings
-      command += ` -vf "scale=-1:${height},format=yuv420p"`;
-      command += ' -movflags +faststart';
+      command += ' -pix_fmt yuv420p -movflags +faststart';
+      
+      // Audio settings for video files (AAC for MP4)
+      const audioBitrate = audioQuality === 'high' ? '128k' : audioQuality === 'medium' ? '96k' : '64k';
+      command += ` -c:a aac -b:a ${audioBitrate} -strict experimental`;
     } else {
       // Audio-only, remove video streams
       command += ' -vn';
-    }
-    
-    // Audio settings - use variable bitrate for opus
-    // For opus, VBR is enabled by default but we'll explicitly set it
-    command += ` -c:a libopus -b:a ${audioBitrate} -vbr on`;
-    
-    // Per your requirements, use appropriate compression level based on audio bitrate
-    if (audioBitrate === '128k') {
-      // For highest quality attempt, use higher compression level
-      command += ' -compression_level 6 -application audio';
-    } else if (audioBitrate === '96k') {
-      // For medium quality attempt, balance compression
-      command += ' -compression_level 8 -application audio';
-    } else {
-      // For lowest quality attempt, use maximum compression
-      command += ' -compression_level 10 -application audio';
+      
+      // For audio files, use Opus codec with .ogg container and variable bitrate
+      const audioBitrate = audioQuality === 'high' ? '128k' : audioQuality === 'medium' ? '96k' : '64k';
+      command += ` -c:a libopus -b:a ${audioBitrate} -vbr on`;
+      
+      // Different compression levels based on quality
+      if (audioQuality === 'high') {
+        // For highest quality attempt, use lower compression level
+        command += ' -compression_level 6 -application audio';
+      } else if (audioQuality === 'medium') {
+        // For medium quality attempt, balance compression
+        command += ' -compression_level 8 -application audio';
+      } else {
+        // For lowest quality attempt, use maximum compression
+        command += ' -compression_level 10 -application audio';
+      }
     }
     
     // Output file
-    command += ` "${outputPath}"`;
+    command += ` "${tempOutputPath}"`;
     
     // Execute the command
+    logger.info(`Running: ${command}`);
     execSync(command);
     
     // Check if the output file exists and has content
-    return validFile(outputPath);
+    return validFile(tempOutputPath);
   } catch (error) {
     logger.error(`FFmpeg encoding error: ${error instanceof Error ? error.message : String(error)}`);
     return false;
