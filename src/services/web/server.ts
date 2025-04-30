@@ -1,4 +1,4 @@
-import express from 'express';
+import express, { Request, Response } from 'express';
 import path from 'path';
 import multer from 'multer';
 import fs from 'fs';
@@ -240,14 +240,19 @@ export async function startWebServer(port: number): Promise<void> {
     }
   });
   
-  // API route for updating media
-  app.put('/api/media/:id', async (req, res) => {
+  // API route for updating media - accept both PUT and POST for better compatibility
+  app.put('/api/media/:id', handleMediaUpdate);
+  app.post('/api/media/:id', handleMediaUpdate);
+  
+  // Handler function for media updates (shared between PUT and POST)
+  async function handleMediaUpdate(req: Request, res: Response) {
     try {
       const { id } = req.params;
       const { answers: answersText } = req.body;
       
       // Log the request for debugging
-      logger.info(`PUT request received for /api/media/${id} with body: ${JSON.stringify(req.body)}`);
+      logger.info(`Media update request received for /api/media/${id} with method ${req.method}`);
+      logger.info(`Request body: ${JSON.stringify(req.body)}`);
       logger.info(`AppDataSource initialized: ${AppDataSource.isInitialized}`);
       
       if (!id) {
@@ -386,7 +391,7 @@ export async function startWebServer(port: number): Promise<void> {
         error: error instanceof Error ? error.message : String(error)
       });
     }
-  });
+  }
   
   // API endpoint for serving media files
   app.get('/media/:id/preview', async (req, res) => {
