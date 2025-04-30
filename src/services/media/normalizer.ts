@@ -214,23 +214,26 @@ async function createUncompressedNormalizedVersion(
 ): Promise<void> {
   logger.info(`Creating uncompressed normalized version: ${outputPath}`);
   
-  let command = ffmpeg(filePath);
-  
-  // Apply volume normalization
-  const volumeFilter = `volume=${volumeAdjustment.toFixed(2)}dB`;
-  
   // Get media type
   const metadata = await getMediaMetadata(filePath);
   const isVideo = metadata.streams.some((stream: any) => stream.codec_type === 'video');
   
-  // Get the file extension to determine best handling
-  const ext = path.extname(filePath).toLowerCase();
+  // Get the file extension
+  const inputExt = path.extname(filePath).toLowerCase();
   const outputExt = path.extname(outputPath).toLowerCase();
   
-  // Determine best output format based on the input
-  // Use .m4a for audio files to ensure compatibility with opus codec
-  const finalOutputPath = outputExt === '.wav' || outputExt === '.mp3' ? 
-    outputPath.replace(/\.(wav|mp3)$/i, '.m4a') : outputPath;
+  // Determine output format based on file type
+  let finalOutputPath = outputPath;
+  if (!isVideo && (outputExt === '.wav' || outputExt === '.ogg')) {
+    // For audio-only WAV or OGG files, convert to mp3
+    finalOutputPath = outputPath.replace(/\.(wav|ogg)$/i, '.mp3');
+    logger.info(`Converting audio file from ${inputExt} to .mp3 for better compatibility`);
+  }
+  
+  // Apply volume normalization
+  const volumeFilter = `volume=${volumeAdjustment.toFixed(2)}dB`;
+  
+  let command = ffmpeg(filePath);
   
   if (isVideo) {
     // For video, copy video stream and normalize audio
@@ -238,38 +241,41 @@ async function createUncompressedNormalizedVersion(
       .videoCodec('copy')                  // copy video unchanged
       .audioFilters(volumeFilter)          // normalize audio
       .outputOptions([
-        '-c:a libopus',                    // opus audio codec for best quality
+        '-c:a aac',                        // AAC audio codec for mp4 compatibility
         '-b:a 256k',                       // high bitrate for audio
-        '-compression_level 0',            // minimal compression (0-10)
-        '-vbr on',                         // variable bitrate mode
-        '-application audio'               // favor quality over speech
+        '-strict experimental',            // needed for some AAC encoders
+        '-movflags +faststart'             // optimize for streaming
       ]);
   } else {
     // For audio-only files
-    // For WAV and MP3 files, use a more reliable approach
-    if (ext === '.wav' || ext === '.mp3') {
-      command = ffmpeg(filePath);
+    command = ffmpeg(filePath);
+    command.audioFilters(volumeFilter);
+    
+    // Different settings based on output format
+    if (finalOutputPath.endsWith('.mp3')) {
       command
-        .audioFilters(volumeFilter)
-        .audioCodec('libopus')
+        .audioCodec('libmp3lame')          // Use MP3 codec for MP3 output
+        .audioBitrate('256k')              // High quality MP3
+        .outputOptions([
+          '-q:a 0',                        // Highest quality setting
+          '-map_metadata 0'                // Preserve metadata
+        ]);
+    } else if (finalOutputPath.endsWith('.m4a')) {
+      command
+        .audioCodec('aac')                 // AAC codec for M4A files
+        .audioBitrate('256k')              // High quality AAC
+        .outputOptions([
+          '-strict experimental',          // Needed for some AAC encoders
+          '-map_metadata 0'                // Preserve metadata
+        ]);
+    } else {
+      // For other audio formats, use format-specific settings
+      command
+        .audioCodec('libmp3lame')          // Default to MP3 when in doubt
         .audioBitrate('256k')
         .outputOptions([
-          '-compression_level 0',          // minimal compression
-          '-vbr on',                       // variable bitrate
-          '-application audio'             // favor quality over speech
-        ]);
-      
-      logger.info(`Converting audio file from ${ext} to .m4a for better compatibility`);
-    } else {
-      // For other audio formats
-      command
-        .audioFilters(volumeFilter)
-        .outputOptions([
-          '-c:a libopus',                    // opus audio codec
-          '-b:a 256k',                       // high bitrate
-          '-compression_level 0',            // minimal compression
-          '-vbr on',                         // variable bitrate
-          '-application audio'               // favor quality over speech
+          '-q:a 0',                        // Highest quality
+          '-map_metadata 0'                // Preserve metadata
         ]);
     }
   }
@@ -282,7 +288,6 @@ async function createUncompressedNormalizedVersion(
     
     // If the output path changed, update the return to the new path
     if (finalOutputPath !== outputPath) {
-      // Create a symlink or simply use the new path
       logger.info(`Using ${finalOutputPath} instead of ${outputPath} for better compatibility`);
     }
   } catch (error) {
@@ -319,10 +324,12 @@ async function createCompressedNormalizedVersion(
   const inputExt = path.extname(filePath).toLowerCase();
   const outputExt = path.extname(outputPath).toLowerCase();
   
-  // Make sure output has the correct extension for audio files
-  // We'll use .m4a for audio-only output
-  const finalOutputPath = (!isVideo && (outputExt === '.wav' || outputExt === '.mp3')) ? 
-    outputPath.replace(/\.(wav|mp3)$/i, '.m4a') : outputPath;
+  // For audio-only files, ensure we output as MP3 for maximum compatibility
+  let finalOutputPath = outputPath;
+  if (!isVideo && (outputExt === '.wav' || outputExt === '.ogg' || outputExt === '.m4a')) {
+    finalOutputPath = outputPath.replace(/\.(wav|ogg|m4a)$/i, '.mp3');
+    logger.info(`Converting audio output to MP3 for maximum Discord compatibility: ${finalOutputPath}`);
+  }
   
   // For video files, we start with standard parameters and progressively
   // apply more aggressive compression if needed
@@ -331,7 +338,8 @@ async function createCompressedNormalizedVersion(
   
   while (attempts < maxAttempts) {
     let command = ffmpeg(filePath);
-    const attemptOutputPath = attempts === 0 ? finalOutputPath : finalOutputPath.replace(/\.(mp4|m4a)$/i, `_attempt${attempts}.$1`);
+    const attemptOutputPath = attempts === 0 ? finalOutputPath : 
+      finalOutputPath.replace(/\.(mp4|mp3)$/i, `_attempt${attempts}.$1`);
     attempts++;
     
     try {
@@ -373,11 +381,9 @@ async function createCompressedNormalizedVersion(
               '-rc vbr',                      // variable bitrate for better quality
               `-maxrate:v ${adjustedVideoBitrate * 1.5}k`, // 1.5x target for peaks
               `-bufsize ${adjustedVideoBitrate * 2}k`,    // 2x target for buffer
-              '-c:a libopus',                 // opus audio codec
+              '-c:a aac',                     // AAC audio codec for mp4 compatibility
               `-b:a ${audioBitrate}k`,        // target audio bitrate
-              '-compression_level 8',         // opus compression level (0-10)
-              '-vbr on',                      // variable bitrate mode
-              '-application audio',           // favor quality over speech
+              '-strict experimental',         // needed for some AAC encoders
               `-vf ${scaleFilter}`,           // scale video if needed
               '-pix_fmt yuv420p',             // widely compatible pixel format
               '-movflags +faststart'          // enable streaming
@@ -391,42 +397,27 @@ async function createCompressedNormalizedVersion(
               `-maxrate:v ${adjustedVideoBitrate * 1.5}k`, // 1.5x target for peaks
               `-bufsize ${adjustedVideoBitrate * 2}k`,    // 2x target for buffer
               '-preset medium',               // faster on later attempts
-              '-c:a libopus',                 // opus audio codec
+              '-c:a aac',                     // AAC audio codec for mp4 compatibility
               `-b:a ${audioBitrate}k`,        // target audio bitrate
-              '-compression_level 8',         // opus compression level
-              '-vbr on',                      // variable bitrate mode
-              '-application audio',           // favor quality over speech
+              '-strict experimental',         // needed for some AAC encoders
               `-vf ${scaleFilter}`,           // scale video if needed
               '-pix_fmt yuv420p',             // widely compatible pixel format
               '-movflags +faststart'          // enable streaming
             ]);
         }
       } else {
-        // For audio-only files, we need a more specialized approach
-        const targetBitrate = attempts === 1 ? 160 : (attempts === 2 ? 128 : 96);
+        // For audio-only files, use MP3 format
+        const targetBitrate = attempts === 1 ? 192 : (attempts === 2 ? 160 : 128);
         
-        // For WAV and MP3 files, ensure we're using the right output format
-        if (inputExt === '.wav' || inputExt === '.mp3' || inputExt === '.m4a') {
-          logger.info(`Processing audio-only file to ${finalOutputPath}`);
-          command
-            .audioCodec('libopus')
-            .audioBitrate(`${targetBitrate}k`)
-            .outputOptions([
-              '-compression_level 8',         // opus compression level
-              '-vbr on',                      // variable bitrate mode
-              '-application audio'            // favor quality over speech
-            ]);
-        } else {
-          // For other audio formats
-          command
-            .outputOptions([
-              '-c:a libopus',                 // opus audio codec
-              `-b:a ${targetBitrate}k`,       // target audio bitrate
-              '-compression_level 8',         // opus compression level
-              '-vbr on',                      // variable bitrate mode
-              '-application audio'            // favor quality over speech
-            ]);
-        }
+        logger.info(`Processing audio-only file to MP3 with bitrate ${targetBitrate}k`);
+        command
+          .audioCodec('libmp3lame')          // MP3 codec
+          .audioBitrate(`${targetBitrate}k`) // Target bitrate
+          .outputOptions([
+            '-q:a 2',                        // Quality preset (0=best, 9=worst)
+            '-map_metadata 0',               // Copy metadata
+            '-id3v2_version 3'               // Use ID3v2.3 tags for better compatibility
+          ]);
       }
       
       // If duration exceeds max, trim the file
@@ -459,7 +450,6 @@ async function createCompressedNormalizedVersion(
         // update the returned path to reflect this
         if (finalOutputPath !== outputPath) {
           logger.info(`Using ${finalOutputPath} instead of ${outputPath} for better compatibility`);
-          // Create a symlink or update in calling code
         }
         
         return;
