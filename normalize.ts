@@ -319,11 +319,12 @@ async function encodeMedia(
       outputExt = '.ogg';
       logger.info(`Converting audio from ${inputExt} to .ogg with Opus codec for better compatibility`);
     } else {
-      // For WebM files, we need to convert to MP4 when using H.264 codec
-      if (inputExt === '.webm' || outputExt === '.webm') {
-        tempOutputPath = outputPath.replace(/\.webm$/i, '.mp4');
+      // For WebM and MOV files, we need to convert to MP4 when using H.264 codec or Opus audio
+      if (inputExt === '.webm' || outputExt === '.webm' || 
+          inputExt === '.mov' || outputExt === '.mov') {
+        tempOutputPath = outputPath.replace(/\.(webm|mov)$/i, '.mp4');
         outputExt = '.mp4';
-        logger.info(`Converting from WebM to MP4 container for H.264 compatibility`);
+        logger.info(`Converting from ${inputExt} to MP4 container for H.264/Opus compatibility`);
       }
     }
     
