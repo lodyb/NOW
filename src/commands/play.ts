@@ -163,7 +163,7 @@ export async function playCommand(message: Message): Promise<void> {
         
         // Normalize the file on demand
         const normalizedDir = process.env.NORMALIZED_DIR || './normalized';
-        const normalizedPath = await normalizeMediaIfNeeded(fullPath, normalizedDir);
+        const normalizedPath = await normalizeMediaIfNeeded(fullPath, { outputDir: normalizedDir });
         
         await channel.send({
           content: `Now playing: "${media.title}" (processed for Discord compatibility)`,
@@ -210,7 +210,7 @@ export async function playCommand(message: Message): Promise<void> {
         channel.send(`Processed file is still too large (${(processedStats.size / (1024 * 1024)).toFixed(2)}MB), applying additional compression...`);
         
         const normalizedDir = path.dirname(tempFile);
-        const compressedPath = await normalizeMediaIfNeeded(tempFile, normalizedDir);
+        const compressedPath = await normalizeMediaIfNeeded(tempFile, { outputDir: normalizedDir });
         
         // Send the compressed file
         await channel.send({

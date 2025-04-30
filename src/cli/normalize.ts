@@ -6,6 +6,16 @@ import { AppDataSource } from '../database/connection';
 import { logger } from '../utils/logger';
 import { processAllMedia, processSingleFile } from '../services/media/normalizer';
 
+// Define option types
+interface AllCommandOptions {
+  verbose?: boolean;
+}
+
+interface FileCommandOptions {
+  file: string;
+  verbose?: boolean;
+}
+
 // Set up CLI options
 const program = new Command();
 program
@@ -18,7 +28,7 @@ program
   .command('all')
   .description('Process all media files in the database')
   .option('-v, --verbose', 'Show verbose output')
-  .action(async (options) => {
+  .action(async (options: AllCommandOptions) => {
     try {
       // Initialize database connection
       await AppDataSource.initialize();
@@ -37,13 +47,22 @@ program
   });
 
 // Command for normalizing a single file
-program
+const fileCommand = program
   .command('file')
-  .description('Process a single media file')
-  .requiredOption('--file <path>', 'Path to the media file')
+  .description('Process a single media file');
+
+// Add options to the file command
+fileCommand
+  .option('--file <path>', 'Path to the media file', '')
   .option('-v, --verbose', 'Show verbose output')
-  .action(async (options) => {
+  .action(async (options: FileCommandOptions) => {
     try {
+      if (!options.file) {
+        logger.error('No file specified. Use --file parameter to specify the file to normalize.');
+        fileCommand.help();
+        process.exit(1);
+      }
+
       // Initialize database connection
       await AppDataSource.initialize();
       
@@ -67,7 +86,7 @@ program
   });
 
 // Parse arguments
-program.parse();
+program.parse(process.argv);
 
 // Show help if no command provided
 if (!process.argv.slice(2).length) {
