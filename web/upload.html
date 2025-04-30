@@ -350,14 +350,17 @@
     
     // Function to fetch and display all media
     function fetchMediaList() {
+      console.log('Fetching media list...');
       fetch('/api/media')
         .then(response => {
+          console.log('Media API response status:', response.status);
           if (!response.ok) {
             throw new Error('Network response was not ok');
           }
           return response.json();
         })
         .then(data => {
+          console.log('Media API response data:', data);
           // Clear current list
           mediaList.innerHTML = '';
           

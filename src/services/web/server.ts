@@ -40,7 +40,8 @@ const upload = multer({
     // Accept audio and video files
     const allowedTypes = [
       'audio/mpeg', 'audio/mp3', 'audio/ogg', 'audio/wav', 'audio/x-wav',
-      'video/mp4', 'video/webm', 'video/ogg', 'video/quicktime'
+      'video/mp4', 'video/webm', 'video/ogg', 'video/quicktime',
+      'video/x-matroska', 'video/x-mkv'
     ];
     
     if (allowedTypes.includes(file.mimetype)) {
@@ -307,6 +308,145 @@ export async function startWebServer(port: number): Promise<void> {
     } catch (error) {
       logger.error(`Media update error: ${error instanceof Error ? error.message : String(error)}`);
       res.status(500).json({ success: false, message: 'Server error' });
+    }
+  });
+  
+  // API endpoint for serving media files
+  app.get('/media/:id/preview', async (req, res) => {
+    try {
+      const { id } = req.params;
+      
+      if (!id) {
+        return res.status(400).json({ success: false, message: 'No media ID provided' });
+      }
+      
+      // Get the media item
+      const mediaRepository = AppDataSource.getRepository(Media);
+      const media = await mediaRepository.findOne({
+        where: { id: parseInt(id) }
+      });
+      
+      if (!media) {
+        return res.status(404).json({ success: false, message: 'Media not found' });
+      }
+      
+      // Get the file path
+      const filePath = media.normalizedPath || media.filePath;
+      
+      if (!filePath) {
+        return res.status(404).json({ success: false, message: 'Media file path not found' });
+      }
+      
+      // Check if file exists
+      const fullPath = path.resolve(process.cwd(), filePath);
+      if (!fs.existsSync(fullPath)) {
+        return res.status(404).json({ success: false, message: 'Media file not found on disk' });
+      }
+      
+      // Send the file
+      res.sendFile(fullPath);
+    } catch (error) {
+      logger.error(`Media preview error: ${error instanceof Error ? error.message : String(error)}`);
+      res.status(500).json({ success: false, message: 'Server error' });
+    }
+  });
+
+  // API endpoint for waveform images (placeholder for now, returns a static image)
+  app.get('/media/:id/waveform', async (req, res) => {
+    try {
+      const { id } = req.params;
+      
+      if (!id) {
+        return res.status(400).json({ success: false, message: 'No media ID provided' });
+      }
+      
+      // Get the media item
+      const mediaRepository = AppDataSource.getRepository(Media);
+      const media = await mediaRepository.findOne({
+        where: { id: parseInt(id) }
+      });
+      
+      if (!media) {
+        return res.status(404).json({ success: false, message: 'Media not found' });
+      }
+      
+      // For now, just send a generic waveform image or fallback to the actual audio file
+      const wavePath = path.join(WEB_DIR, 'assets', 'waveform.png');
+      
+      if (fs.existsSync(wavePath)) {
+        res.sendFile(wavePath);
+      } else {
+        // Fallback to actual audio file
+        const filePath = media.normalizedPath || media.filePath;
+        
+        if (!filePath) {
+          return res.status(404).json({ success: false, message: 'Media file path not found' });
+        }
+        
+        const fullPath = path.resolve(process.cwd(), filePath);
+        if (!fs.existsSync(fullPath)) {
+          return res.status(404).json({ success: false, message: 'Media file not found on disk' });
+        }
+        
+        res.sendFile(fullPath);
+      }
+    } catch (error) {
+      logger.error(`Waveform error: ${error instanceof Error ? error.message : String(error)}`);
+      res.status(500).json({ success: false, message: 'Server error' });
+    }
+  });
+
+  // API endpoint for deleting media
+  app.delete('/api/media/:id', async (req, res) => {
+    try {
+      const { id } = req.params;
+      
+      if (!id) {
+        return res.status(400).json({ success: false, message: 'No media ID provided' });
+      }
+      
+      // Get the media item
+      const mediaRepository = AppDataSource.getRepository(Media);
+      const media = await mediaRepository.findOne({
+        where: { id: parseInt(id) },
+        relations: ['answers']
+      });
+      
+      if (!media) {
+        return res.status(404).json({ success: false, message: 'Media not found' });
+      }
+      
+      // Get the file paths to delete
+      const filePaths = [
+        media.filePath, 
+        media.normalizedPath,
+        media.uncompressedPath
+      ].filter(Boolean);
+      
+      // First delete from database
+      await mediaRepository.remove(media);
+      
+      // Then try to delete files (but don't fail if files can't be deleted)
+      for (const path of filePaths) {
+        try {
+          const fullPath = path.startsWith('/') ? path : path.resolve(process.cwd(), path);
+          if (fs.existsSync(fullPath)) {
+            fs.unlinkSync(fullPath);
+            logger.info(`Deleted file: ${fullPath}`);
+          }
+        } catch (fileError) {
+          logger.error(`Error deleting file ${path}: ${fileError instanceof Error ? fileError.message : String(fileError)}`);
+          // Continue with other files even if one fails
+        }
+      }
+      
+      res.json({
+        success: true,
+        message: 'Media deleted successfully'
+      });
+    } catch (error) {
+      logger.error(`Media deletion error: ${error instanceof Error ? error.message : String(error)}`);
+      res.status(500).json({ success: false, message: 'Server error during media deletion' });
     }
   });
   
