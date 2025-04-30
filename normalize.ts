@@ -45,6 +45,24 @@ function validFile(filePath: string): boolean {
   }
 }
 
+// Get video dimensions using ffprobe
+function getVideoDimensions(filePath: string): { width: number; height: number } {
+  try {
+    // Get width
+    const widthOutput = execSync(`ffprobe -v error -select_streams v:0 -show_entries stream=width -of default=noprint_wrappers=1:nokey=1 "${filePath}"`).toString().trim();
+    const width = parseInt(widthOutput, 10);
+    
+    // Get height
+    const heightOutput = execSync(`ffprobe -v error -select_streams v:0 -show_entries stream=height -of default=noprint_wrappers=1:nokey=1 "${filePath}"`).toString().trim();
+    const height = parseInt(heightOutput, 10);
+    
+    return { width, height };
+  } catch (error) {
+    logger.error(`Error getting dimensions for ${filePath}: ${error}`);
+    return { width: 0, height: 0 };
+  }
+}
+
 // Get media duration using ffprobe
 function getMediaDuration(filePath: string): number {
   try {
@@ -263,8 +281,20 @@ async function encodeMedia(
     }
     
     if (isVideo) {
-      // Video scale filter
-      command += ` -vf "scale=-1:${height},format=yuv420p"`;
+      // Get original video dimensions
+      const dimensions = getVideoDimensions(inputPath);
+      logger.info(`Original video dimensions: ${dimensions.width}x${dimensions.height}`);
+      
+      // Only scale if original is larger than target dimensions
+      if (dimensions.width > 1280 || dimensions.height > 720) {
+        // Video scale filter - we'll use 1280x720 as the maximum resolution
+        command += ` -vf "scale=min(1280,iw):min(${height},ih):force_original_aspect_ratio=decrease,format=yuv420p"`;
+        logger.info(`Scaling video to max dimensions 1280x${height}`);
+      } else {
+        // Keep original resolution but ensure yuv420p pixel format
+        command += ` -vf "format=yuv420p"`;
+        logger.info(`Keeping original resolution ${dimensions.width}x${dimensions.height}`);
+      }
       
       if (hasNvenc) {
         // Use NVIDIA hardware acceleration with true VBR settings
@@ -355,21 +385,31 @@ async function encodeMedia(
       // Common video settings
       command += ' -pix_fmt yuv420p -movflags +faststart';
       
-      // Audio settings for video files (AAC for MP4)
+      // Audio settings for video files - use Opus codec for better quality
       let audioBitrate;
+      let opusQuality;
+      
       if (audioQuality === 'high') {
         audioBitrate = '128k';
+        opusQuality = 3;  // Best quality
       } else if (audioQuality === 'medium') {
         audioBitrate = '96k';
+        opusQuality = 4;
       } else if (audioQuality === 'low') {
         audioBitrate = '64k';
+        opusQuality = 5;
       } else if (audioQuality === 'very-low') {
         audioBitrate = '48k';
+        opusQuality = 6;
       } else { // extremely-low
         audioBitrate = '32k';
+        opusQuality = 7;  // Worst quality
       }
       
-      command += ` -c:a aac -b:a ${audioBitrate} -strict experimental`;
+      // Use Opus codec for video files instead of AAC
+      command += ` -c:a libopus -b:a ${audioBitrate}`;
+      command += ` -compression_level ${opusQuality}`; // Opus compression level (1-10, lower = better)
+      command += ' -vbr on -application audio'; // Use VBR and optimize for music
     } else {
       // Audio-only, remove video streams
       command += ' -vn';
