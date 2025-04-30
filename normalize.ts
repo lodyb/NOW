@@ -90,10 +90,11 @@ async function processMediaFile(media: Media, hasNvenc: boolean): Promise<boolea
     return true;
   }
   
-  // Determine the output file path (in normalized dir)
+  // Determine the output file paths
   const fileName = path.basename(originalPath);
   const outputPath = path.join(NORMALIZED_DIR, fileName);
   const tempOutputPath = path.join(TEMP_DIR, `temp_${fileName}`);
+  const preTrimPath = path.join(TEMP_DIR, `pretrim_${fileName}`);
   
   // Get the duration of the input file
   const duration = getMediaDuration(originalPath);
@@ -112,6 +113,29 @@ async function processMediaFile(media: Media, hasNvenc: boolean): Promise<boolea
     // For audio files, we'll output as .ogg with Opus codec
     finalOutputPath = outputPath.replace(/\.(wav|mp3|ogg|flac|m4a)$/i, '.ogg');
     logger.info(`Will convert ${inputExt} to .ogg with Opus codec for better compatibility`);
+  }
+  
+  // Pre-trim long media to 10 minutes (600 seconds) to save processing time
+  let inputForEncoding = originalPath;
+  
+  if (duration > 600) {
+    logger.info(`Media duration is ${Math.round(duration)}s. Pre-trimming to 10 minutes to optimize processing.`);
+    try {
+      // Simple trim command without any quality adjustments
+      const preTrimCommand = `ffmpeg -y -i "${originalPath}" -t 600 -c copy "${preTrimPath}"`;
+      logger.info(`Pre-trimming command: ${preTrimCommand}`);
+      execSync(preTrimCommand);
+      
+      if (validFile(preTrimPath)) {
+        inputForEncoding = preTrimPath;
+        logger.info(`Successfully pre-trimmed ${media.title} to 10 minutes for faster processing`);
+      } else {
+        logger.error(`Failed to pre-trim ${media.title}, using original file`);
+      }
+    } catch (error) {
+      logger.error(`Error pre-trimming ${media.title}: ${error}`);
+      // Continue with original file if pre-trimming fails
+    }
   }
   
   // Try various encoding settings until successful
@@ -179,7 +203,7 @@ async function processMediaFile(media: Media, hasNvenc: boolean): Promise<boolea
     
     try {
       const success = await encodeMedia(
-        originalPath, 
+        inputForEncoding, // Using the potentially pre-trimmed file
         tempOutputPath, 
         isVideo,
         hasNvenc, 
@@ -229,6 +253,16 @@ async function processMediaFile(media: Media, hasNvenc: boolean): Promise<boolea
       }
     } catch (error) {
       logger.error(`Error processing ${media.title} (attempt ${i+1}): ${error}`);
+    }
+  }
+  
+  // Cleanup pre-trimmed file if it exists
+  if (inputForEncoding !== originalPath && fs.existsSync(preTrimPath)) {
+    try {
+      fs.unlinkSync(preTrimPath);
+      logger.info(`Cleaned up pre-trimmed file: ${preTrimPath}`);
+    } catch (error) {
+      logger.error(`Error cleaning up pre-trimmed file: ${error}`);
     }
   }
   
@@ -293,6 +327,10 @@ async function encodeMedia(
       logger.info(`Trimming to ${trimDuration} seconds`);
       command += ` -t ${trimDuration}`;
     }
+    
+    // Always downmix audio to stereo (2 channels) for better compatibility with Discord
+    command += ' -ac 2';
+    logger.info('Downmixing audio to stereo for optimal Discord playback');
     
     if (isVideo) {
       // Get original video dimensions
