@@ -376,8 +376,22 @@
         })
         .then(data => {
           console.log('API response data:', data);
-          if (data.success && Array.isArray(data.media)) {
-            allMedia = data.media;
+          
+          // Handle both formats: array or {success, media} object
+          let mediaItems = [];
+          
+          if (Array.isArray(data)) {
+            // Original format: direct array
+            mediaItems = data;
+          } else if (data.success && Array.isArray(data.media)) {
+            // New format: {success: true, media: [...]}
+            mediaItems = data.media;
+          } else {
+            throw new Error('Invalid API response format');
+          }
+          
+          if (mediaItems.length > 0) {
+            allMedia = mediaItems;
             // Sort by creation date (newest first)
             allMedia.sort((a, b) => {
               if (a.createdAt && b.createdAt) {
@@ -390,7 +404,7 @@
             mediaCount.textContent = `${allMedia.length} media files found`;
             renderMediaGrid();
           } else {
-            throw new Error('Invalid API response format');
+            throw new Error('No media items found');
           }
         })
         .catch(error => {

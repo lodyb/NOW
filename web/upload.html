@@ -318,8 +318,23 @@
                   `Successfully uploaded (ID: ${result.id})` : 
                   `Failed - ${result.message || 'Unknown error'}`;
                 
+                if (result.success) {
+                  // Add edit button for successful uploads
+                  content += ` <button class="edit-upload-btn" data-id="${result.id}" data-title="${result.title}">Edit Answers</button>`;
+                }
+                
                 resultItem.innerHTML = content;
                 resultsList.appendChild(resultItem);
+                
+                // Add event listener for the edit button if it exists
+                const editBtn = resultItem.querySelector('.edit-upload-btn');
+                if (editBtn) {
+                  editBtn.addEventListener('click', function() {
+                    const mediaId = this.dataset.id;
+                    const mediaTitle = this.dataset.title;
+                    createEditRow(mediaId, mediaTitle);
+                  });
+                }
               });
               
               // Refresh media list to show newly uploaded files
@@ -346,6 +361,60 @@
       
       xhr.open('POST', '/api/upload', true);
       xhr.send(formData);
+    }
+    
+    // Function to create an edit row for newly uploaded media
+    function createEditRow(mediaId, mediaTitle) {
+      // Create a new container for the quick edit
+      const quickEditContainer = document.createElement('div');
+      quickEditContainer.className = 'quick-edit-container';
+      quickEditContainer.id = `quick-edit-${mediaId}`;
+      
+      quickEditContainer.innerHTML = `
+        <h3>Quick Edit: ${mediaTitle}</h3>
+        <div class="form-group">
+          <label for="quick-answers-${mediaId}">Alternative Answers (one per line):</label>
+          <textarea id="quick-answers-${mediaId}" placeholder="Enter alternative answers (one per line)" rows="5"></textarea>
+        </div>
+        <div class="form-actions">
+          <button class="save-quick-edit-btn" data-id="${mediaId}">Save Answers</button>
+          <button class="dismiss-quick-edit-btn" data-id="${mediaId}">Dismiss</button>
+        </div>
+        <div class="update-success" id="quick-update-success-${mediaId}">Answers saved successfully!</div>
+      `;
+      
+      // Insert after the result item
+      const resultItem = document.querySelector(`.result-item button[data-id="${mediaId}"]`).closest('.result-item');
+      resultItem.after(quickEditContainer);
+      
+      // Add event listeners
+      quickEditContainer.querySelector('.save-quick-edit-btn').addEventListener('click', function() {
+        const id = this.dataset.id;
+        const answersText = document.getElementById(`quick-answers-${id}`).value.trim();
+        
+        // Split answers by newline and filter out empty lines
+        const answers = answersText.split('\n').filter(a => a.trim() !== '');
+        
+        updateMedia(id, mediaTitle, answers, function() {
+          // Success callback
+          const successMsg = document.getElementById(`quick-update-success-${id}`);
+          successMsg.style.display = 'block';
+          
+          // Hide success message after 3 seconds
+          setTimeout(() => {
+            successMsg.style.display = 'none';
+          }, 3000);
+        });
+      });
+      
+      quickEditContainer.querySelector('.dismiss-quick-edit-btn').addEventListener('click', function() {
+        const id = this.dataset.id;
+        const container = document.getElementById(`quick-edit-${id}`);
+        container.remove();
+      });
+      
+      // Focus on the textarea
+      document.getElementById(`quick-answers-${mediaId}`).focus();
     }
     
     // Function to fetch and display all media
@@ -462,7 +531,7 @@
     }
     
     // Function to update media
-    function updateMedia(id, title, answers) {
+    function updateMedia(id, title, answers, callback) {
       fetch(`/api/media/${id}`, {
         method: 'PUT',
         headers: {
@@ -488,6 +557,10 @@
         setTimeout(() => {
           successMsg.style.display = 'none';
         }, 3000);
+        
+        if (callback) {
+          callback();
+        }
       })
       .catch(error => {
         console.error('Error updating media:', error);
