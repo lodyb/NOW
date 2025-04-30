@@ -124,6 +124,31 @@ export async function startWebServer(port: number): Promise<void> {
             // Get title for this file
             const title = titlesList[index] || path.basename(file.originalname, path.extname(file.originalname));
             
+            // Check for duplicates before saving
+            const mediaRepository = AppDataSource.getRepository(Media);
+            const existingMedia = await mediaRepository.findOne({
+              where: { title }
+            });
+            
+            if (existingMedia) {
+              logger.warn(`Duplicate media detected with title: "${title}". Skipping upload.`);
+              
+              // Clean up the uploaded file since we won't use it
+              try {
+                fs.unlinkSync(file.path);
+              } catch (e) {
+                // Ignore cleanup errors
+              }
+              
+              return {
+                originalName: file.originalname,
+                title: title,
+                id: existingMedia.id,
+                success: false,
+                error: `A media item with title "${title}" already exists (ID: ${existingMedia.id})`
+              };
+            }
+            
             // Normalize the media file for Discord compatibility
             const normalizedPath = await normalizeMedia(file.path);
             
