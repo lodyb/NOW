@@ -202,13 +202,29 @@ async function processMediaFile(media: Media, hasNvenc: boolean): Promise<boolea
       preset: isVideo ? 'p4' : undefined, 
       trimDuration: null 
     },
-    // Final attempt: 360p extremely low quality + trim to 4 minutes
+    // Sixth attempt: 360p extremely low quality + trim to 4 minutes (240s)
     { 
       height: 360, 
       videoQuality: 'extremely-low', // Quality-based parameter for VBR (CQ 50)
       audioQuality: 'extremely-low', 
       preset: isVideo ? 'p4' : undefined, 
       trimDuration: 240 
+    },
+    // Seventh attempt: 360p extremely low quality + trim to 2 minutes (120s)
+    { 
+      height: 360, 
+      videoQuality: 'extremely-low', 
+      audioQuality: 'extremely-low', 
+      preset: isVideo ? 'p4' : undefined, 
+      trimDuration: 120 
+    },
+    // Eighth attempt: 360p extremely low quality + trim to 1 minute (60s)
+    { 
+      height: 240, // Even lower resolution for last attempt
+      videoQuality: 'extremely-low', 
+      audioQuality: 'extremely-low', 
+      preset: isVideo ? 'p4' : undefined, 
+      trimDuration: 60 
     }
   ];
   
