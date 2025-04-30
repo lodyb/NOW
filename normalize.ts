@@ -405,19 +405,19 @@ async function encodeMedia(
       let opusQuality;
       
       if (audioQuality === 'high') {
-        audioBitrate = '128k';
+        audioBitrate = '192k';
         opusQuality = 3;  // Best quality
       } else if (audioQuality === 'medium') {
-        audioBitrate = '96k';
+        audioBitrate = '128k';
         opusQuality = 4;
       } else if (audioQuality === 'low') {
-        audioBitrate = '64k';
+        audioBitrate = '96k';
         opusQuality = 5;
       } else if (audioQuality === 'very-low') {
-        audioBitrate = '48k';
+        audioBitrate = '64k';
         opusQuality = 6;
       } else { // extremely-low
-        audioBitrate = '32k';
+        audioBitrate = '48k';
         opusQuality = 7;  // Worst quality
       }
       
