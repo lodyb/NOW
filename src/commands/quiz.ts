@@ -70,15 +70,26 @@ class QuizSession {
    * Helper function to resolve file path correctly
    */
   private resolveMediaPath(filePath: string): string {
+    // If the path is already an absolute path, use it directly
+    if (filePath.startsWith('/')) {
+      // This is an absolute path, so just return it
+      logger.info(`Using absolute path directly: ${filePath}`);
+      return filePath;
+    }
+    
     const normalizedDir = process.env.NORMALIZED_DIR || './normalized';
     
     // Check if the path already includes the normalized directory
     if (filePath.startsWith('normalized/') || filePath.startsWith('./normalized/')) {
       // Path already contains the normalized prefix, just resolve from project root
-      return path.resolve(process.cwd(), filePath);
+      const resolvedPath = path.resolve(process.cwd(), filePath);
+      logger.info(`Resolved normalized path: ${resolvedPath}`);
+      return resolvedPath;
     } else {
       // Path doesn't contain the prefix, join with normalized directory
-      return path.resolve(normalizedDir, filePath);
+      const resolvedPath = path.resolve(normalizedDir, filePath);
+      logger.info(`Joined with normalized directory: ${resolvedPath}`);
+      return resolvedPath;
     }
   }
 
@@ -246,53 +257,123 @@ class QuizSession {
       this.guessedUsers.clear();
       this.activeHints = [];
       
+      logger.info(`Starting quiz round ${this.currentRound}`);
+      
       // Update game session in database
       if (this.gameSessionId) {
-        await AppDataSource.getRepository(GameSession).update(
-          this.gameSessionId,
-          { currentRound: this.currentRound }
-        );
+        try {
+          await AppDataSource.getRepository(GameSession).update(
+            this.gameSessionId,
+            { currentRound: this.currentRound }
+          );
+          logger.info(`Updated game session ${this.gameSessionId} to round ${this.currentRound}`);
+        } catch (dbError) {
+          logger.error(`Database error updating game session: ${dbError}`);
+          channel.send('There was a database error. The quiz may not function correctly.');
+        }
       }
       
       // Get a random media item from the database
       const mediaRepository = AppDataSource.getRepository(Media);
       
-      const count = await mediaRepository.count();
-      if (count === 0) {
-        channel.send('There are no media files in the database. The quiz cannot continue.');
+      try {
+        const count = await mediaRepository.count();
+        logger.info(`Found ${count} media items in database`);
+        
+        if (count === 0) {
+          channel.send('There are no media files in the database. The quiz cannot continue.');
+          this.stop(channel);
+          return;
+        }
+        
+        // Get a random media item
+        const randomIndex = Math.floor(Math.random() * count);
+        logger.info(`Attempting to fetch media at index ${randomIndex}`);
+        
+        const media = await mediaRepository.find({
+          relations: ['answers'],
+          take: 1,
+          skip: randomIndex
+        });
+        
+        if (!media || media.length === 0) {
+          logger.error('Failed to fetch media item from database');
+          channel.send('Failed to fetch a media item. The quiz cannot continue.');
+          this.stop(channel);
+          return;
+        }
+        
+        logger.info(`Successfully fetched media: ${media[0].title}, ID: ${media[0].id}`);
+        this.currentMedia = media[0];
+      } catch (mediaError) {
+        logger.error(`Error fetching media from database: ${mediaError}`);
+        channel.send('There was an error accessing the media database. The quiz cannot continue.');
         this.stop(channel);
         return;
       }
       
-      // Get a random media item
-      const randomIndex = Math.floor(Math.random() * count);
-      const media = await mediaRepository.find({
-        relations: ['answers'],
-        take: 1,
-        skip: randomIndex
-      });
+      // Try to find the file - prioritize uncompressed path for higher quality quiz audio
+      // Fall back to normalized path, then original path if necessary
+      let filePath = this.currentMedia.uncompressedPath || this.currentMedia.normalizedPath || this.currentMedia.filePath;
+      logger.info(`Using media file path: ${filePath} (${this.currentMedia.uncompressedPath ? 'uncompressed' : this.currentMedia.normalizedPath ? 'normalized' : 'original'})`);
       
-      if (!media || media.length === 0) {
-        channel.send('Failed to fetch a media item. The quiz cannot continue.');
-        this.stop(channel);
-        return;
-      }
-      
-      this.currentMedia = media[0];
-      
-      // Try to find the file
-      const filePath = this.currentMedia.normalizedPath || this.currentMedia.filePath;
       const fullPath = this.resolveMediaPath(filePath);
+      logger.info(`Looking for media file at resolved path: ${fullPath}`);
       
-      if (!fs.existsSync(fullPath)) {
-        logger.error(`File for media ID ${this.currentMedia.id} not found at ${fullPath}`);
-        channel.send('The media file for this round could not be found. Skipping to next round...');
+      try {
+        if (!fs.existsSync(fullPath)) {
+          logger.error(`File for media ID ${this.currentMedia.id} not found at ${fullPath}`);
+          logger.info('Trying fallback paths...');
+          
+          // Try fallback paths if the selected path doesn't exist
+          const fallbackPaths = [
+            this.currentMedia.normalizedPath,
+            this.currentMedia.uncompressedPath,
+            this.currentMedia.filePath
+          ].filter(p => p && p !== filePath);
+          
+          let fallbackFound = false;
+          for (const fbPath of fallbackPaths) {
+            if (!fbPath) continue;
+            
+            const fbFullPath = this.resolveMediaPath(fbPath);
+            logger.info(`Trying fallback path: ${fbFullPath}`);
+            
+            if (fs.existsSync(fbFullPath)) {
+              logger.info(`Using fallback path: ${fbFullPath}`);
+              filePath = fbPath;
+              fallbackFound = true;
+              break;
+            }
+          }
+          
+          if (!fallbackFound) {
+            channel.send('The media file for this round could not be found. Skipping to next round...');
+            this.roundTimer = setTimeout(() => this.nextRound(channel), 3000);
+            return;
+          }
+        }
+        
+        // Check if the file is readable
+        const fileToUse = this.resolveMediaPath(filePath);
+        try {
+          fs.accessSync(fileToUse, fs.constants.R_OK);
+          logger.info(`Media file found and is readable: ${fileToUse}`);
+        } catch (accessError) {
+          logger.error(`File exists but is not readable: ${fileToUse}. Error: ${accessError}`);
+          channel.send('The media file exists but cannot be read. Skipping to next round...');
+          this.roundTimer = setTimeout(() => this.nextRound(channel), 3000);
+          return;
+        }
+      } catch (fsError) {
+        logger.error(`Error checking if file exists: ${fsError}`);
+        channel.send('There was an error checking if the media file exists. Skipping to next round...');
         this.roundTimer = setTimeout(() => this.nextRound(channel), 3000);
         return;
       }
       
       // Process file with any filters or clip it if needed
-      let fileToPlay = fullPath;
+      let fileToPlay = this.resolveMediaPath(filePath);
       
       // Apply both filters and clipping if needed
       if (Object.keys(this.settings.filters || {}).length > 0 || this.settings.clipDuration) {
@@ -301,7 +382,8 @@ class QuizSession {
         try {
           // First apply filters if any
           if (Object.keys(this.settings.filters || {}).length > 0) {
-            fileToPlay = await processMedia(fullPath, this.settings.filters || {});
+            fileToPlay = await processMedia(fileToPlay, this.settings.filters || {});
+            logger.info(`Applied filters to media, new path: ${fileToPlay}`);
           }
           
           // Then clip if needed
@@ -311,11 +393,12 @@ class QuizSession {
               this.settings.clipDuration, 
               this.settings.startPosition
             );
+            logger.info(`Clipped media, new path: ${fileToPlay}`);
           }
         } catch (error) {
           logger.error('Error processing media for quiz:', error);
           channel.send('There was an error processing the media for this round. Using the original file instead.');
-          fileToPlay = fullPath;
+          fileToPlay = this.resolveMediaPath(filePath);
         }
       }
       
@@ -329,6 +412,32 @@ class QuizSession {
       });
       
       try {
+        logger.info(`Attempting to play audio file: ${fileToPlay}`);
+        
+        // Check voice connection state
+        if (!this.connection || !this.connection.state || this.connection.state.status === VoiceConnectionStatus.Disconnected) {
+          logger.error('Voice connection is disconnected or invalid');
+          channel.send('Lost connection to the voice channel. Attempting to reconnect...');
+          
+          try {
+            // Attempt to rejoin the voice channel
+            this.connection = joinVoiceChannel({
+              channelId: this.voiceChannel.id,
+              guildId: this.voiceChannel.guild.id,
+              adapterCreator: this.voiceChannel.guild.voiceAdapterCreator as DiscordGatewayAdapterCreator,
+              selfDeaf: false
+            });
+            
+            this.connection.subscribe(this.player);
+            logger.info('Successfully reconnected to voice channel');
+          } catch (reconnectError) {
+            logger.error(`Failed to reconnect to voice channel: ${reconnectError}`);
+            channel.send('Could not reconnect to the voice channel. The quiz will be stopped.');
+            this.stop(channel);
+            return;
+          }
+        }
+        
         // Create a resource from the file with proper options for better compatibility
         const resource = createAudioResource(fileToPlay, {
           inlineVolume: true,
@@ -342,6 +451,12 @@ class QuizSession {
       
         // Play the resource
         this.player.play(resource);
+        logger.info('Audio resource is now playing');
+        
+        // Set up a listener for when the audio finishes playing
+        this.player.once(AudioPlayerStatus.Idle, () => {
+          logger.info('Audio finished playing');
+        });
       } catch (error) {
         logger.error(`Error playing audio file: ${error}`);
         channel.send('There was an error playing the media. Continuing with the quiz...');

@@ -8,13 +8,15 @@ NOW is a powerful Discord bot for collecting, playing, and managing media files 
 - **Media Augmentation**: Apply effects like amplification, reversal, and clipping
 - **Quiz Game**: Host interactive quiz games in voice channels based on your media
 - **Media Management**: Upload, organize, and manage your media collection via web interface
+- **Smart Normalization**: On-demand file processing only when needed for Discord compatibility
+- **Hardware Acceleration**: NVIDIA GPU support for faster video processing when available
 
 ## Architecture
 
 - **Framework**: discord.js with TypeScript
 - **Runtime**: Node.js with PM2 for process management and auto-restart
 - **Database**: PostgreSQL with TypeORM for storing media metadata
-- **Media Processing**: FFmpeg for audio/video manipulation
+- **Media Processing**: FFmpeg for audio/video manipulation with NVIDIA hardware acceleration support
 - **Web Interface**: Express.js for the upload portal
 
 ## Setup
@@ -138,14 +140,24 @@ NOW uses the prefix `NOW` for all commands.
 
 ## Media Processing
 
-NOW processes media files to ensure compatibility with Discord's limitations:
+NOW processes media files on-demand to ensure compatibility with Discord's limitations:
 
-- Files are normalized to consistent volume levels
-- Video files are re-encoded to H264 for compatibility
-- Audio files are converted to Opus codec
-- Files exceeding Discord's size limit (8MB) are compressed with progressive quality reduction
-- Multiple encoding passes with adaptive settings ensure optimal quality within size constraints
-- Original files are preserved, with processed versions used for playback
+- Files are only processed when they exceed Discord's file size limit (8MB by default)
+- Original quality is preserved for files under the size limit
+- Hardware acceleration using NVIDIA GPUs when available for faster encoding
+- Video files are re-encoded to H264 (with NVENC support for NVIDIA GPUs)
+- Audio files are converted to Opus codec for optimal quality/size ratio
+- Video resolution is adaptively scaled based on size constraints
+- Advanced encoding settings for optimal quality preservation
+- Original files are preserved, with processed versions used only when necessary
+
+## Performance Optimizations
+
+- **On-demand Processing**: Files are only normalized when they exceed Discord's size limits
+- **Hardware Acceleration**: Automatic detection and use of NVIDIA GPUs for video encoding
+- **Adaptive Encoding**: Encoding parameters are dynamically adjusted based on file characteristics
+- **Multi-pass Compression**: Progressive quality reduction to meet size requirements if needed
+- **Efficient File Management**: Original file integrity is preserved for optimal quality
 
 ## Project Structure
 
@@ -218,6 +230,20 @@ npm run build
 npm test
 ```
 
+### Migration from Older Databases
+
+The project includes a migration utility to import data from older database versions:
+
+```
+node dist/utils/migration.js --source-db=/path/to/old.sqlite --source-files=/path/to/media/files
+```
+
+This utility:
+- Copies all media files to the new location without processing
+- Preserves all metadata including titles and answers
+- Maintains file associations
+- Media files will be normalized on-demand only when needed for Discord compatibility
+
 ### Manual Start
 
 ```
@@ -232,6 +258,7 @@ Common issues:
 2. **Database connection errors**: Check your PostgreSQL credentials in .env
 3. **Discord token invalid**: Generate a new bot token in the Discord Developer Portal
 4. **File permission errors**: Ensure upload/normalized directories are writable
+5. **NVIDIA acceleration unavailable**: Install NVIDIA drivers and CUDA toolkit for hardware acceleration
 
 ## License
 

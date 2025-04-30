@@ -15,6 +15,9 @@ export class Media {
 
   @Column({ nullable: true })
   normalizedPath?: string;
+  
+  @Column({ nullable: true })
+  uncompressedPath?: string;
 
   @Column({ nullable: true })
   year?: number;
