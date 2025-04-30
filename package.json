@@ -12,6 +12,9 @@
     "test:watch": "jest --watch",
     "lint": "eslint 'src/**/*.{js,ts}'",
     "format": "prettier --write 'src/**/*.{js,ts}'",
+    "normalize": "ts-node --transpile-only -r tsconfig-paths/register --compiler-options '{\"experimentalDecorators\":true,\"emitDecoratorMetadata\":true}' src/cli/normalize.ts all",
+    "normalize:file": "ts-node --transpile-only -r tsconfig-paths/register --compiler-options '{\"experimentalDecorators\":true,\"emitDecoratorMetadata\":true}' src/cli/normalize.ts file",
+    "normalize:verbose": "npm run normalize -- --verbose",
     "preinstall": "echo 'Please make sure you have build tools installed: sudo apt-get install build-essential python3'"
   },
   "keywords": [
@@ -25,6 +28,7 @@
   "license": "MIT",
   "dependencies": {
     "@discordjs/voice": "^0.16.0",
+    "commander": "^11.1.0",
     "discord.js": "^14.11.0",
     "dotenv": "^16.0.3",
     "express": "^4.18.2",
