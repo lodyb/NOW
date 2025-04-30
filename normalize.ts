@@ -239,9 +239,23 @@ async function processMediaFile(media: Media, hasNvenc: boolean): Promise<boolea
 // Check if file is video or audio
 async function isVideoFile(filePath: string): Promise<boolean> {
   try {
+    // First check file extension for common audio formats
+    const extension = path.extname(filePath).toLowerCase();
+    const audioExtensions = ['.mp3', '.wav', '.ogg', '.flac', '.m4a', '.aac', '.opus'];
+    
+    if (audioExtensions.includes(extension)) {
+      logger.info(`Identified ${filePath} as audio based on extension ${extension}`);
+      return false;
+    }
+    
+    // If extension check is inconclusive, use ffprobe
     const output = execSync(`ffprobe -v quiet -select_streams v:0 -show_entries stream=codec_type -of default=noprint_wrappers=1:nokey=1 "${filePath}"`).toString().trim();
-    return output.includes('video');
+    const isVideo = output.includes('video');
+    
+    logger.info(`FFprobe identified ${filePath} as ${isVideo ? 'video' : 'audio'}`);
+    return isVideo;
   } catch (error) {
+    logger.info(`Could not determine if ${filePath} is video, assuming audio`);
     return false; // Assume audio if we can't determine
   }
 }
