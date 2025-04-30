@@ -7,6 +7,10 @@ import { AppDataSource } from './src/database/connection';
 import { Media } from './src/database/entities/Media';
 import { logger } from './src/utils/logger';
 
+// Add command line argument handling for verbose mode
+const args = process.argv.slice(2);
+const VERBOSE = args.includes('--verbose') || args.includes('-v');
+
 // Constants
 const MAX_FILE_SIZE_MB = 9;
 const MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024;
@@ -74,6 +78,18 @@ function getMediaDuration(filePath: string): number {
   }
 }
 
+// Simple helper for concise logging in non-verbose mode
+function logInfo(message: string): void {
+  if (VERBOSE) {
+    logger.info(message);
+  }
+}
+
+// For critical or summary information that should always be shown
+function logCritical(message: string): void {
+  logger.info(message);
+}
+
 // Process a single media file
 async function processMediaFile(media: Media, hasNvenc: boolean): Promise<boolean> {
   const originalPath = media.filePath;
@@ -86,7 +102,7 @@ async function processMediaFile(media: Media, hasNvenc: boolean): Promise<boolea
   
   // Skip if already processed
   if (media.normalizedPath && validFile(path.join(process.cwd(), media.normalizedPath))) {
-    logger.info(`File already normalized: ${media.title}`);
+    logInfo(`File already normalized: ${media.title}`);
     return true;
   }
   
@@ -106,29 +122,35 @@ async function processMediaFile(media: Media, hasNvenc: boolean): Promise<boolea
   // Determine if it's video or audio
   const isVideo = await isVideoFile(originalPath);
   
-  // Determine final output path - for audio files, we convert to .ogg
+  // Determine final output path based on media type
   let finalOutputPath = outputPath;
   const inputExt = path.extname(originalPath).toLowerCase();
+  
   if (!isVideo) {
-    // For audio files, we'll output as .ogg with Opus codec
-    finalOutputPath = outputPath.replace(/\.(wav|mp3|ogg|flac|m4a)$/i, '.ogg');
-    logger.info(`Will convert ${inputExt} to .ogg with Opus codec for better compatibility`);
+    // For audio files, always convert to .ogg with Opus codec
+    finalOutputPath = outputPath.replace(/\.(wav|mp3|ogg|flac|m4a|aac)$/i, '.ogg');
+    logInfo(`Will convert ${inputExt} to .ogg with Opus codec for better compatibility`);
+  } else {
+    // For video files, always convert to .mp4 with H.264 codec
+    // This ensures consistent output regardless of original format
+    finalOutputPath = outputPath.replace(/\.(webm|mov|mkv|flv|avi|wmv|mp4|m4v)$/i, '.mp4');
+    logInfo(`Will convert ${inputExt} to .mp4 with H.264 codec for better compatibility`);
   }
   
   // Pre-trim long media to 10 minutes (600 seconds) to save processing time
   let inputForEncoding = originalPath;
   
   if (duration > 600) {
-    logger.info(`Media duration is ${Math.round(duration)}s. Pre-trimming to 10 minutes to optimize processing.`);
+    logCritical(`Media duration is ${Math.round(duration)}s. Pre-trimming ${media.title} to 10 minutes to optimize processing.`);
     try {
       // Simple trim command without any quality adjustments
       const preTrimCommand = `ffmpeg -y -i "${originalPath}" -t 600 -c copy "${preTrimPath}"`;
-      logger.info(`Pre-trimming command: ${preTrimCommand}`);
+      logInfo(`Pre-trimming command: ${preTrimCommand}`);
       execSync(preTrimCommand);
       
       if (validFile(preTrimPath)) {
         inputForEncoding = preTrimPath;
-        logger.info(`Successfully pre-trimmed ${media.title} to 10 minutes for faster processing`);
+        logInfo(`Successfully pre-trimmed ${media.title} to 10 minutes for faster processing`);
       } else {
         logger.error(`Failed to pre-trim ${media.title}, using original file`);
       }
@@ -195,15 +217,15 @@ async function processMediaFile(media: Media, hasNvenc: boolean): Promise<boolea
     
     // Skip the final trim attempt if file is already under 4 minutes
     if (attempt.trimDuration && duration <= attempt.trimDuration) {
-      logger.info(`Skipping trim attempt for ${media.title} as it's already shorter than ${attempt.trimDuration}s`);
+      logInfo(`Skipping trim attempt for ${media.title} as it's already shorter than ${attempt.trimDuration}s`);
       continue;
     }
     
-    logger.info(`Processing ${media.title} (attempt ${i+1}/${attempts.length})${attempt.trimDuration ? ` with ${attempt.trimDuration}s trim` : ''}`);
+    logCritical(`Processing ${media.title} (attempt ${i+1}/${attempts.length})${attempt.trimDuration ? ` with ${attempt.trimDuration}s trim` : ''}`);
     
     try {
       const success = await encodeMedia(
-        inputForEncoding, // Using the potentially pre-trimmed file
+        inputForEncoding,
         tempOutputPath, 
         isVideo,
         hasNvenc, 
@@ -215,10 +237,15 @@ async function processMediaFile(media: Media, hasNvenc: boolean): Promise<boolea
       );
       
       if (success) {
-        // Check the actual temp output path (might have changed extension)
-        const actualTempPath = !isVideo
-          ? tempOutputPath.replace(/\.(wav|mp3|ogg|flac|m4a)$/i, '.ogg') 
-          : tempOutputPath;
+        // Calculate the actual temp output path based on media type
+        let actualTempPath;
+        if (!isVideo) {
+          // For audio, always use .ogg extension
+          actualTempPath = tempOutputPath.replace(/\.(wav|mp3|ogg|flac|m4a|aac)$/i, '.ogg');
+        } else {
+          // For video, always use .mp4 extension
+          actualTempPath = tempOutputPath.replace(/\.(webm|mov|mkv|flv|avi|wmv|mp4|m4v)$/i, '.mp4');
+        }
           
         // Check if file exists
         if (!validFile(actualTempPath)) {
@@ -232,22 +259,17 @@ async function processMediaFile(media: Media, hasNvenc: boolean): Promise<boolea
           // Move from temp to final location
           fs.renameSync(actualTempPath, finalOutputPath);
           
-          // Update database with the relative path
-          // For audio files, make sure we're using the .ogg extension in the database
-          const dbPath = !isVideo 
-            ? finalOutputPath.replace(/\.(wav|mp3|ogg|flac|m4a)$/i, '.ogg')
-            : finalOutputPath;
-            
-          const relativePath = path.relative(process.cwd(), dbPath);
+          // Update database with the relative path - ensure consistent extension
+          const relativePath = path.relative(process.cwd(), finalOutputPath);
           media.normalizedPath = relativePath;
           
-          logger.info(`Saving path in database: ${relativePath}`);
+          logInfo(`Saving path in database: ${relativePath}`);
           await AppDataSource.getRepository(Media).save(media);
           
-          logger.info(`Successfully normalized ${media.title} (${Math.round(stats.size / 1024 / 1024 * 100) / 100}MB)`);
+          logCritical(`Successfully normalized ${media.title} (${Math.round(stats.size / 1024 / 1024 * 100) / 100}MB)`);
           return true;
         } else {
-          logger.info(`File still too large (${Math.round(stats.size / 1024 / 1024 * 100) / 100}MB > ${MAX_FILE_SIZE_MB}MB), trying next settings`);
+          logInfo(`File still too large (${Math.round(stats.size / 1024 / 1024 * 100) / 100}MB > ${MAX_FILE_SIZE_MB}MB), trying next settings`);
           // Continue to next attempt
         }
       }
@@ -260,7 +282,7 @@ async function processMediaFile(media: Media, hasNvenc: boolean): Promise<boolea
   if (inputForEncoding !== originalPath && fs.existsSync(preTrimPath)) {
     try {
       fs.unlinkSync(preTrimPath);
-      logger.info(`Cleaned up pre-trimmed file: ${preTrimPath}`);
+      logInfo(`Cleaned up pre-trimmed file: ${preTrimPath}`);
     } catch (error) {
       logger.error(`Error cleaning up pre-trimmed file: ${error}`);
     }
@@ -317,14 +339,14 @@ async function encodeMedia(
       // Convert all audio formats to .ogg
       tempOutputPath = outputPath.replace(/\.(wav|mp3|ogg|flac|m4a)$/i, '.ogg');
       outputExt = '.ogg';
-      logger.info(`Converting audio from ${inputExt} to .ogg with Opus codec for better compatibility`);
+      logInfo(`Converting audio from ${inputExt} to .ogg with Opus codec for better compatibility`);
     } else {
       // For WebM and MOV files, we need to convert to MP4 when using H.264 codec or Opus audio
       if (inputExt === '.webm' || outputExt === '.webm' || 
           inputExt === '.mov' || outputExt === '.mov') {
         tempOutputPath = outputPath.replace(/\.(webm|mov)$/i, '.mp4');
         outputExt = '.mp4';
-        logger.info(`Converting from ${inputExt} to MP4 container for H.264/Opus compatibility`);
+        logInfo(`Converting from ${inputExt} to MP4 container for H.264/Opus compatibility`);
       }
     }
     
@@ -332,29 +354,29 @@ async function encodeMedia(
     
     // Add trim duration if specified
     if (trimDuration) {
-      logger.info(`Trimming to ${trimDuration} seconds`);
+      logInfo(`Trimming to ${trimDuration} seconds`);
       command += ` -t ${trimDuration}`;
     }
     
     // Always downmix audio to stereo (2 channels) for better compatibility with Discord
     command += ' -ac 2';
-    logger.info('Downmixing audio to stereo for optimal Discord playback');
+    logInfo('Downmixing audio to stereo for optimal Discord playback');
     
     if (isVideo) {
       // Get original video dimensions
       const dimensions = getVideoDimensions(inputPath);
-      logger.info(`Original video dimensions: ${dimensions.width}x${dimensions.height}`);
+      logInfo(`Original video dimensions: ${dimensions.width}x${dimensions.height}`);
       
       // Only scale if original is larger than target dimensions
       if (dimensions.width > 1280 || dimensions.height > 720) {
         // Video scale filter - we'll use 1280x720 as the maximum resolution
         // Use single quotes around the scale arguments to ensure proper parsing
         command += ` -vf "scale=w='min(1280,iw)':h='min(${height},ih)':force_original_aspect_ratio=decrease,format=yuv420p"`;
-        logger.info(`Scaling video to max dimensions 1280x${height}`);
+        logInfo(`Scaling video to max dimensions 1280x${height}`);
       } else {
         // Keep original resolution but ensure yuv420p pixel format
         command += ` -vf "format=yuv420p"`;
-        logger.info(`Keeping original resolution ${dimensions.width}x${dimensions.height}`);
+        logInfo(`Keeping original resolution ${dimensions.width}x${dimensions.height}`);
       }
       
       if (hasNvenc) {
@@ -506,7 +528,7 @@ async function encodeMedia(
     command += ` "${tempOutputPath}"`;
     
     // Execute the command
-    logger.info(`Running: ${command}`);
+    logInfo(`Running: ${command}`);
     execSync(command);
     
     // Check if the output file exists and has content
@@ -534,7 +556,7 @@ function getQualityLevel(videoBitrate: string): number {
 
 // Main function to process all media
 async function processAllMedia() {
-  logger.info('Starting media normalization process');
+  logCritical('Starting media normalization process');
   
   // Initialize database connection
   await AppDataSource.initialize();
@@ -544,21 +566,32 @@ async function processAllMedia() {
   
   // Check for NVIDIA GPU
   const hasNvenc = hasNvidiaGpuEncoder();
-  logger.info(`NVIDIA GPU encoding: ${hasNvenc ? 'Available' : 'Not available'}`);
+  logCritical(`NVIDIA GPU encoding: ${hasNvenc ? 'Available' : 'Not available'}`);
   
   // Get all media records from the database
   const mediaRepository = AppDataSource.getRepository(Media);
   const allMedia = await mediaRepository.find();
   
-  logger.info(`Found ${allMedia.length} media files to process`);
+  logCritical(`Found ${allMedia.length} media files to process`);
   
   // Process each media file
   let successCount = 0;
   let failCount = 0;
+  let skippedCount = 0;
   
   for (let i = 0; i < allMedia.length; i++) {
     const media = allMedia[i];
-    logger.info(`Processing ${i+1}/${allMedia.length}: ${media.title}`);
+    
+    // Quick check if already normalized to avoid excessive logging
+    if (media.normalizedPath && validFile(path.join(process.cwd(), media.normalizedPath))) {
+      logInfo(`Processing ${i+1}/${allMedia.length}: ${media.title}`);
+      logInfo(`File already normalized: ${media.title}`);
+      skippedCount++;
+      continue;
+    }
+    
+    // Only show progress for files that actually need processing
+    logCritical(`Processing ${i+1}/${allMedia.length}: ${media.title}`);
     
     const success = await processMediaFile(media, hasNvenc);
     if (success) {
@@ -568,7 +601,14 @@ async function processAllMedia() {
     }
   }
   
-  logger.info(`Normalization complete. Success: ${successCount}, Failed: ${failCount}`);
+  // Show summary statistics at end of run
+  logCritical('==========================================');
+  logCritical('Media Normalization Summary:');
+  logCritical(`Total files: ${allMedia.length}`);
+  logCritical(`Already normalized (skipped): ${skippedCount}`);
+  logCritical(`Successfully normalized: ${successCount}`);
+  logCritical(`Failed to normalize: ${failCount}`);
+  logCritical('==========================================');
   
   // Close database connection
   await AppDataSource.destroy();
