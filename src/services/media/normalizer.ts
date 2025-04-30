@@ -77,13 +77,18 @@ export async function analyzeAudioLevel(filePath: string): Promise<{ peak: numbe
             fs.unlinkSync(tempOutputFile);
           }
         } catch (cleanupError) {
-          logger.warn(`Failed to clean up temp file: ${cleanupError.message}`);
+          logger.warn(`Failed to clean up temp file: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`);
         }
         
         reject(new Error(`Error analyzing audio: ${err.message}`));
       })
       .on('end', (stdout, stderr) => {
         try {
+          if (stderr === null) {
+            reject(new Error('FFmpeg did not produce any stderr output for volume analysis'));
+            return;
+          }
+          
           // Parse mean_volume from stderr
           const meanMatch = stderr.match(/mean_volume: ([-\d.]+) dB/);
           const mean = meanMatch ? parseFloat(meanMatch[1]) : -25;
@@ -101,10 +106,10 @@ export async function analyzeAudioLevel(filePath: string): Promise<{ peak: numbe
               fs.unlinkSync(tempOutputFile);
             }
           } catch (cleanupError) {
-            logger.warn(`Failed to clean up temp file: ${cleanupError.message}`);
+            logger.warn(`Failed to clean up temp file: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`);
           }
         } catch (parseError) {
-          reject(new Error(`Error parsing audio analysis: ${parseError.message}`));
+          reject(new Error(`Error parsing audio analysis: ${parseError instanceof Error ? parseError.message : String(parseError)}`));
         }
       });
     
