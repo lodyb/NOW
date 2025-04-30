@@ -154,7 +154,7 @@ async function processMediaFile(media: Media, hasNvenc: boolean): Promise<boolea
         inputForEncoding = preTrimPath;
         logInfo(`Successfully pre-trimmed ${media.title} to 10 minutes for faster processing`);
       } else {
-        logger.error(`Failed to pre-trim ${media.title}, using original file`);
+        logger.error(`Failed to pre-trim ${media.title}, using original file}`);
       }
     } catch (error) {
       logger.error(`Error pre-trimming ${media.title}: ${error}`);
@@ -597,13 +597,17 @@ async function processSingleFile(filePath: string, hasNvenc: boolean): Promise<b
     return false;
   }
   
-  // Create a temporary Media-like object to use with existing processMediaFile function
+  // Create a complete Media object with all required properties
   const fileName = path.basename(filePath);
-  const tempMedia = {
-    filePath,
-    title: fileName,
-    normalizedPath: null
-  } as Media;
+  const tempMedia = new Media();
+  tempMedia.id = 0; // Temporary ID that won't be used
+  tempMedia.filePath = filePath;
+  tempMedia.title = fileName;
+  tempMedia.normalizedPath = undefined;
+  tempMedia.metadata = {}; // Empty metadata object
+  tempMedia.createdAt = new Date();
+  tempMedia.answers = [];
+  tempMedia.mediaTags = [];
   
   // Process the file
   logCritical(`Processing standalone file: ${filePath}`);
