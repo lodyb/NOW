@@ -318,6 +318,13 @@ async function encodeMedia(
       tempOutputPath = outputPath.replace(/\.(wav|mp3|ogg|flac|m4a)$/i, '.ogg');
       outputExt = '.ogg';
       logger.info(`Converting audio from ${inputExt} to .ogg with Opus codec for better compatibility`);
+    } else {
+      // For WebM files, we need to convert to MP4 when using H.264 codec
+      if (inputExt === '.webm' || outputExt === '.webm') {
+        tempOutputPath = outputPath.replace(/\.webm$/i, '.mp4');
+        outputExt = '.mp4';
+        logger.info(`Converting from WebM to MP4 container for H.264 compatibility`);
+      }
     }
     
     let command = `ffmpeg -y -i "${inputPath}" -hide_banner -loglevel ${FFMPEG_LOG_LEVEL}`;
