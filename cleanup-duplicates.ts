@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
-import { cleanupDuplicateMedia } from './utils/cleanupDuplicates';
-import { logger } from './utils/logger';
+import { cleanupDuplicateMedia } from './src/utils/cleanupDuplicates';
+import { logger } from './src/utils/logger';
 
 // Run the cleanup process
 async function main() {

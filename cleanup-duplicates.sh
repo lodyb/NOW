@@ -22,10 +22,8 @@ echo "Starting duplicate cleanup process..."
 echo "Log output will be saved to combined.log"
 
 # Run the cleanup script with settings to properly handle TypeORM decorators
-npx ts-node \
-  --transpile-only \
-  -r tsconfig-paths/register \
-  --compiler-options '{"experimentalDecorators":true,"emitDecoratorMetadata":true}' \
+node --require ts-node/register \
+  --require tsconfig-paths/register \
   cleanup-duplicates.ts
 
 echo
