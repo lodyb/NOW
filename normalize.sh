@@ -34,11 +34,8 @@ mkdir -p temp
 echo "Starting normalization process..."
 echo "Log output will be saved to combined.log"
 
-# Make the normalize.ts file executable if it isn't already
-chmod +x normalize.ts
-
-# Run the normalize script
-npx ts-node normalize.ts
+# Run the normalize script with required TypeScript options for decorators
+NODE_OPTIONS="--require ts-node/register --require tsconfig-paths/register" npx ts-node --transpile-only -r tsconfig-paths/register normalize.ts
 
 echo
 echo "Normalization process complete!"
