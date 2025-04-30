@@ -212,6 +212,10 @@ async function processMediaFile(media: Media, hasNvenc: boolean): Promise<boolea
     }
   ];
   
+  // Track the file size of the previous attempt to display in logs
+  let previousFileSizeMB = 0;
+  let previousFileSizeText = "";
+  
   for (let i = 0; i < attempts.length; i++) {
     const attempt = attempts[i];
     
@@ -221,7 +225,12 @@ async function processMediaFile(media: Media, hasNvenc: boolean): Promise<boolea
       continue;
     }
     
-    logCritical(`Processing ${media.title} (attempt ${i+1}/${attempts.length})${attempt.trimDuration ? ` with ${attempt.trimDuration}s trim` : ''}`);
+    // Show previous attempt file size in the log if available
+    if (previousFileSizeText) {
+      logCritical(`Processing ${media.title} (attempt ${i+1}/${attempts.length})${attempt.trimDuration ? ` with ${attempt.trimDuration}s trim` : ''} [Previous: ${previousFileSizeText}]`);
+    } else {
+      logCritical(`Processing ${media.title} (attempt ${i+1}/${attempts.length})${attempt.trimDuration ? ` with ${attempt.trimDuration}s trim` : ''}`);
+    }
     
     try {
       const success = await encodeMedia(
@@ -255,6 +264,13 @@ async function processMediaFile(media: Media, hasNvenc: boolean): Promise<boolea
           
         // Check if file size is acceptable
         const stats = fs.statSync(actualTempPath);
+        const fileSizeMB = Math.round(stats.size / 1024 / 1024 * 100) / 100;
+        const fileSizeText = `${fileSizeMB}MB`;
+        
+        // Update previous file size for next attempt log
+        previousFileSizeMB = fileSizeMB;
+        previousFileSizeText = fileSizeText;
+        
         if (stats.size <= MAX_FILE_SIZE_BYTES) {
           // Move from temp to final location
           fs.renameSync(actualTempPath, finalOutputPath);
@@ -266,10 +282,11 @@ async function processMediaFile(media: Media, hasNvenc: boolean): Promise<boolea
           logInfo(`Saving path in database: ${relativePath}`);
           await AppDataSource.getRepository(Media).save(media);
           
-          logCritical(`Successfully normalized ${media.title} (${Math.round(stats.size / 1024 / 1024 * 100) / 100}MB)`);
+          logCritical(`Successfully normalized ${media.title} (${fileSizeText})`);
           return true;
         } else {
-          logInfo(`File still too large (${Math.round(stats.size / 1024 / 1024 * 100) / 100}MB > ${MAX_FILE_SIZE_MB}MB), trying next settings`);
+          // Always show file size info, regardless of verbose mode
+          logCritical(`File still too large (${fileSizeText} > ${MAX_FILE_SIZE_MB}MB), trying next settings`);
           // Continue to next attempt
         }
       }
