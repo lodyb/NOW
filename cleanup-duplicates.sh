@@ -18,14 +18,19 @@ if ! command -v node &> /dev/null; then
     exit 1
 fi
 
+# Check if reflect-metadata package is installed
+if ! grep -q '"reflect-metadata"' package.json; then
+    echo "Installing reflect-metadata package required by TypeORM..."
+    npm install reflect-metadata --save
+fi
+
 echo "Starting duplicate cleanup process..."
 echo "Log output will be saved to combined.log"
 
 # Run the cleanup script with proper TypeORM decorator support
-npx ts-node \
+NODE_OPTIONS="--require=reflect-metadata" npx ts-node \
   --transpile-only \
   -r tsconfig-paths/register \
-  --compiler-options '{"experimentalDecorators":true,"emitDecoratorMetadata":true}' \
   cleanup-duplicates.ts
 
 echo

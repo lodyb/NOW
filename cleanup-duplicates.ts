@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import "reflect-metadata"; // Required for TypeORM decorators
 import { cleanupDuplicateMedia } from './src/utils/cleanupDuplicates';
 import { logger } from './src/utils/logger';
 
