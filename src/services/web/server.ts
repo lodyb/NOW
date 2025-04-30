@@ -124,7 +124,7 @@ export async function startWebServer(port: number): Promise<void> {
             // Get title for this file
             const title = titlesList[index] || path.basename(file.originalname, path.extname(file.originalname));
             
-            // Check for duplicates before saving
+            // Check for duplicate title before saving
             const mediaRepository = AppDataSource.getRepository(Media);
             const existingMedia = await mediaRepository.findOne({
               where: { title }
