@@ -288,8 +288,8 @@ async function encodeMedia(
       // Only scale if original is larger than target dimensions
       if (dimensions.width > 1280 || dimensions.height > 720) {
         // Video scale filter - we'll use 1280x720 as the maximum resolution
-        // Fix: Changed min() syntax to use FFmpeg's if() expressions
-        command += ` -vf "scale=if(gt(iw,1280),1280,iw):if(gt(ih,${height}),${height},ih):force_original_aspect_ratio=decrease,format=yuv420p"`;
+        // Use single quotes around the scale arguments to ensure proper parsing
+        command += ` -vf "scale=w='min(1280,iw)':h='min(${height},ih)':force_original_aspect_ratio=decrease,format=yuv420p"`;
         logger.info(`Scaling video to max dimensions 1280x${height}`);
       } else {
         // Keep original resolution but ensure yuv420p pixel format
