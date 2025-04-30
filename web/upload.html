@@ -373,8 +373,9 @@
       quickEditContainer.innerHTML = `
         <h3>Quick Edit: ${mediaTitle}</h3>
         <div class="form-group">
-          <label for="quick-answers-${mediaId}">Alternative Answers (one per line):</label>
-          <textarea id="quick-answers-${mediaId}" placeholder="Enter alternative answers (one per line)" rows="5"></textarea>
+          <label for="quick-answers-${mediaId}">Title and Alternative Answers (one per line):</label>
+          <p class="help-text">First line is the title, each additional line is an alternative answer</p>
+          <textarea id="quick-answers-${mediaId}" placeholder="Enter title and alternative answers (one per line)" rows="5">${mediaTitle}</textarea>
         </div>
         <div class="form-actions">
           <button class="save-quick-edit-btn" data-id="${mediaId}">Save Answers</button>
@@ -392,10 +393,7 @@
         const id = this.dataset.id;
         const answersText = document.getElementById(`quick-answers-${id}`).value.trim();
         
-        // Split answers by newline and filter out empty lines
-        const answers = answersText.split('\n').filter(a => a.trim() !== '');
-        
-        updateMedia(id, mediaTitle, answers, function() {
+        updateMedia(id, answersText, function() {
           // Success callback
           const successMsg = document.getElementById(`quick-update-success-${id}`);
           successMsg.style.display = 'block';
@@ -476,38 +474,26 @@
       row.className = 'media-row';
       row.dataset.id = media.id;
       
-      // Get answers as an array
-      const answers = media.answers ? media.answers.map(a => a.answer).join('\n') : '';
-      
-      // Create thumbnail if media has a path
-      let thumbnailHtml = '';
-      if (media.normalizedPath) {
-        const isVideo = media.normalizedPath.match(/\.(mp4|webm|mov)$/i);
-        if (isVideo) {
-          thumbnailHtml = `
-            <div class="media-thumbnail">
-              <video src="/media/${media.id}/preview" muted></video>
-            </div>
-          `;
-        } else {
-          thumbnailHtml = `
-            <div class="media-thumbnail">
-              <img src="/media/${media.id}/waveform" alt="Audio waveform">
-            </div>
-          `;
+      // Get all answers including title as one string (one per line)
+      let allAnswers = media.title || '';
+      if (media.answers && media.answers.length > 0) {
+        // Add any non-primary answers
+        const additionalAnswers = media.answers
+          .filter(a => !a.isPrimary)
+          .map(a => a.answer)
+          .join('\n');
+        
+        if (additionalAnswers) {
+          allAnswers += '\n' + additionalAnswers;
         }
       }
       
-      // Create row content
+      // Create row content with combined title/answers textarea
       row.innerHTML = `
         <div class="media-title-column">
-          <label for="title-${media.id}">Title:</label>
-          <input type="text" id="title-${media.id}" value="${media.title || ''}" placeholder="Enter title">
-          ${thumbnailHtml}
-        </div>
-        <div class="media-answers-column">
-          <label for="answers-${media.id}">Alternative Answers (one per line):</label>
-          <textarea id="answers-${media.id}" placeholder="Enter alternative answers (one per line)">${answers}</textarea>
+          <label for="answers-${media.id}">Title and Alternative Answers (one per line):</label>
+          <p class="help-text">First line is the title, each additional line is an alternative answer</p>
+          <textarea id="answers-${media.id}" placeholder="Enter title and alternative answers (one per line)">${allAnswers}</textarea>
           <div class="update-success" id="update-success-${media.id}">Changes saved successfully!</div>
         </div>
         <div class="media-controls">
@@ -518,49 +504,64 @@
       // Add event listener to the update button
       row.querySelector('.update-btn').addEventListener('click', function() {
         const mediaId = this.dataset.id;
-        const title = document.getElementById(`title-${mediaId}`).value.trim();
         const answersText = document.getElementById(`answers-${mediaId}`).value.trim();
         
-        // Split answers by newline and filter out empty lines
-        const answers = answersText.split('\n').filter(a => a.trim() !== '');
+        // Split by newline
+        const lines = answersText.split('\n').filter(line => line.trim() !== '');
         
-        updateMedia(mediaId, title, answers);
+        if (lines.length === 0) {
+          alert('Please provide at least a title (first line)');
+          return;
+        }
+        
+        // First line is the title, rest are answers
+        const title = lines[0];
+        const answers = lines.slice(1);
+        
+        updateMedia(mediaId, answersText);
       });
       
       return row;
     }
     
     // Function to update media
-    function updateMedia(id, title, answers, callback) {
+    function updateMedia(id, answersText, callback) {
       fetch(`/api/media/${id}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          title,
-          answers
+          answers: answersText
         })
       })
       .then(response => {
         if (!response.ok) {
-          throw new Error('Network response was not ok');
+          throw new Error(`Failed to update media: ${response.status} ${response.statusText}`);
         }
         return response.json();
       })
       .then(data => {
-        // Show success message
-        const successMsg = document.getElementById(`update-success-${id}`);
-        successMsg.style.display = 'block';
+        console.log('Media update successful:', data);
         
-        // Hide success message after 3 seconds
-        setTimeout(() => {
-          successMsg.style.display = 'none';
-        }, 3000);
-        
-        if (callback) {
+        // Show success message if not using a callback
+        if (!callback) {
+          const successMsg = document.getElementById(`update-success-${id}`);
+          if (successMsg) {
+            successMsg.style.display = 'block';
+            
+            // Hide success message after 3 seconds
+            setTimeout(() => {
+              successMsg.style.display = 'none';
+            }, 3000);
+          }
+        } else {
+          // Use the callback if provided
           callback();
         }
+        
+        // Refresh the media list after updating
+        fetchMediaList();
       })
       .catch(error => {
         console.error('Error updating media:', error);

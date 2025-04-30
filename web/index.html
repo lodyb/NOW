@@ -518,18 +518,45 @@
     function openEditModal(media) {
       currentEditId = media.id;
       
-      // Populate form fields
-      editTitle.value = media.title || '';
+      // Prepare the combined answers text (title as first line, then all non-primary answers)
+      let combinedText = media.title || '';
       
-      // Get answers text (one per line)
-      let answersText = '';
       if (media.answers && Array.isArray(media.answers)) {
-        answersText = media.answers
-          .filter(a => !a.isPrimary) // Filter out primary answers (these are the same as title)
+        // Add any non-primary answers
+        const additionalAnswers = media.answers
+          .filter(a => !a.isPrimary)
           .map(a => a.answer)
           .join('\n');
+        
+        if (additionalAnswers) {
+          combinedText += '\n' + additionalAnswers;
+        }
       }
-      editAnswers.value = answersText;
+      
+      // Update the modal title to show which media item we're editing
+      document.querySelector('.modal-header h3').textContent = `Edit: ${media.title || 'Media'}`;
+      
+      // Set the value in a single textarea
+      editAnswers.value = combinedText;
+      
+      // Hide the title field as we're now using a combined approach
+      document.getElementById('editTitle').parentElement.style.display = 'none';
+      
+      // Update the textarea label
+      document.querySelector('label[for="editAnswers"]').textContent = 'Title and Alternative Answers (one per line):';
+      
+      // Add help text
+      let helpText = document.getElementById('edit-help-text');
+      if (!helpText) {
+        helpText = document.createElement('p');
+        helpText.id = 'edit-help-text';
+        helpText.className = 'help-text';
+        helpText.style.fontSize = '0.85em';
+        helpText.style.marginTop = '0';
+        helpText.style.color = '#666';
+        document.querySelector('label[for="editAnswers"]').after(helpText);
+      }
+      helpText.textContent = 'First line is the title, each additional line is an alternative answer';
       
       // Show modal
       editModal.style.display = 'flex';
@@ -545,15 +572,11 @@
     function saveMedia() {
       if (!currentEditId) return;
       
-      const title = editTitle.value.trim();
       const answersText = editAnswers.value.trim();
       
-      // Split answers by newline and filter out empty lines
-      const answers = answersText.split('\n').filter(a => a.trim() !== '');
-      
-      // Validate
-      if (!title) {
-        showStatus('Title cannot be empty', 'error');
+      // Check if we have at least a title
+      if (!answersText) {
+        showStatus('Please provide at least a title (first line)', 'error');
         return;
       }
       
@@ -567,13 +590,12 @@
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          title,
-          answers
+          answers: answersText
         })
       })
       .then(response => {
         if (!response.ok) {
-          throw new Error('Failed to update media');
+          throw new Error(`Failed to update media: ${response.status} ${response.statusText}`);
         }
         return response.json();
       })

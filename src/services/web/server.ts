@@ -244,7 +244,7 @@ export async function startWebServer(port: number): Promise<void> {
   app.put('/api/media/:id', async (req, res) => {
     try {
       const { id } = req.params;
-      const { title, answers } = req.body;
+      const { answers: answersText } = req.body;
       
       if (!id) {
         return res.status(400).json({ success: false, message: 'No media ID provided' });
@@ -254,36 +254,64 @@ export async function startWebServer(port: number): Promise<void> {
       const mediaRepository = AppDataSource.getRepository(Media);
       const mediaAnswerRepository = AppDataSource.getRepository(MediaAnswer);
       
+      // Parse ID as integer or keep as string based on database schema
+      const mediaId = parseInt(id);
+      if (isNaN(mediaId)) {
+        return res.status(400).json({ success: false, message: 'Invalid media ID format' });
+      }
+      
       const media = await mediaRepository.findOne({
-        where: { id: parseInt(id) },
+        where: { id: mediaId },
         relations: ['answers']
       });
       
       if (!media) {
+        logger.error(`Media not found with ID: ${id}`);
         return res.status(404).json({ success: false, message: 'Media not found' });
       }
       
-      // Update title if provided
-      if (title !== undefined) {
-        media.title = title;
-        await mediaRepository.save(media);
+      // Split answers by newline and filter out empty lines
+      const answerLines = (answersText || '').split('\n').filter(line => line.trim() !== '');
+      
+      if (answerLines.length === 0) {
+        return res.status(400).json({ success: false, message: 'At least a title is required (first line)' });
       }
       
-      // Update answers if provided
-      if (answers && Array.isArray(answers)) {
-        // Remove all existing non-primary answers
+      // First line is the title, remaining lines are alternative answers
+      const title = answerLines[0].trim();
+      const alternateAnswers = answerLines.slice(1).map(line => line.trim());
+      
+      logger.info(`Updating media ${id}: title="${title}", alternateAnswers=[${alternateAnswers.join(', ')}]`);
+      
+      // Update title if different
+      if (title !== media.title) {
+        media.title = title;
+        await mediaRepository.save(media);
+        logger.info(`Updated title for media ${id} to: ${title}`);
+      }
+      
+      try {
+        // First, delete all existing answers (including primary)
         await mediaAnswerRepository.delete({
-          media: { id: media.id },
-          isPrimary: false
+          media: { id: mediaId }
         });
+        logger.info(`Deleted all existing answers for media ${id}`);
         
-        // Create new answers
-        for (const answer of answers) {
+        // Create new primary answer (the title)
+        const primaryAnswer = new MediaAnswer();
+        primaryAnswer.media = media;
+        primaryAnswer.answer = title;
+        primaryAnswer.isPrimary = true;
+        await mediaAnswerRepository.save(primaryAnswer);
+        logger.info(`Added primary answer for media ${id}: ${title}`);
+        
+        // Create new alternate answers
+        for (const answer of alternateAnswers) {
           // Skip empty answers
           if (!answer || answer.trim() === '') continue;
           
           // Skip if it's identical to the title (we already have a primary answer for that)
-          if (answer.trim().toLowerCase() === media.title.toLowerCase()) continue;
+          if (answer.trim().toLowerCase() === title.toLowerCase()) continue;
           
           const newAnswer = new MediaAnswer();
           newAnswer.media = media;
@@ -291,12 +319,20 @@ export async function startWebServer(port: number): Promise<void> {
           newAnswer.isPrimary = false;
           
           await mediaAnswerRepository.save(newAnswer);
+          logger.info(`Added alternate answer for media ${id}: ${answer.trim()}`);
         }
+      } catch (answerError) {
+        logger.error(`Error updating answers for media ${id}: ${answerError}`);
+        return res.status(500).json({ 
+          success: false, 
+          message: 'Error updating answers',
+          error: answerError instanceof Error ? answerError.message : String(answerError)
+        });
       }
       
       // Get updated media
       const updatedMedia = await mediaRepository.findOne({
-        where: { id: parseInt(id) },
+        where: { id: mediaId },
         relations: ['answers']
       });
       
@@ -307,7 +343,11 @@ export async function startWebServer(port: number): Promise<void> {
       });
     } catch (error) {
       logger.error(`Media update error: ${error instanceof Error ? error.message : String(error)}`);
-      res.status(500).json({ success: false, message: 'Server error' });
+      res.status(500).json({ 
+        success: false, 
+        message: 'Server error during update',
+        error: error instanceof Error ? error.message : String(error)
+      });
     }
   });
   
