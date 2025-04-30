@@ -14,7 +14,7 @@
       padding: 20px;
       background-color: #f5f5f5;
     }
-    h1, h2 {
+    h1, h2, h3 {
       color: #2c3e50;
     }
     .container {
@@ -31,7 +31,7 @@
       margin-bottom: 5px;
       font-weight: bold;
     }
-    input[type="file"], textarea {
+    input[type="file"], textarea, input[type="text"] {
       width: 100%;
       padding: 8px;
       border: 1px solid #ddd;
@@ -73,7 +73,6 @@
     }
     .results {
       margin-top: 20px;
-      display: none;
     }
     .result-item {
       padding: 10px;
@@ -92,6 +91,97 @@
       margin-bottom: 20px;
       border-left: 4px solid #3498db;
     }
+    /* Dropzone styles */
+    .dropzone {
+      border: 3px dashed #3498db;
+      border-radius: 5px;
+      padding: 30px;
+      text-align: center;
+      margin-bottom: 20px;
+      transition: all 0.3s;
+      background-color: #f8fafc;
+    }
+    .dropzone.active {
+      border-color: #2ecc71;
+      background-color: #eaffea;
+    }
+    .dropzone-text {
+      font-size: 18px;
+      color: #7f8c8d;
+      margin-bottom: 10px;
+    }
+    .dropzone-icon {
+      font-size: 48px;
+      color: #3498db;
+      margin-bottom: 10px;
+    }
+    /* Media row styles */
+    .media-list {
+      margin-top: 20px;
+    }
+    .media-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr auto;
+      gap: 15px;
+      padding: 15px;
+      margin-bottom: 15px;
+      border-radius: 5px;
+      background-color: #f9f9f9;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+      animation: fadeIn 0.5s;
+    }
+    .media-row:nth-child(odd) {
+      background-color: #f0f7ff;
+    }
+    .media-title-column, .media-answers-column {
+      display: flex;
+      flex-direction: column;
+    }
+    .media-title-column label, .media-answers-column label {
+      margin-bottom: 5px;
+    }
+    .media-controls {
+      display: flex;
+      align-items: flex-end;
+    }
+    .media-controls button {
+      height: fit-content;
+    }
+    .media-thumbnail {
+      width: 120px;
+      height: 80px;
+      background-color: #e0e0e0;
+      border-radius: 3px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 10px;
+      overflow: hidden;
+    }
+    .media-thumbnail img, .media-thumbnail video {
+      max-width: 100%;
+      max-height: 100%;
+    }
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(-10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .empty-message {
+      text-align: center;
+      padding: 30px;
+      color: #7f8c8d;
+      background-color: #f8f9fa;
+      border-radius: 5px;
+      margin-top: 20px;
+    }
+    .update-success {
+      background-color: #d4edda;
+      color: #155724;
+      padding: 10px;
+      border-radius: 4px;
+      margin-top: 5px;
+      display: none;
+    }
   </style>
 </head>
 <body>
@@ -102,26 +192,21 @@
       <h2>Upload Instructions</h2>
       <p>Upload audio or video files to add to the bot's media library. Files will be automatically processed for Discord compatibility.</p>
       <ul>
-        <li>You can select multiple files at once</li>
-        <li>Enter one title per line in the titles field, matching the order of your files</li>
+        <li>You can drag and drop files directly into the dropzone or use the select files button</li>
         <li>Max file size after processing: 9MB</li>
         <li>Files that exceed the size limit will be automatically compressed or trimmed</li>
+        <li>Newly uploaded media will appear at the top of the list</li>
       </ul>
     </div>
     
-    <form id="uploadForm">
-      <div class="form-group">
-        <label for="files">Select Files:</label>
-        <input type="file" id="files" name="files" multiple accept="audio/*,video/*" required>
-      </div>
-      
-      <div class="form-group">
-        <label for="titles">Titles (one per line, matching file order):</label>
-        <textarea id="titles" name="titles" placeholder="Enter titles here, one per line..."></textarea>
-      </div>
-      
-      <button type="submit" id="uploadButton">Upload Files</button>
-    </form>
+    <!-- Dropzone for drag and drop uploads -->
+    <div id="dropzone" class="dropzone">
+      <div class="dropzone-icon">📁</div>
+      <div class="dropzone-text">Drag & drop files here</div>
+      <div>or</div>
+      <button type="button" id="selectFilesBtn">Select Files</button>
+      <input type="file" id="files" name="files" multiple accept="audio/*,video/*" style="display:none;">
+    </div>
     
     <div class="progress-container" id="progressContainer">
       <h3>Upload Progress</h3>
@@ -131,19 +216,63 @@
       <p id="progressText">0%</p>
     </div>
     
-    <div class="results" id="results">
+    <div class="results" id="uploadResults">
       <h3>Upload Results</h3>
       <div id="resultsList"></div>
+    </div>
+    
+    <!-- Media list section -->
+    <div class="media-list">
+      <h2>Uploaded Media</h2>
+      <div id="mediaList"></div>
     </div>
   </div>
 
   <script>
-    document.getElementById('uploadForm').addEventListener('submit', function(e) {
+    // DOM elements
+    const dropzone = document.getElementById('dropzone');
+    const fileInput = document.getElementById('files');
+    const selectFilesBtn = document.getElementById('selectFilesBtn');
+    const progressContainer = document.getElementById('progressContainer');
+    const progressBar = document.getElementById('progressBar');
+    const progressText = document.getElementById('progressText');
+    const resultsList = document.getElementById('resultsList');
+    const uploadResults = document.getElementById('uploadResults');
+    const mediaList = document.getElementById('mediaList');
+    
+    // Setup event listeners for dropzone
+    dropzone.addEventListener('dragover', function(e) {
       e.preventDefault();
+      dropzone.classList.add('active');
+    });
+    
+    dropzone.addEventListener('dragleave', function() {
+      dropzone.classList.remove('active');
+    });
+    
+    dropzone.addEventListener('drop', function(e) {
+      e.preventDefault();
+      dropzone.classList.remove('active');
       
-      const fileInput = document.getElementById('files');
-      const titlesInput = document.getElementById('titles');
-      
+      if (e.dataTransfer.files.length) {
+        fileInput.files = e.dataTransfer.files;
+        handleFileUpload();
+      }
+    });
+    
+    // Setup file input button
+    selectFilesBtn.addEventListener('click', function() {
+      fileInput.click();
+    });
+    
+    fileInput.addEventListener('change', function() {
+      if (fileInput.files.length) {
+        handleFileUpload();
+      }
+    });
+    
+    // Handle file upload
+    function handleFileUpload() {
       if (!fileInput.files.length) {
         alert('Please select at least one file.');
         return;
@@ -157,18 +286,10 @@
         formData.append('files', fileInput.files[i]);
       }
       
-      // Parse titles
-      const titles = titlesInput.value.trim().split('\n').filter(title => title.trim());
-      
-      // Add titles as JSON if there are any
-      if (titles.length > 0) {
-        formData.append('titles', JSON.stringify(titles));
-      }
-      
       // Show progress container
-      document.getElementById('progressContainer').style.display = 'block';
-      document.getElementById('results').style.display = 'none';
-      document.getElementById('uploadButton').disabled = true;
+      progressContainer.style.display = 'block';
+      uploadResults.style.display = 'block';
+      resultsList.innerHTML = '';
       
       // Create and send request
       const xhr = new XMLHttpRequest();
@@ -176,24 +297,19 @@
       xhr.upload.addEventListener('progress', function(e) {
         if (e.lengthComputable) {
           const percent = Math.round((e.loaded / e.total) * 100);
-          document.getElementById('progressBar').style.width = percent + '%';
-          document.getElementById('progressText').textContent = percent + '%';
+          progressBar.style.width = percent + '%';
+          progressText.textContent = percent + '%';
         }
       });
       
       xhr.addEventListener('load', function() {
-        document.getElementById('uploadButton').disabled = false;
-        
-        // Show results
-        document.getElementById('results').style.display = 'block';
-        const resultsList = document.getElementById('resultsList');
-        resultsList.innerHTML = '';
-        
+        // Handle upload response
         if (xhr.status === 200) {
           try {
             const response = JSON.parse(xhr.responseText);
             
             if (response.results && response.results.length > 0) {
+              // Display upload results
               response.results.forEach(result => {
                 const resultItem = document.createElement('div');
                 resultItem.className = `result-item ${result.success ? 'success' : 'error'}`;
@@ -206,6 +322,9 @@
                 resultItem.innerHTML = content;
                 resultsList.appendChild(resultItem);
               });
+              
+              // Refresh media list to show newly uploaded files
+              fetchMediaList();
             } else {
               resultsList.innerHTML = '<div class="result-item error">No results returned from server.</div>';
             }
@@ -215,18 +334,167 @@
         } else {
           resultsList.innerHTML = `<div class="result-item error">Upload failed with status: ${xhr.status}</div>`;
         }
+        
+        // Reset file input
+        fileInput.value = '';
       });
       
       xhr.addEventListener('error', function() {
-        document.getElementById('uploadButton').disabled = false;
-        document.getElementById('results').style.display = 'block';
-        document.getElementById('resultsList').innerHTML = 
-          '<div class="result-item error">Upload failed. Network error.</div>';
+        resultsList.innerHTML = '<div class="result-item error">Upload failed. Network error.</div>';
+        // Reset file input
+        fileInput.value = '';
       });
       
       xhr.open('POST', '/api/upload', true);
       xhr.send(formData);
-    });
+    }
+    
+    // Function to fetch and display all media
+    function fetchMediaList() {
+      fetch('/api/media')
+        .then(response => {
+          if (!response.ok) {
+            throw new Error('Network response was not ok');
+          }
+          return response.json();
+        })
+        .then(data => {
+          // Clear current list
+          mediaList.innerHTML = '';
+          
+          if (data.media && data.media.length > 0) {
+            // Sort by newest first (assuming id or createdAt is available)
+            data.media.sort((a, b) => {
+              // Sort by creation date if available, otherwise by ID
+              if (a.createdAt && b.createdAt) {
+                return new Date(b.createdAt) - new Date(a.createdAt);
+              }
+              return b.id - a.id;
+            });
+            
+            // Create a row for each media item
+            data.media.forEach(media => {
+              const mediaRow = createMediaRow(media);
+              mediaList.appendChild(mediaRow);
+            });
+          } else {
+            // Show empty message
+            mediaList.innerHTML = `
+              <div class="empty-message">
+                <p>No media files have been uploaded yet.</p>
+                <p>Drag & drop files into the dropzone above to get started.</p>
+              </div>
+            `;
+          }
+        })
+        .catch(error => {
+          console.error('Error fetching media list:', error);
+          mediaList.innerHTML = `
+            <div class="empty-message">
+              <p>Error loading media list. Please try refreshing the page.</p>
+              <p>${error.message}</p>
+            </div>
+          `;
+        });
+    }
+    
+    // Function to create a media row
+    function createMediaRow(media) {
+      // Create row element
+      const row = document.createElement('div');
+      row.className = 'media-row';
+      row.dataset.id = media.id;
+      
+      // Get answers as an array
+      const answers = media.answers ? media.answers.map(a => a.answer).join('\n') : '';
+      
+      // Create thumbnail if media has a path
+      let thumbnailHtml = '';
+      if (media.normalizedPath) {
+        const isVideo = media.normalizedPath.match(/\.(mp4|webm|mov)$/i);
+        if (isVideo) {
+          thumbnailHtml = `
+            <div class="media-thumbnail">
+              <video src="/media/${media.id}/preview" muted></video>
+            </div>
+          `;
+        } else {
+          thumbnailHtml = `
+            <div class="media-thumbnail">
+              <img src="/media/${media.id}/waveform" alt="Audio waveform">
+            </div>
+          `;
+        }
+      }
+      
+      // Create row content
+      row.innerHTML = `
+        <div class="media-title-column">
+          <label for="title-${media.id}">Title:</label>
+          <input type="text" id="title-${media.id}" value="${media.title || ''}" placeholder="Enter title">
+          ${thumbnailHtml}
+        </div>
+        <div class="media-answers-column">
+          <label for="answers-${media.id}">Alternative Answers (one per line):</label>
+          <textarea id="answers-${media.id}" placeholder="Enter alternative answers (one per line)">${answers}</textarea>
+          <div class="update-success" id="update-success-${media.id}">Changes saved successfully!</div>
+        </div>
+        <div class="media-controls">
+          <button type="button" class="update-btn" data-id="${media.id}">Save Changes</button>
+        </div>
+      `;
+      
+      // Add event listener to the update button
+      row.querySelector('.update-btn').addEventListener('click', function() {
+        const mediaId = this.dataset.id;
+        const title = document.getElementById(`title-${mediaId}`).value.trim();
+        const answersText = document.getElementById(`answers-${mediaId}`).value.trim();
+        
+        // Split answers by newline and filter out empty lines
+        const answers = answersText.split('\n').filter(a => a.trim() !== '');
+        
+        updateMedia(mediaId, title, answers);
+      });
+      
+      return row;
+    }
+    
+    // Function to update media
+    function updateMedia(id, title, answers) {
+      fetch(`/api/media/${id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          title,
+          answers
+        })
+      })
+      .then(response => {
+        if (!response.ok) {
+          throw new Error('Network response was not ok');
+        }
+        return response.json();
+      })
+      .then(data => {
+        // Show success message
+        const successMsg = document.getElementById(`update-success-${id}`);
+        successMsg.style.display = 'block';
+        
+        // Hide success message after 3 seconds
+        setTimeout(() => {
+          successMsg.style.display = 'none';
+        }, 3000);
+      })
+      .catch(error => {
+        console.error('Error updating media:', error);
+        alert(`Failed to update media: ${error.message}`);
+      });
+    }
+    
+    // Initialize by loading media list when page loads
+    document.addEventListener('DOMContentLoaded', fetchMediaList);
   </script>
 </body>
 </html>
