@@ -215,18 +215,97 @@ export async function startWebServer(port: number): Promise<void> {
   app.get('/api/media', async (req, res) => {
     try {
       const mediaRepository = AppDataSource.getRepository(Media);
+      // Find media with answers relation - important for our UI to display alternative answers
       const media = await mediaRepository.find({
+        relations: ['answers'],
         order: { createdAt: 'DESC' },
-        take: 20
+        take: 100 // Increase to show more media items
       });
       
-      res.json(media.map(item => ({
-        id: item.id,
-        title: item.title,
-        createdAt: item.createdAt
-      })));
+      res.json({
+        success: true,
+        media: media.map(item => ({
+          id: item.id,
+          title: item.title,
+          normalizedPath: item.normalizedPath,
+          filePath: item.filePath,
+          createdAt: item.createdAt,
+          answers: item.answers
+        }))
+      });
     } catch (error) {
       logger.error(`Media listing error: ${error instanceof Error ? error.message : String(error)}`);
+      res.status(500).json({ success: false, message: 'Server error' });
+    }
+  });
+  
+  // API route for updating media
+  app.put('/api/media/:id', async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { title, answers } = req.body;
+      
+      if (!id) {
+        return res.status(400).json({ success: false, message: 'No media ID provided' });
+      }
+      
+      // Get the media item
+      const mediaRepository = AppDataSource.getRepository(Media);
+      const mediaAnswerRepository = AppDataSource.getRepository(MediaAnswer);
+      
+      const media = await mediaRepository.findOne({
+        where: { id: parseInt(id) },
+        relations: ['answers']
+      });
+      
+      if (!media) {
+        return res.status(404).json({ success: false, message: 'Media not found' });
+      }
+      
+      // Update title if provided
+      if (title !== undefined) {
+        media.title = title;
+        await mediaRepository.save(media);
+      }
+      
+      // Update answers if provided
+      if (answers && Array.isArray(answers)) {
+        // Remove all existing non-primary answers
+        await mediaAnswerRepository.delete({
+          media: { id: media.id },
+          isPrimary: false
+        });
+        
+        // Create new answers
+        for (const answer of answers) {
+          // Skip empty answers
+          if (!answer || answer.trim() === '') continue;
+          
+          // Skip if it's identical to the title (we already have a primary answer for that)
+          if (answer.trim().toLowerCase() === media.title.toLowerCase()) continue;
+          
+          const newAnswer = new MediaAnswer();
+          newAnswer.media = media;
+          newAnswer.answer = answer.trim();
+          newAnswer.isPrimary = false;
+          
+          await mediaAnswerRepository.save(newAnswer);
+        }
+      }
+      
+      // Get updated media
+      const updatedMedia = await mediaRepository.findOne({
+        where: { id: parseInt(id) },
+        relations: ['answers']
+      });
+      
+      res.json({
+        success: true,
+        message: 'Media updated successfully',
+        media: updatedMedia
+      });
+    } catch (error) {
+      logger.error(`Media update error: ${error instanceof Error ? error.message : String(error)}`);
       res.status(500).json({ success: false, message: 'Server error' });
     }
   });

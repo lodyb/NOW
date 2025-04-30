@@ -115,6 +115,10 @@
       color: #3498db;
       margin-bottom: 10px;
     }
+    .dropzone-instructions {
+      margin-top: 10px;
+      text-align: left;
+    }
     /* Media row styles */
     .media-list {
       margin-top: 20px;
@@ -188,22 +192,17 @@
   <div class="container">
     <h1>NOW Media Uploader</h1>
     
-    <div class="instructions">
-      <h2>Upload Instructions</h2>
-      <p>Upload audio or video files to add to the bot's media library. Files will be automatically processed for Discord compatibility.</p>
-      <ul>
-        <li>You can drag and drop files directly into the dropzone or use the select files button</li>
-        <li>Max file size after processing: 9MB</li>
-        <li>Files that exceed the size limit will be automatically compressed or trimmed</li>
-        <li>Newly uploaded media will appear at the top of the list</li>
-      </ul>
-    </div>
-    
-    <!-- Dropzone for drag and drop uploads -->
+    <!-- Dropzone for drag and drop uploads with instructions integrated -->
     <div id="dropzone" class="dropzone">
       <div class="dropzone-icon">📁</div>
       <div class="dropzone-text">Drag & drop files here</div>
-      <div>or</div>
+      <div class="dropzone-instructions">
+        <p>Upload audio or video files for the bot's media library.</p>
+        <ul>
+          <li>Max file size: 9MB (larger files will be compressed)</li>
+          <li>New media appears at the top of the list</li>
+        </ul>
+      </div>
       <button type="button" id="selectFilesBtn">Select Files</button>
       <input type="file" id="files" name="files" multiple accept="audio/*,video/*" style="display:none;">
     </div>
@@ -362,7 +361,7 @@
           // Clear current list
           mediaList.innerHTML = '';
           
-          if (data.media && data.media.length > 0) {
+          if (data.success && data.media && data.media.length > 0) {
             // Sort by newest first (assuming id or createdAt is available)
             data.media.sort((a, b) => {
               // Sort by creation date if available, otherwise by ID
