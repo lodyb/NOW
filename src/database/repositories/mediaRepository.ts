@@ -3,25 +3,40 @@ import { Media, MediaAnswer } from '../types';
 import { logger } from '../../utils/logger';
 
 export async function findMediaById(id: number): Promise<Media | null> {
-  // Get the media
-  const media = await getOne<Media>('SELECT * FROM media WHERE id = ?', [id]);
+  logger.info(`Searching for media with ID: ${id}`);
   
-  if (!media) return null;
-  
-  // Parse the metadata field
   try {
-    media.metadata = JSON.parse(media.metadata as unknown as string);
-  } catch (e) {
-    media.metadata = {};
+    // Get the media
+    const media = await getOne<Media>('SELECT * FROM media WHERE id = ?', [id]);
+    
+    if (!media) {
+      logger.error(`Media with ID ${id} not found in database`);
+      return null;
+    }
+    
+    logger.info(`Found media with ID ${id}: ${media.title}`);
+    
+    // Parse the metadata field
+    try {
+      media.metadata = JSON.parse(media.metadata as unknown as string);
+    } catch (e) {
+      logger.warn(`Failed to parse metadata for media ${id}: ${e}`);
+      media.metadata = {};
+    }
+    
+    // Get the answers
+    media.answers = await getQuery<MediaAnswer>(
+      'SELECT * FROM media_answers WHERE media_id = ?', 
+      [id]
+    );
+    
+    logger.info(`Retrieved ${media.answers.length} answers for media ${id}`);
+    
+    return media;
+  } catch (error) {
+    logger.error(`Database error while finding media ${id}: ${error instanceof Error ? error.message : String(error)}`);
+    throw error;
   }
-  
-  // Get the answers
-  media.answers = await getQuery<MediaAnswer>(
-    'SELECT * FROM media_answers WHERE media_id = ?', 
-    [id]
-  );
-  
-  return media;
 }
 
 export async function findMediaByTitle(searchTerm: string, limit: number = 1): Promise<Media[]> {

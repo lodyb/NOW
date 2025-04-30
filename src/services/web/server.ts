@@ -225,6 +225,7 @@ export async function startWebServer(port: number): Promise<void> {
       logger.info(`Request body: ${JSON.stringify(req.body)}`);
       
       if (!id) {
+        logger.error('No media ID provided in request params');
         return res.status(400).json({ success: false, message: 'No media ID provided' });
       }
       
@@ -247,10 +248,16 @@ export async function startWebServer(port: number): Promise<void> {
       
       logger.info(`Found media: ${JSON.stringify({ id: media.id, title: media.title })}`);
       
+      if (!answersText && answersText !== '') {
+        logger.error(`Missing answers field in request body for media ${id}`);
+        return res.status(400).json({ success: false, message: 'Missing answers field in request body' });
+      }
+      
       // Split answers by newline and filter out empty lines
       const answerLines = (answersText || '').split('\n').filter((line: string) => line.trim() !== '');
       
       if (answerLines.length === 0) {
+        logger.error('No valid answers provided in request');
         return res.status(400).json({ success: false, message: 'At least a title is required (first line)' });
       }
       
@@ -262,11 +269,21 @@ export async function startWebServer(port: number): Promise<void> {
       
       // Update title if different
       if (title !== media.title) {
-        await saveMedia({
-          id: mediaId,
-          title: title
-        });
-        logger.info(`Updated title for media ${id} to: ${title}`);
+        logger.info(`Updating title for media ${id} from "${media.title}" to "${title}"`);
+        try {
+          await saveMedia({
+            id: mediaId,
+            title: title
+          });
+          logger.info(`Updated title for media ${id} to: ${title}`);
+        } catch (titleError) {
+          logger.error(`Error updating title for media ${id}: ${titleError instanceof Error ? titleError.message : String(titleError)}`);
+          return res.status(500).json({ 
+            success: false, 
+            message: 'Error updating media title',
+            error: titleError instanceof Error ? titleError.message : String(titleError)
+          });
+        }
       }
       
       try {
@@ -299,7 +316,7 @@ export async function startWebServer(port: number): Promise<void> {
           logger.info(`Added alternate answer for media ${id}: ${answer.trim()}`);
         }
       } catch (answerError) {
-        logger.error(`Error updating answers for media ${id}: ${answerError}`);
+        logger.error(`Error updating answers for media ${id}: ${answerError instanceof Error ? answerError.message : String(answerError)}`);
         return res.status(500).json({ 
           success: false, 
           message: 'Error updating answers',
@@ -309,6 +326,13 @@ export async function startWebServer(port: number): Promise<void> {
       
       // Get updated media
       const updatedMedia = await findMediaById(mediaId);
+      if (!updatedMedia) {
+        logger.error(`Failed to retrieve updated media with ID ${mediaId} after successful update`);
+        return res.status(500).json({
+          success: false,
+          message: 'Failed to retrieve updated media after changes'
+        });
+      }
       
       res.json({
         success: true,
