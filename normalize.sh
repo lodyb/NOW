@@ -4,11 +4,34 @@
 
 echo "NOW Media Normalizer"
 echo "===================="
-echo "This script will process all media files in the database, converting them to be:"
-echo "- Maximum 9MB in size"
-echo "- Using Opus audio codec with variable bitrate"
-echo "- Using NVENC hardware acceleration when available"
-echo "- Reducing quality gradually if needed to meet size constraints"
+
+# Parse command line arguments
+FILE_PATH=""
+VERBOSE=""
+
+for arg in "$@"; do
+  case $arg in
+    --file=*)
+      FILE_PATH="${arg#*=}"
+      ;;
+    --verbose | -v)
+      VERBOSE="--verbose"
+      ;;
+    *)
+      # Unknown option
+      ;;
+  esac
+done
+
+if [ -n "$FILE_PATH" ]; then
+  echo "Processing single file: $FILE_PATH"
+else
+  echo "This script will process all media files in the database, converting them to be:"
+  echo "- Maximum 9MB in size"
+  echo "- Using Opus audio codec with variable bitrate"
+  echo "- Using NVENC hardware acceleration when available"
+  echo "- Reducing quality gradually if needed to meet size constraints"
+fi
 echo
 
 # Get directory of this script
@@ -34,12 +57,22 @@ mkdir -p temp
 echo "Starting normalization process..."
 echo "Log output will be saved to combined.log"
 
-# Run the normalize script with settings to properly handle TypeORM decorators
-npx ts-node \
-  --transpile-only \
-  -r tsconfig-paths/register \
-  --compiler-options '{"experimentalDecorators":true,"emitDecoratorMetadata":true}' \
-  normalize.ts
+# Pass file path parameter if specified
+if [ -n "$FILE_PATH" ]; then
+  # Run the normalize script with the file parameter
+  npx ts-node \
+    --transpile-only \
+    -r tsconfig-paths/register \
+    --compiler-options '{"experimentalDecorators":true,"emitDecoratorMetadata":true}' \
+    normalize.ts --file="$FILE_PATH" $VERBOSE
+else
+  # Run the normalize script without parameters (process all files)
+  npx ts-node \
+    --transpile-only \
+    -r tsconfig-paths/register \
+    --compiler-options '{"experimentalDecorators":true,"emitDecoratorMetadata":true}' \
+    normalize.ts $VERBOSE
+fi
 
 echo
 echo "Normalization process complete!"

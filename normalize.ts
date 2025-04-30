@@ -7,9 +7,11 @@ import { AppDataSource } from './src/database/connection';
 import { Media } from './src/database/entities/Media';
 import { logger } from './src/utils/logger';
 
-// Add command line argument handling for verbose mode
+// Add command line argument handling for verbose mode and file path
 const args = process.argv.slice(2);
 const VERBOSE = args.includes('--verbose') || args.includes('-v');
+const FILE_PARAM = args.find(arg => arg.startsWith('--file='));
+const SINGLE_FILE_PATH = FILE_PARAM ? FILE_PARAM.substring(7) : null;
 
 // Constants
 const MAX_FILE_SIZE_MB = 9;
@@ -587,6 +589,34 @@ function getQualityLevel(videoBitrate: string): number {
   }
 }
 
+// Process a single file without database involvement
+async function processSingleFile(filePath: string, hasNvenc: boolean): Promise<boolean> {
+  // Skip if file doesn't exist
+  if (!validFile(filePath)) {
+    logger.error(`File does not exist or is empty: ${filePath}`);
+    return false;
+  }
+  
+  // Create a temporary Media-like object to use with existing processMediaFile function
+  const fileName = path.basename(filePath);
+  const tempMedia = {
+    filePath,
+    title: fileName,
+    normalizedPath: null
+  } as Media;
+  
+  // Process the file
+  logCritical(`Processing standalone file: ${filePath}`);
+  const success = await processMediaFile(tempMedia, hasNvenc);
+  
+  // Since we're not using a database here, log the result
+  if (success && tempMedia.normalizedPath) {
+    logCritical(`Successfully normalized ${filePath} to ${tempMedia.normalizedPath}`);
+  }
+  
+  return success;
+}
+
 // Main function to process all media
 async function processAllMedia() {
   logCritical('Starting media normalization process');
@@ -600,6 +630,14 @@ async function processAllMedia() {
   // Check for NVIDIA GPU
   const hasNvenc = hasNvidiaGpuEncoder();
   logCritical(`NVIDIA GPU encoding: ${hasNvenc ? 'Available' : 'Not available'}`);
+  
+  // Process a single file if specified
+  if (SINGLE_FILE_PATH) {
+    logCritical(`Processing single file: ${SINGLE_FILE_PATH}`);
+    await processSingleFile(SINGLE_FILE_PATH, hasNvenc);
+    await AppDataSource.destroy();
+    return;
+  }
   
   // Get all media records from the database
   const mediaRepository = AppDataSource.getRepository(Media);
