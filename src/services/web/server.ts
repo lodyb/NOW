@@ -248,6 +248,7 @@ export async function startWebServer(port: number): Promise<void> {
       
       // Log the request for debugging
       logger.info(`PUT request received for /api/media/${id} with body: ${JSON.stringify(req.body)}`);
+      logger.info(`AppDataSource initialized: ${AppDataSource.isInitialized}`);
       
       if (!id) {
         return res.status(400).json({ success: false, message: 'No media ID provided' });
@@ -260,16 +261,39 @@ export async function startWebServer(port: number): Promise<void> {
       // Check if database connection is initialized
       if (!AppDataSource.isInitialized) {
         logger.error('Database connection is not initialized');
-        return res.status(500).json({ success: false, message: 'Database connection error' });
+        
+        // Attempt to initialize the database connection
+        try {
+          await AppDataSource.initialize();
+          logger.info('Database connection initialized successfully');
+        } catch (initError) {
+          logger.error(`Failed to initialize database connection: ${initError}`);
+          return res.status(500).json({ success: false, message: 'Database connection error' });
+        }
       }
       
       // Parse ID as integer or keep as string based on database schema
       const mediaId = parseInt(id);
       if (isNaN(mediaId)) {
+        logger.error(`Invalid media ID format: ${id}`);
         return res.status(400).json({ success: false, message: 'Invalid media ID format' });
       }
       
       logger.info(`Looking for media with ID: ${mediaId}`);
+      
+      // Try direct query first for better error logging
+      try {
+        const rawMedia = await AppDataSource.query(`SELECT id, title FROM media WHERE id = ?`, [mediaId]);
+        logger.info(`Raw query result: ${JSON.stringify(rawMedia)}`);
+        
+        if (!rawMedia || rawMedia.length === 0) {
+          logger.error(`Media ID ${mediaId} not found in database`);
+        }
+      } catch (rawQueryError) {
+        logger.error(`Raw query error: ${rawQueryError}`);
+      }
+      
+      // Now proceed with the repository query
       const media = await mediaRepository.findOne({
         where: { id: mediaId },
         relations: ['answers']
