@@ -101,7 +101,7 @@ async function processMediaFile(media: Media, hasNvenc: boolean): Promise<boolea
     // First attempt: 720p high quality
     { 
       height: 720, 
-      videoQuality: 'high',     // Quality-based parameter for VBR
+      videoQuality: 'high',     // Quality-based parameter for VBR (CQ 23)
       audioQuality: 'high', 
       preset: isVideo ? 'p1' : undefined, 
       trimDuration: null 
@@ -109,25 +109,41 @@ async function processMediaFile(media: Media, hasNvenc: boolean): Promise<boolea
     // Second attempt: 720p medium quality
     { 
       height: 720, 
-      videoQuality: 'medium',   // Quality-based parameter for VBR
+      videoQuality: 'medium',   // Quality-based parameter for VBR (CQ 28)
       audioQuality: 'medium', 
       preset: isVideo ? 'p2' : undefined, 
       trimDuration: null 
     },
-    // Third attempt: 360p lower quality
+    // Third attempt: 360p low quality
     { 
       height: 360, 
-      videoQuality: 'low',      // Quality-based parameter for VBR
+      videoQuality: 'low',      // Quality-based parameter for VBR (CQ 35)
       audioQuality: 'low', 
       preset: isVideo ? 'p3' : undefined, 
       trimDuration: null 
     },
-    // Final attempt: 360p lower quality + trim to 4 minutes
+    // Fourth attempt: 360p very low quality
     { 
       height: 360, 
-      videoQuality: 'low',      // Quality-based parameter for VBR
-      audioQuality: 'low', 
-      preset: isVideo ? 'p3' : undefined, 
+      videoQuality: 'very-low', // Quality-based parameter for VBR (CQ 42)
+      audioQuality: 'very-low', 
+      preset: isVideo ? 'p4' : undefined, 
+      trimDuration: null 
+    },
+    // Fifth attempt: 360p extremely low quality
+    { 
+      height: 360, 
+      videoQuality: 'extremely-low', // Quality-based parameter for VBR (CQ 50)
+      audioQuality: 'extremely-low', 
+      preset: isVideo ? 'p4' : undefined, 
+      trimDuration: null 
+    },
+    // Final attempt: 360p extremely low quality + trim to 4 minutes
+    { 
+      height: 360, 
+      videoQuality: 'extremely-low', // Quality-based parameter for VBR (CQ 50)
+      audioQuality: 'extremely-low', 
+      preset: isVideo ? 'p4' : undefined, 
       trimDuration: 240 
     }
   ];
@@ -254,72 +270,135 @@ async function encodeMedia(
         // Use NVIDIA hardware acceleration with true VBR settings
         // Map quality levels to appropriate CQ values for NVENC
         let cqValue = 23; // Default for high quality
+        let aqStrength = 8; // Default AQ strength
         
         if (videoQuality === 'high') {
           cqValue = 23; // Better quality (lower value = higher quality for CQ)
+          aqStrength = 8;
         } else if (videoQuality === 'medium') {
           cqValue = 28; // Medium quality
-        } else { // 'low'
-          cqValue = 33; // Lower quality
+          aqStrength = 10;
+        } else if (videoQuality === 'low') {
+          cqValue = 35; // Low quality
+          aqStrength = 12;
+        } else if (videoQuality === 'very-low') {
+          cqValue = 42; // Very low quality
+          aqStrength = 15;
+        } else { // extremely-low
+          cqValue = 50; // Extremely low quality
+          aqStrength = 15;
         }
         
-        command += ` -c:v h264_nvenc -preset ${preset || 'p1'} -rc:v vbr -cq:v ${cqValue}`;
+        // Pure VBR settings with NVENC - Set to true VBR mode
+        command += ` -c:v h264_nvenc -preset ${preset || 'p1'} -rc:v vbr`;
+        command += ' -b:v 0'; // Pure VBR mode, let quality parameter control bitrate completely
+        command += ` -cq:v ${cqValue}`; // Quality level (higher = more compression)
         
-        // Add baseline bitrate and limits
-        const bitrate = videoQuality === 'high' ? '1500k' : videoQuality === 'medium' ? '1000k' : '800k';
-        const maxrate = parseInt(bitrate) * 2 + 'k';
-        const bufsize = parseInt(bitrate) * 4 + 'k';
+        // Adaptive quantization settings - enhanced for better compression
+        command += ' -spatial-aq 1'; // Spatial adaptive quantization for better detail
+        command += ' -temporal-aq 1'; // Temporal adaptive quantization
+        command += ` -aq-strength ${aqStrength}`; // Control strength of adaptive quantization
         
-        command += ` -b:v ${bitrate} -maxrate:v ${maxrate} -bufsize:v ${bufsize}`;
-        command += ' -spatial-aq 1 -temporal-aq 1';
+        // Set max bitrate for frame size control, but let CQ govern quality
+        // These act as safety limits but don't force CBR
+        if (videoQuality === 'high') {
+          command += ' -maxrate:v 3000k -bufsize:v 6000k';
+        } else if (videoQuality === 'medium') {
+          command += ' -maxrate:v 2000k -bufsize:v 4000k';
+        } else if (videoQuality === 'low') {
+          command += ' -maxrate:v 1000k -bufsize:v 2000k';
+        } else if (videoQuality === 'very-low') {
+          command += ' -maxrate:v 800k -bufsize:v 1600k';
+        } else { // extremely-low
+          command += ' -maxrate:v 600k -bufsize:v 1200k';
+        }
       } else {
         // Software encoding fallback with x264 CRF mode (true VBR)
         // Map quality levels to appropriate CRF values for libx264
         let crf = 23; // Default for high quality
+        let preset = 'medium'; // Default preset
         
         if (videoQuality === 'high') {
           crf = 23; // Better quality (lower value = higher quality for CRF)
+          preset = 'medium';
         } else if (videoQuality === 'medium') {
           crf = 28; // Medium quality
-        } else { // 'low'
-          crf = 33; // Lower quality
+          preset = 'faster';
+        } else if (videoQuality === 'low') {
+          crf = 35; // Low quality
+          preset = 'faster';
+        } else if (videoQuality === 'very-low') {
+          crf = 42; // Very low quality
+          preset = 'veryfast';
+        } else { // extremely-low
+          crf = 50; // Extremely low quality
+          preset = 'superfast';
         }
         
-        command += ` -c:v libx264 -preset medium -crf ${crf}`;
+        // Pure VBR settings with libx264
+        command += ` -c:v libx264 -preset ${preset} -crf ${crf}`;
         
-        // Add bitrate limits to prevent spikes
-        const bitrate = videoQuality === 'high' ? '1500k' : videoQuality === 'medium' ? '1000k' : '800k';
-        const maxrate = parseInt(bitrate) * 2 + 'k';
-        const bufsize = parseInt(bitrate) * 4 + 'k';
-        
-        command += ` -maxrate:v ${maxrate} -bufsize:v ${bufsize}`;
+        // Set max bitrate for frame size control, but let CRF govern quality
+        if (videoQuality === 'high') {
+          command += ' -maxrate:v 3000k -bufsize:v 6000k';
+        } else if (videoQuality === 'medium') {
+          command += ' -maxrate:v 2000k -bufsize:v 4000k';
+        } else if (videoQuality === 'low') {
+          command += ' -maxrate:v 1000k -bufsize:v 2000k';
+        } else if (videoQuality === 'very-low') {
+          command += ' -maxrate:v 800k -bufsize:v 1600k';
+        } else { // extremely-low
+          command += ' -maxrate:v 600k -bufsize:v 1200k';
+        }
       }
       
       // Common video settings
       command += ' -pix_fmt yuv420p -movflags +faststart';
       
       // Audio settings for video files (AAC for MP4)
-      const audioBitrate = audioQuality === 'high' ? '128k' : audioQuality === 'medium' ? '96k' : '64k';
+      let audioBitrate;
+      if (audioQuality === 'high') {
+        audioBitrate = '128k';
+      } else if (audioQuality === 'medium') {
+        audioBitrate = '96k';
+      } else if (audioQuality === 'low') {
+        audioBitrate = '64k';
+      } else if (audioQuality === 'very-low') {
+        audioBitrate = '48k';
+      } else { // extremely-low
+        audioBitrate = '32k';
+      }
+      
       command += ` -c:a aac -b:a ${audioBitrate} -strict experimental`;
     } else {
       // Audio-only, remove video streams
       command += ' -vn';
       
       // For audio files, use Opus codec with .ogg container and variable bitrate
-      const audioBitrate = audioQuality === 'high' ? '128k' : audioQuality === 'medium' ? '96k' : '64k';
-      command += ` -c:a libopus -b:a ${audioBitrate} -vbr on`;
+      let audioBitrate;
+      let compressionLevel;
       
-      // Different compression levels based on quality
       if (audioQuality === 'high') {
-        // For highest quality attempt, use lower compression level
-        command += ' -compression_level 6 -application audio';
+        audioBitrate = '128k';
+        compressionLevel = 6;
       } else if (audioQuality === 'medium') {
-        // For medium quality attempt, balance compression
-        command += ' -compression_level 8 -application audio';
-      } else {
-        // For lowest quality attempt, use maximum compression
-        command += ' -compression_level 10 -application audio';
+        audioBitrate = '96k';
+        compressionLevel = 8;
+      } else if (audioQuality === 'low') {
+        audioBitrate = '64k';
+        compressionLevel = 10;
+      } else if (audioQuality === 'very-low') {
+        audioBitrate = '48k';
+        compressionLevel = 10;
+      } else { // extremely-low
+        audioBitrate = '32k';
+        compressionLevel = 10;
       }
+      
+      // Pure VBR settings for Opus audio with enhanced quality
+      command += ` -c:a libopus -b:a ${audioBitrate} -vbr on`;
+      command += ` -compression_level ${compressionLevel}`;
+      command += ' -application audio'; // Optimize for music and high quality audio instead of speech
     }
     
     // Output file
