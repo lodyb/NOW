@@ -41,7 +41,7 @@ const upload = multer({
     const allowedTypes = [
       'audio/mpeg', 'audio/mp3', 'audio/ogg', 'audio/wav', 'audio/x-wav',
       'video/mp4', 'video/webm', 'video/ogg', 'video/quicktime',
-      'video/x-matroska', 'video/x-mkv'
+      'video/x-matroska', 'video/x-mkv', 'video/matroska', 'video/mkv'
     ];
     
     if (allowedTypes.includes(file.mimetype)) {
@@ -246,6 +246,9 @@ export async function startWebServer(port: number): Promise<void> {
       const { id } = req.params;
       const { answers: answersText } = req.body;
       
+      // Log the request for debugging
+      logger.info(`PUT request received for /api/media/${id} with body: ${JSON.stringify(req.body)}`);
+      
       if (!id) {
         return res.status(400).json({ success: false, message: 'No media ID provided' });
       }
@@ -254,12 +257,19 @@ export async function startWebServer(port: number): Promise<void> {
       const mediaRepository = AppDataSource.getRepository(Media);
       const mediaAnswerRepository = AppDataSource.getRepository(MediaAnswer);
       
+      // Check if database connection is initialized
+      if (!AppDataSource.isInitialized) {
+        logger.error('Database connection is not initialized');
+        return res.status(500).json({ success: false, message: 'Database connection error' });
+      }
+      
       // Parse ID as integer or keep as string based on database schema
       const mediaId = parseInt(id);
       if (isNaN(mediaId)) {
         return res.status(400).json({ success: false, message: 'Invalid media ID format' });
       }
       
+      logger.info(`Looking for media with ID: ${mediaId}`);
       const media = await mediaRepository.findOne({
         where: { id: mediaId },
         relations: ['answers']
@@ -270,8 +280,10 @@ export async function startWebServer(port: number): Promise<void> {
         return res.status(404).json({ success: false, message: 'Media not found' });
       }
       
+      logger.info(`Found media: ${JSON.stringify({ id: media.id, title: media.title })}`);
+      
       // Split answers by newline and filter out empty lines
-      const answerLines = (answersText || '').split('\n').filter(line => line.trim() !== '');
+      const answerLines = (answersText || '').split('\n').filter((line: string) => line.trim() !== '');
       
       if (answerLines.length === 0) {
         return res.status(400).json({ success: false, message: 'At least a title is required (first line)' });
@@ -279,7 +291,7 @@ export async function startWebServer(port: number): Promise<void> {
       
       // First line is the title, remaining lines are alternative answers
       const title = answerLines[0].trim();
-      const alternateAnswers = answerLines.slice(1).map(line => line.trim());
+      const alternateAnswers = answerLines.slice(1).map((line: string) => line.trim());
       
       logger.info(`Updating media ${id}: title="${title}", alternateAnswers=[${alternateAnswers.join(', ')}]`);
       
@@ -292,6 +304,7 @@ export async function startWebServer(port: number): Promise<void> {
       
       try {
         // First, delete all existing answers (including primary)
+        logger.info(`Deleting existing answers for media ${id}...`);
         await mediaAnswerRepository.delete({
           media: { id: mediaId }
         });
@@ -467,15 +480,17 @@ export async function startWebServer(port: number): Promise<void> {
       await mediaRepository.remove(media);
       
       // Then try to delete files (but don't fail if files can't be deleted)
-      for (const path of filePaths) {
+      for (const filePath of filePaths) {
         try {
-          const fullPath = path.startsWith('/') ? path : path.resolve(process.cwd(), path);
-          if (fs.existsSync(fullPath)) {
-            fs.unlinkSync(fullPath);
-            logger.info(`Deleted file: ${fullPath}`);
+          if (filePath) {
+            const fullPath = filePath.startsWith('/') ? filePath : path.resolve(process.cwd(), filePath);
+            if (fs.existsSync(fullPath)) {
+              fs.unlinkSync(fullPath);
+              logger.info(`Deleted file: ${fullPath}`);
+            }
           }
         } catch (fileError) {
-          logger.error(`Error deleting file ${path}: ${fileError instanceof Error ? fileError.message : String(fileError)}`);
+          logger.error(`Error deleting file ${filePath}: ${fileError instanceof Error ? fileError.message : String(fileError)}`);
           // Continue with other files even if one fails
         }
       }
