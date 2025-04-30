@@ -25,6 +25,8 @@ import fs from 'fs';
 import Fuse from 'fuse.js';
 import { processMedia } from '../services/media/processor';
 import { createClip as clipperCreateClip } from '../services/media/clipper';
+// Import libsodium-wrappers for voice encryption
+import sodium from 'libsodium-wrappers';
 
 // Map to store active quiz sessions
 const activeQuizzes = new Map<string, QuizSession>();
@@ -98,6 +100,10 @@ class QuizSession {
    */
   async start(message: Message<boolean>): Promise<void> {
     try {
+      // Ensure sodium is ready before creating voice connection
+      await sodium.ready;
+      logger.info('Sodium encryption library loaded and ready');
+      
       // Join the voice channel
       this.connection = joinVoiceChannel({
         channelId: this.voiceChannel.id,
@@ -420,6 +426,10 @@ class QuizSession {
           channel.send('Lost connection to the voice channel. Attempting to reconnect...');
           
           try {
+            // Ensure sodium is ready before reconnecting
+            await sodium.ready;
+            logger.info('Sodium encryption library loaded for reconnection');
+            
             // Attempt to rejoin the voice channel
             this.connection = joinVoiceChannel({
               channelId: this.voiceChannel.id,
@@ -769,6 +779,16 @@ async function createClip(
  */
 export async function quiz(args: string[], message: Message<boolean>, client: Client): Promise<void> {
   try {
+    // Initialize sodium first before doing anything with voice
+    try {
+      await sodium.ready;
+      logger.info('Sodium encryption library initialized for quiz command');
+    } catch (sodiumError) {
+      logger.error('Failed to initialize sodium:', sodiumError);
+      message.reply('Could not initialize voice encryption. Make sure libsodium-wrappers is properly installed.');
+      return;
+    }
+    
     // Check if user is in a voice channel
     const member = message.guild?.members.cache.get(message.author.id);
     const voiceChannel = member?.voice.channel;
