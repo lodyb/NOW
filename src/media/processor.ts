@@ -429,7 +429,7 @@ export const encodeMediaWithBitrates = async (
   
   console.log(`Processing ${path.basename(inputPath)} (${originalSizeMB}MB, ${Math.round(duration)}s)`);
   
-  // Calculate optimal bitrates
+  // Calculate optimal bitrates based on content length
   const { audioBitrateKbps, videoBitrateKbps, trimDurationSeconds } = calculateBitrates(
     duration,
     isVideo,
@@ -480,12 +480,15 @@ export const encodeMediaWithBitrates = async (
   try {
     const command = ffmpeg(inputForEncoding);
     
-    // Set audio settings
+    // Set audio settings with loudnorm filter for consistent volume
     command.outputOptions('-ac 2'); // Always use stereo audio
     command.outputOptions(`-c:a libopus`);
     command.outputOptions(`-b:a ${audioBitrateKbps}k`);
     command.outputOptions('-vbr on'); // Variable bitrate for audio
     command.outputOptions('-application audio'); // Optimize for music
+    
+    // Apply loudnorm filter for audio normalization
+    command.audioFilters('loudnorm=I=-16:TP=-1.5:LRA=11');
     
     if (isVideo && videoBitrateKbps) {
       // Scale video if original is larger than target resolution
@@ -993,10 +996,11 @@ interface BitrateCalculation {
 const calculateBitrates = (
   durationSeconds: number,
   isVideo: boolean,
-  audioPriorityKbps = 128
+  preferredAudioKbps = 160,
+  minAcceptableVideoKbps = 150
 ): BitrateCalculation => {
-  const totalBits = MAX_FILE_SIZE_BYTES * 8 * 0.95; // 5% buffer for container overhead
-  let audioBitrateKbps = audioPriorityKbps;
+  const totalBits = MAX_FILE_SIZE_BYTES * 8 * 0.97; // 3% buffer for container overhead
+  let audioBitrateKbps = preferredAudioKbps;
   let videoBitrateKbps: number | null = null;
   let trimDurationSeconds: number | null = null;
 
@@ -1017,20 +1021,19 @@ const calculateBitrates = (
     return { audioBitrateKbps, videoBitrateKbps: null, trimDurationSeconds };
   }
   
-  // For video files, balance between audio and video
-  if (totalBitrateKbps <= audioBitrateKbps + 200) {
-    // Lower audio quality if video bitrate becomes too low
-    audioBitrateKbps = Math.max(64, totalBitrateKbps - 200);
+  // For video files, only reduce audio if needed
+  if (totalBitrateKbps < audioBitrateKbps + minAcceptableVideoKbps) {
+    audioBitrateKbps = Math.max(64, totalBitrateKbps - minAcceptableVideoKbps);
   }
 
   videoBitrateKbps = totalBitrateKbps - audioBitrateKbps;
 
-  // If video bitrate still too low (<150kbps), calculate how much to trim
-  if (videoBitrateKbps < 150) {
-    const minTotalBitrate = audioBitrateKbps + 150;
-    const maxDuration = totalBits / (minTotalBitrate * 1000);
-    trimDurationSeconds = Math.floor(maxDuration);
-    videoBitrateKbps = 150; // set to minimal acceptable bitrate
+  // If video bitrate still too low, calculate how much to trim
+  if (videoBitrateKbps < minAcceptableVideoKbps) {
+    const requiredBitrate = audioBitrateKbps + minAcceptableVideoKbps;
+    const newMaxDuration = totalBits / (requiredBitrate * 1000);
+    trimDurationSeconds = Math.floor(newMaxDuration);
+    videoBitrateKbps = minAcceptableVideoKbps;
   }
 
   return { audioBitrateKbps, videoBitrateKbps, trimDurationSeconds };
