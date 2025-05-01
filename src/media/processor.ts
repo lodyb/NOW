@@ -208,7 +208,7 @@ export const encodeMediaWithAttempts = async (
       // Use fluent-ffmpeg for pre-trimming
       await new Promise<void>((resolve, reject) => {
         ffmpeg(inputPath)
-          .setDuration(600)
+          .setDuration(500)
           .outputOptions('-c copy')
           .save(preTrimPath)
           .on('end', () => {
@@ -239,7 +239,7 @@ export const encodeMediaWithAttempts = async (
     { 
       height: 720, 
       videoQuality: hasNvenc ? 23 : 23,    // CQ/CRF value (lower = higher quality)
-      audioBitrate: isVideo ? '128k' : '128k',
+      audioBitrate: isVideo ? '192k' : '192k',
       preset: hasNvenc ? 'p1' : 'medium', 
       trimDuration: null 
     },
@@ -247,7 +247,7 @@ export const encodeMediaWithAttempts = async (
     { 
       height: 720, 
       videoQuality: hasNvenc ? 28 : 28,    
-      audioBitrate: isVideo ? '96k' : '96k',
+      audioBitrate: isVideo ? '128k' : '128k',
       preset: hasNvenc ? 'p2' : 'faster', 
       trimDuration: null 
     },
@@ -255,7 +255,7 @@ export const encodeMediaWithAttempts = async (
     { 
       height: 360, 
       videoQuality: hasNvenc ? 35 : 35,
-      audioBitrate: isVideo ? '64k' : '64k',
+      audioBitrate: isVideo ? '128k' : '128k',
       preset: hasNvenc ? 'p3' : 'veryfast', 
       trimDuration: null 
     },
@@ -263,7 +263,7 @@ export const encodeMediaWithAttempts = async (
     { 
       height: 360, 
       videoQuality: hasNvenc ? 42 : 42,
-      audioBitrate: isVideo ? '48k' : '48k',
+      audioBitrate: isVideo ? '128k' : '128k',
       preset: hasNvenc ? 'p4' : 'superfast', 
       trimDuration: null 
     },
@@ -271,7 +271,7 @@ export const encodeMediaWithAttempts = async (
     { 
       height: 240, 
       videoQuality: hasNvenc ? 50 : 50,
-      audioBitrate: isVideo ? '32k' : '32k',
+      audioBitrate: isVideo ? '128k' : '128k',
       preset: hasNvenc ? 'p4' : 'superfast', 
       trimDuration: null 
     },
@@ -279,7 +279,7 @@ export const encodeMediaWithAttempts = async (
     { 
       height: 240, 
       videoQuality: hasNvenc ? 50 : 50,
-      audioBitrate: isVideo ? '32k' : '32k',
+      audioBitrate: isVideo ? '128k' : '128k',
       preset: hasNvenc ? 'p4' : 'superfast', 
       trimDuration: 240 
     },
@@ -287,7 +287,7 @@ export const encodeMediaWithAttempts = async (
     { 
       height: 240, 
       videoQuality: hasNvenc ? 50 : 50,
-      audioBitrate: isVideo ? '32k' : '32k',
+      audioBitrate: isVideo ? '128k' : '128k',
       preset: hasNvenc ? 'p4' : 'superfast', 
       trimDuration: 120 
     },
@@ -295,7 +295,7 @@ export const encodeMediaWithAttempts = async (
     { 
       height: 240, 
       videoQuality: hasNvenc ? 50 : 50,
-      audioBitrate: isVideo ? '32k' : '32k',
+      audioBitrate: isVideo ? '128k' : '128k',
       preset: hasNvenc ? 'p4' : 'superfast', 
       trimDuration: 60 
     }
