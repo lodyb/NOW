@@ -694,28 +694,46 @@ export const scanAndProcessUnprocessedMedia = async (): Promise<void> => {
     db.all(
       `SELECT id, title, filePath, normalizedPath, thumbnails FROM media 
        WHERE filePath IS NOT NULL 
-       AND (normalizedPath IS NULL OR thumbnails IS NULL OR thumbnails = '')
        ORDER BY id ASC`,
       async (err, rows: any[]) => {
         if (err) {
-          console.error('Error fetching unprocessed media:', err);
+          console.error('Error fetching media:', err);
           reject(err);
           return;
         }
         
-        console.log(`Found ${rows.length} media items to process.`);
+        // Filter rows that need processing
+        const toProcess = rows.filter(media => {
+          // Media has no normalized path in database
+          if (!media.normalizedPath) return true;
+          
+          // Media has normalized path in DB but file doesn't exist
+          const normalizedPath = path.join(NORMALIZED_DIR, path.basename(media.normalizedPath));
+          if (!fs.existsSync(normalizedPath)) return true;
+          
+          // Media has no thumbnails
+          if (!media.thumbnails || media.thumbnails === '') return true;
+          
+          return false;
+        });
+        
+        console.log(`Found ${toProcess.length} out of ${rows.length} media items that need processing.`);
         
         // Process in batches to avoid overloading the system
         const batchSize = 3;
         
-        for (let i = 0; i < rows.length; i += batchSize) {
-          const batch = rows.slice(i, i + batchSize);
-          console.log(`Processing batch ${Math.floor(i/batchSize) + 1} of ${Math.ceil(rows.length/batchSize)}...`);
+        for (let i = 0; i < toProcess.length; i += batchSize) {
+          const batch = toProcess.slice(i, i + batchSize);
+          console.log(`Processing batch ${Math.floor(i/batchSize) + 1} of ${Math.ceil(toProcess.length/batchSize)}...`);
           
           const promises = batch.map(async (media) => {
             try {
+              // Check if normalized file exists on disk
+              const needsNormalization = !media.normalizedPath || 
+                !fs.existsSync(path.join(NORMALIZED_DIR, path.basename(media.normalizedPath)));
+              
               // Normalize media if needed
-              if (!media.normalizedPath) {
+              if (needsNormalization) {
                 console.log(`Normalizing media ${media.id}: ${media.title}`);
                 const inputPath = path.join(UPLOADS_DIR, path.basename(media.filePath));
                 
