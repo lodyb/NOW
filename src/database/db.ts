@@ -155,6 +155,79 @@ export const findAllMedia = (searchTerm?: string): Promise<Media[]> => {
   });
 };
 
+export const findAllMediaPaginated = (
+  page: number = 1, 
+  pageSize: number = 20, 
+  searchTerm?: string
+): Promise<{items: Media[], total: number}> => {
+  return new Promise((resolve, reject) => {
+    // First get total count for pagination
+    let countQuery = `
+      SELECT COUNT(DISTINCT m.id) as total
+      FROM media m
+      LEFT JOIN media_answers ma ON ma.mediaId = m.id
+      WHERE m.isDeleted = 0
+    `;
+    
+    const countParams: any[] = [];
+    
+    if (searchTerm) {
+      countQuery += ` AND (m.title LIKE ? OR ma.answer LIKE ?)`;
+      const param = `%${searchTerm}%`;
+      countParams.push(param, param);
+    }
+    
+    db.get(countQuery, countParams, (countErr, countRow: {total: number}) => {
+      if (countErr) {
+        return reject(countErr);
+      }
+      
+      // Then get the actual data with pagination
+      let query = `
+        SELECT m.*, GROUP_CONCAT(ma.answer, '|') as answers
+        FROM media m
+        LEFT JOIN media_answers ma ON ma.mediaId = m.id
+        WHERE m.isDeleted = 0
+      `;
+      
+      const params: any[] = [];
+      
+      if (searchTerm) {
+        query += ` AND (m.title LIKE ? OR ma.answer LIKE ?)`;
+        const param = `%${searchTerm}%`;
+        params.push(param, param);
+      }
+      
+      query += `
+        GROUP BY m.id
+        ORDER BY m.createdAt DESC
+        LIMIT ? OFFSET ?
+      `;
+      
+      const offset = (page - 1) * pageSize;
+      params.push(pageSize, offset);
+      
+      db.all(query, params, (err, rows: MediaRow[]) => {
+        if (err) {
+          reject(err);
+        } else {
+          // Convert answers string to array and parse thumbnails JSON
+          const results = rows.map((row) => ({
+            ...row,
+            answers: row.answers ? row.answers.split('|') : [],
+            thumbnails: row.thumbnails ? JSON.parse(row.thumbnails as string) : [],
+            metadata: row.metadata ? JSON.parse(row.metadata as string) : {},
+          }));
+          resolve({ 
+            items: results,
+            total: countRow.total
+          });
+        }
+      });
+    });
+  });
+};
+
 export const findMediaBySearch = (searchTerm: string): Promise<Media[]> => {
   return new Promise((resolve, reject) => {
     const query = `
@@ -175,8 +248,8 @@ export const findMediaBySearch = (searchTerm: string): Promise<Media[]> => {
         const results = rows.map((row) => ({
           ...row,
           answers: row.answers ? row.answers.split('|') : [],
-          thumbnails: row.thumbnails ? JSON.parse(row.thumbnails) : [],
-          metadata: row.metadata ? JSON.parse(row.metadata) : {},
+          thumbnails: row.thumbnails ? JSON.parse(row.thumbnails as string) : [],
+          metadata: row.metadata ? JSON.parse(row.metadata as string) : {},
         }));
         resolve(results);
       }

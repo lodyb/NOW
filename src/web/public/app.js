@@ -12,7 +12,9 @@ const app = Vue.createApp({
       messageType: 'success',
       activeVideoUrl: null,
       mediaWithThumbnails: {}, // Track thumbnails for each media item
-      currentThumbnailIndices: {} // Track current thumbnail index for each media
+      currentThumbnailIndices: {}, // Track current thumbnail index for each media
+      currentPage: 1,
+      totalPages: 1
     };
   },
   
@@ -77,47 +79,26 @@ const app = Vue.createApp({
       try {
         this.loading = this.media.length === 0; // Only show loading on initial fetch
         
-        const params = {};
+        const params = {
+          page: this.currentPage,
+          pageSize: 20
+        };
+        
         if (this.searchQuery) {
           params.search = this.searchQuery;
         }
         
         const response = await axios.get('/api/media', { params });
-        const newMedia = response.data;
         
-        // Ensure sorting is maintained (newest first)
-        newMedia.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+        // Update pagination data
+        this.totalPages = response.data.totalPages;
+        this.currentPage = response.data.page;
         
-        // Smart update: only update changed items
-        if (this.media.length === 0) {
-          // First load - set the whole array
-          this.media = newMedia.map(this.prepareMediaItem);
-        } else {
-          // Update only changed items
-          newMedia.forEach(newItem => {
-            const existingIndex = this.media.findIndex(item => item.id === newItem.id);
-            
-            if (existingIndex === -1) {
-              // New item - add to array
-              this.media.push(this.prepareMediaItem(newItem));
-            } else if (JSON.stringify(this.media[existingIndex]) !== JSON.stringify(newItem)) {
-              // Item changed - preserve current thumbnail but update other props
-              const currentThumbnail = this.media[existingIndex].currentThumbnail;
-              this.media[existingIndex] = {
-                ...this.prepareMediaItem(newItem),
-                currentThumbnail
-              };
-            }
-          });
-          
-          // Remove deleted items
-          const newIds = new Set(newMedia.map(item => item.id));
-          this.media = this.media.filter(item => newIds.has(item.id));
-          
-          // Re-sort to ensure consistency
-          this.media.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-        }
+        // Use the items array from the paginated response
+        const mediaItems = response.data.items || [];
         
+        // Create prepared media items
+        this.media = mediaItems.map(this.prepareMediaItem);
         this.loading = false;
       } catch (error) {
         this.loading = false;
@@ -513,7 +494,113 @@ const app = Vue.createApp({
       // Update the current thumbnail index for this media item
       this.currentThumbnailIndices[mediaId] = index;
     },
+
+    handlePageChange(page) {
+      this.currentPage = page;
+      this.fetchMedia();
+    }
   }
+});
+
+// Pagination component
+app.component('pagination-controls', {
+  props: {
+    currentPage: {
+      type: Number,
+      required: true
+    },
+    totalPages: {
+      type: Number,
+      required: true
+    },
+    visiblePageCount: {
+      type: Number,
+      default: 5
+    }
+  },
+  
+  computed: {
+    pages() {
+      const pages = [];
+      const half = Math.floor(this.visiblePageCount / 2);
+      let start = Math.max(this.currentPage - half, 1);
+      const end = Math.min(start + this.visiblePageCount - 1, this.totalPages);
+      
+      if (end - start + 1 < this.visiblePageCount) {
+        start = Math.max(end - this.visiblePageCount + 1, 1);
+      }
+      
+      for (let i = start; i <= end; i++) {
+        pages.push(i);
+      }
+      
+      return pages;
+    },
+    
+    showFirstPage() {
+      return this.pages[0] > 1;
+    },
+    
+    showLastPage() {
+      return this.pages[this.pages.length - 1] < this.totalPages;
+    }
+  },
+  
+  methods: {
+    goToPage(page) {
+      if (page >= 1 && page <= this.totalPages && page !== this.currentPage) {
+        this.$emit('page-change', page);
+      }
+    }
+  },
+  
+  template: `
+    <div class="pagination">
+      <button 
+        @click="goToPage(currentPage - 1)" 
+        :disabled="currentPage === 1"
+        class="pagination-button"
+      >
+        &laquo;
+      </button>
+      
+      <button v-if="showFirstPage" 
+        @click="goToPage(1)" 
+        class="pagination-button"
+      >
+        1
+      </button>
+      
+      <span v-if="showFirstPage && pages[0] > 2" class="pagination-ellipsis">...</span>
+      
+      <button 
+        v-for="page in pages" 
+        :key="page" 
+        @click="goToPage(page)" 
+        class="pagination-button" 
+        :class="{ active: page === currentPage }"
+      >
+        {{ page }}
+      </button>
+      
+      <span v-if="showLastPage && pages[pages.length-1] < totalPages - 1" class="pagination-ellipsis">...</span>
+      
+      <button v-if="showLastPage" 
+        @click="goToPage(totalPages)" 
+        class="pagination-button"
+      >
+        {{ totalPages }}
+      </button>
+      
+      <button 
+        @click="goToPage(currentPage + 1)" 
+        :disabled="currentPage === totalPages"
+        class="pagination-button"
+      >
+        &raquo;
+      </button>
+    </div>
+  `
 });
 
 // Media item component

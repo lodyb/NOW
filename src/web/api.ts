@@ -8,7 +8,8 @@ import {
   saveMedia, 
   saveMediaAnswers, 
   toggleMediaDeleted,
-  getMediaById
+  getMediaById,
+  findAllMediaPaginated
 } from '../database/db';
 
 // Extend request type to include multer's file property
@@ -77,8 +78,17 @@ router.get('/', (req, res) => {
 router.get('/api/media', async (req, res) => {
   try {
     const search = req.query.search as string | undefined;
-    const media = await findAllMedia(search);
-    res.json(media);
+    const page = parseInt(req.query.page as string) || 1;
+    const pageSize = parseInt(req.query.pageSize as string) || 20;
+    
+    const mediaData = await findAllMediaPaginated(page, pageSize, search);
+    res.json({
+      items: mediaData.items,
+      total: mediaData.total,
+      page,
+      pageSize,
+      totalPages: Math.ceil(mediaData.total / pageSize)
+    });
   } catch (error) {
     res.status(500).json({ error: (error as Error).message });
   }
