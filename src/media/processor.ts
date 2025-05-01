@@ -407,6 +407,170 @@ export const encodeMediaWithAttempts = async (
   return null;
 };
 
+/**
+ * Encode media file using optimized bitrate calculation
+ */
+export const encodeMediaWithBitrates = async (
+  inputPath: string, 
+  outputPath: string,
+  isVideo: boolean
+): Promise<string | null> => {
+  if (!validFile(inputPath)) {
+    throw new Error(`File does not exist or is empty: ${inputPath}`);
+  }
+  
+  // Check for NVIDIA GPU
+  const hasNvenc = await hasNvidiaGpu();
+  
+  // Get file info
+  const duration = await getMediaDuration(inputPath);
+  const originalSize = fs.statSync(inputPath).size;
+  const originalSizeMB = (originalSize / (1024 * 1024)).toFixed(2);
+  
+  console.log(`Processing ${path.basename(inputPath)} (${originalSizeMB}MB, ${Math.round(duration)}s)`);
+  
+  // Calculate optimal bitrates
+  const { audioBitrateKbps, videoBitrateKbps, trimDurationSeconds } = calculateBitrates(
+    duration,
+    isVideo,
+    isVideo ? 128 : 160 // Higher audio priority for audio-only files
+  );
+  
+  // Apply trim if needed
+  const finalDuration = trimDurationSeconds ? Math.min(duration, trimDurationSeconds) : duration;
+  
+  // Pre-trim long media to save processing time
+  let inputForEncoding = inputPath;
+  if (duration > finalDuration) {
+    const preTrimPath = path.join(TEMP_DIR, `pretrim_${path.basename(inputPath)}`);
+    console.log(`Trimming media to ${finalDuration}s to optimize file size`);
+    
+    try {
+      await new Promise<void>((resolve, reject) => {
+        ffmpeg(inputPath)
+          .setDuration(finalDuration)
+          .outputOptions('-c copy')
+          .save(preTrimPath)
+          .on('end', () => {
+            if (validFile(preTrimPath)) {
+              inputForEncoding = preTrimPath;
+              console.log(`Successfully trimmed to ${finalDuration}s`);
+            }
+            resolve();
+          })
+          .on('error', (err) => {
+            console.error(`Error trimming: ${err}`);
+            resolve(); // Continue with original file if trimming fails
+          });
+      });
+    } catch (error) {
+      console.error(`Error during trim: ${error}`);
+    }
+  }
+
+  let dimensions = { width: 1280, height: 720 };
+  if (isVideo) {
+    dimensions = await getVideoDimensions(inputForEncoding);
+  }
+  
+  console.log(`Using calculated bitrates: audio=${audioBitrateKbps}kbps, video=${videoBitrateKbps || 'n/a'}kbps`);
+  
+  const tempOutputPath = path.join(TEMP_DIR, `temp_${path.basename(outputPath)}`);
+  
+  try {
+    const command = ffmpeg(inputForEncoding);
+    
+    // Set audio settings
+    command.outputOptions('-ac 2'); // Always use stereo audio
+    command.outputOptions(`-c:a libopus`);
+    command.outputOptions(`-b:a ${audioBitrateKbps}k`);
+    command.outputOptions('-vbr on'); // Variable bitrate for audio
+    command.outputOptions('-application audio'); // Optimize for music
+    
+    if (isVideo && videoBitrateKbps) {
+      // Scale video if original is larger than target resolution
+      const targetHeight = videoBitrateKbps < 400 ? 360 : 720;
+      
+      if (dimensions.width > 1280 || dimensions.height > targetHeight) {
+        command.outputOptions(`-vf scale=w='min(1280,iw)':h='min(${targetHeight},ih)':force_original_aspect_ratio=decrease,format=yuv420p`);
+      } else {
+        command.outputOptions('-vf format=yuv420p');
+      }
+      
+      // Use NVIDIA hardware encoding if available
+      if (hasNvenc) {
+        command.outputOptions('-c:v h264_nvenc');
+        command.outputOptions(`-preset p2`); // Medium preset
+        command.outputOptions('-rc:v vbr'); // Variable bitrate mode
+        command.outputOptions(`-b:v ${videoBitrateKbps}k`);
+        command.outputOptions('-maxrate:v 5M');
+        command.outputOptions('-spatial-aq 1'); // Spatial adaptive quantization
+        command.outputOptions('-temporal-aq 1'); // Temporal adaptive quantization
+      } else {
+        // Software encoding with x264
+        command.outputOptions('-c:v libx264');
+        command.outputOptions(`-preset medium`);
+        command.outputOptions(`-b:v ${videoBitrateKbps}k`);
+        command.outputOptions(`-maxrate ${videoBitrateKbps * 1.5}k`);
+        command.outputOptions(`-bufsize ${videoBitrateKbps * 2}k`);
+      }
+      
+      // Common video settings
+      command.outputOptions('-pix_fmt yuv420p');
+      command.outputOptions('-movflags +faststart');
+      
+      // Set output format
+      command.format('mp4');
+    } else {
+      // Audio-only settings
+      command.outputOptions('-vn'); // Remove video streams
+      command.format('ogg');
+    }
+
+    // Run the encoding
+    await new Promise<void>((resolve, reject) => {
+      command
+        .save(tempOutputPath)
+        .on('end', () => resolve())
+        .on('error', (err) => reject(err));
+    });
+    
+    // Check if output file exists and is under size limit
+    if (validFile(tempOutputPath)) {
+      const stats = fs.statSync(tempOutputPath);
+      const fileSizeMB = (stats.size / (1024 * 1024)).toFixed(2);
+      
+      if (stats.size <= MAX_FILE_SIZE_BYTES) {
+        // Success - move the file to the final location
+        fs.renameSync(tempOutputPath, outputPath);
+        console.log(`Successfully encoded to ${fileSizeMB}MB`);
+        
+        // Clean up pre-trimmed file if it exists
+        if (inputForEncoding !== inputPath && fs.existsSync(inputForEncoding)) {
+          try {
+            fs.unlinkSync(inputForEncoding);
+          } catch (error) {
+            console.error(`Error cleaning up pre-trimmed file: ${error}`);
+          }
+        }
+        
+        return outputPath;
+      } else {
+        console.log(`File too large (${fileSizeMB}MB > ${MAX_FILE_SIZE_MB}MB), falling back to multi-attempt method`);
+        // If bitrate calculation fails, fallback to the multi-attempt method
+        return encodeMediaWithAttempts(inputPath, outputPath, isVideo);
+      }
+    }
+  } catch (error) {
+    console.error(`Error in smart encoding: ${error}`);
+    // Fallback to the traditional approach if smart encoding fails
+    return encodeMediaWithAttempts(inputPath, outputPath, isVideo);
+  }
+  
+  // If we reach here, the smart encoding failed - fall back to the traditional approach
+  return encodeMediaWithAttempts(inputPath, outputPath, isVideo);
+};
+
 export const normalizeMedia = async (
   inputPath: string,
   callback?: (outputPath: string) => void
@@ -432,8 +596,8 @@ export const normalizeMedia = async (
   
   console.log(`Normalizing ${path.basename(inputPath)} to ${path.basename(outputPath)}`);
   
-  // Use the encoding function
-  const result = await encodeMediaWithAttempts(inputPath, outputPath, isVideo);
+  // Use the optimized encoding function with bitrate calculation
+  const result = await encodeMediaWithBitrates(inputPath, outputPath, isVideo);
   
   if (result) {
     try {
@@ -815,4 +979,59 @@ const updateNormalizedPathInDatabase = (mediaId: number, normalizedPath: string)
       }
     );
   });
+};
+
+interface BitrateCalculation {
+  audioBitrateKbps: number;
+  videoBitrateKbps: number | null;
+  trimDurationSeconds: number | null;
+}
+
+/**
+ * Calculate optimal bitrates to fit under MAX_FILE_SIZE_BYTES
+ */
+const calculateBitrates = (
+  durationSeconds: number,
+  isVideo: boolean,
+  audioPriorityKbps = 128
+): BitrateCalculation => {
+  const totalBits = MAX_FILE_SIZE_BYTES * 8 * 0.95; // 5% buffer for container overhead
+  let audioBitrateKbps = audioPriorityKbps;
+  let videoBitrateKbps: number | null = null;
+  let trimDurationSeconds: number | null = null;
+
+  // Calculate total available bitrate
+  const totalBitrateKbps = totalBits / durationSeconds / 1000;
+  
+  if (!isVideo) {
+    // For audio files, we can use all bitrate for audio
+    audioBitrateKbps = Math.min(192, totalBitrateKbps);
+    
+    // If even audio-only is too big, we need to trim
+    if (audioBitrateKbps < 64) {
+      // Minimum acceptable audio quality
+      audioBitrateKbps = 64;
+      trimDurationSeconds = Math.floor(totalBits / (audioBitrateKbps * 1000));
+    }
+    
+    return { audioBitrateKbps, videoBitrateKbps: null, trimDurationSeconds };
+  }
+  
+  // For video files, balance between audio and video
+  if (totalBitrateKbps <= audioBitrateKbps + 200) {
+    // Lower audio quality if video bitrate becomes too low
+    audioBitrateKbps = Math.max(64, totalBitrateKbps - 200);
+  }
+
+  videoBitrateKbps = totalBitrateKbps - audioBitrateKbps;
+
+  // If video bitrate still too low (<150kbps), calculate how much to trim
+  if (videoBitrateKbps < 150) {
+    const minTotalBitrate = audioBitrateKbps + 150;
+    const maxDuration = totalBits / (minTotalBitrate * 1000);
+    trimDurationSeconds = Math.floor(maxDuration);
+    videoBitrateKbps = 150; // set to minimal acceptable bitrate
+  }
+
+  return { audioBitrateKbps, videoBitrateKbps, trimDurationSeconds };
 };
