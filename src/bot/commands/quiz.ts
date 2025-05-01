@@ -95,36 +95,46 @@ export const handleQuizAnswer = async (message: Message) => {
   
   const answer = message.content.toLowerCase().trim();
   
-  // Use fuzzy matching to check answers
+  // First check exact match (case insensitive)
+  if (session.correctAnswers.some(a => a.toLowerCase() === answer)) {
+    await awardPoint(message, session);
+    return;
+  }
+  
+  // Then check fuzzy matching
   const fuse = new Fuse(session.correctAnswers, {
     includeScore: true,
-    threshold: 0.3
+    threshold: 0.5 // More lenient threshold
   });
   
   const result = fuse.search(answer);
   
-  if (result.length > 0 && result[0].score! < 0.4) {
-    // Correct answer
-    const userId = message.author.id;
-    const username = message.author.username;
+  if (result.length > 0 && result[0].score! < 0.6) {
+    await awardPoint(message, session);
+  }
+};
+
+// Helper function to award points and move to next round
+const awardPoint = async (message: Message, session: QuizSession) => {
+  const userId = message.author.id;
+  const username = message.author.username;
+  
+  // Prevent duplicate scoring
+  if (!session.players.has(userId)) {
+    session.players.set(userId, (session.players.get(userId) || 0) + 1);
     
-    // Prevent duplicate scoring
-    if (!session.players.has(userId)) {
-      session.players.set(userId, (session.players.get(userId) || 0) + 1);
-      
-      // Update user stats in database
-      await updateUserStats(userId, username, true);
-      
-      // Clear the hint timeout
-      if (session.timeout) {
-        clearTimeout(session.timeout);
-      }
-      
-      await message.reply(`🎉 Correct! The answer is "${session.mediaItem.title}". ${username} gets a point!`);
-      
-      // Move to next round after a short delay
-      setTimeout(() => nextRound(session, message.channel), 3000);
+    // Update user stats in database
+    await updateUserStats(userId, username, true);
+    
+    // Clear the hint timeout
+    if (session.timeout) {
+      clearTimeout(session.timeout);
     }
+    
+    await message.reply(`🎉 Correct! The answer is "${session.mediaItem.title}". ${username} gets a point!`);
+    
+    // Move to next round after a short delay
+    setTimeout(() => nextRound(session, message.channel), 3000);
   }
 };
 
@@ -245,13 +255,26 @@ const nextRound = async (
     session.connection.subscribe(audioPlayer);
     audioPlayer.play(resource);
     
-    // Set up hint timer
-    scheduleHint(session, channel);
-    
-    // When the audio ends, schedule another hint if no one has answered
+    // When the audio ends, wait 10 seconds before moving to the next hint
     audioPlayer.on(AudioPlayerStatus.Idle, () => {
       if (session.isActive) {
-        scheduleHint(session, channel);
+        // Clear any existing hint schedule
+        if (session.timeout) {
+          clearTimeout(session.timeout);
+        }
+        
+        // Let users know the audio has ended and they have time to answer
+        channel.send("🎵 Audio finished! You have 10 seconds to answer...").catch(console.error);
+        
+        // Schedule first hint after 10 seconds
+        session.timeout = setTimeout(() => {
+          // Provide progressive hint
+          const hint = generateProgressiveHint(session.mediaItem.title, session.revealPercentage);
+          channel.send(`Hint: ${hint}`).catch(console.error);
+          
+          // Continue with regular hint scheduling
+          scheduleHint(session, channel);
+        }, 10000); // 10 seconds wait after audio ends
       }
     });
   } catch (error) {

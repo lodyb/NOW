@@ -960,45 +960,29 @@
           try {
             loading.value = media.value.length === 0; // Only show loading on initial fetch
             
-            const params = {};
+            const params = {
+              page: 1, // Default to first page
+              pageSize: 50 // Get a good amount per page
+            };
+            
             if (searchQuery.value) {
               params.search = searchQuery.value;
             }
             
             const response = await axios.get('/api/media', { params });
-            const newMedia = response.data;
+            
+            // Handle the paginated response format
+            const mediaItems = response.data.items || [];
             
             // Sort by creation date descending (newest first)
-            newMedia.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-            
-            // Smart update: only update changed items
-            if (media.value.length === 0) {
-              // First load - set the whole array
-              media.value = newMedia.map(prepareMediaItem);
+            if (Array.isArray(mediaItems)) {
+              mediaItems.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+              
+              // Process and update the media array
+              media.value = mediaItems.map(prepareMediaItem);
             } else {
-              // Update only changed items
-              newMedia.forEach(newItem => {
-                const existingIndex = media.value.findIndex(item => item.id === newItem.id);
-                
-                if (existingIndex === -1) {
-                  // New item - add to array
-                  media.value.push(prepareMediaItem(newItem));
-                } else if (JSON.stringify(media.value[existingIndex]) !== JSON.stringify(newItem)) {
-                  // Item changed - preserve current thumbnail but update other props
-                  const currentThumbnail = media.value[existingIndex].currentThumbnail;
-                  media.value[existingIndex] = {
-                    ...prepareMediaItem(newItem),
-                    currentThumbnail
-                  };
-                }
-              });
-              
-              // Remove deleted items
-              const newIds = new Set(newMedia.map(item => item.id));
-              media.value = media.value.filter(item => newIds.has(item.id));
-              
-              // Sort by creation date descending (newest first)
-              media.value.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+              console.error('Invalid media data format:', mediaItems);
+              showToast('Error: Invalid data format received from server', 'error');
             }
             
             loading.value = false;
