@@ -193,7 +193,7 @@ function sendMediaStatusUpdate(mediaId: number, status: 'processing' | 'complete
 }
 
 // Handle file upload
-router.post('/api/upload', upload.single('file'), async (req: Request, res) => {
+router.post('/api/upload', upload.single('file'), express.json(), async (req: Request, res) => {
   try {
     if (req.fileValidationError) {
       return res.status(400).json({ error: req.fileValidationError });
@@ -221,8 +221,13 @@ router.post('/api/upload', upload.single('file'), async (req: Request, res) => {
       { uploadedBy: req.query.user || 'unknown', originalFilename: req.file.originalname }
     );
     
-    // Save the clean answer as the initial answer
-    await saveMediaAnswers(mediaId, [cleanAnswer]);
+    // Check if answers were provided in the request body, otherwise use filename
+    const userAnswers = req.body.answers ? 
+      (Array.isArray(req.body.answers) ? req.body.answers : [req.body.answers]) : 
+      [cleanAnswer];
+    
+    // Save the answers
+    await saveMediaAnswers(mediaId, userAnswers);
     
     // Create callback function for updating the database when processing is complete
     const updateMediaAfterProcessing = (normalizedPath: string) => {

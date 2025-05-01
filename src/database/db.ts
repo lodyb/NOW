@@ -335,7 +335,11 @@ export const saveMediaAnswers = (mediaId: number, answers: string[]): Promise<vo
       }
       
       // Filter out empty answers and handle edge cases
-      const validAnswers = answers.filter(answer => answer && answer.trim() !== '');
+      // Make sure each answer is actually a string first
+      const validAnswers = answers
+        .filter(answer => answer !== null && answer !== undefined)
+        .map(answer => String(answer).trim())
+        .filter(answer => answer !== '');
       
       // If no valid answers, just resolve
       if (validAnswers.length === 0) {
