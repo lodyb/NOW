@@ -334,24 +334,39 @@ export const saveMediaAnswers = (mediaId: number, answers: string[]): Promise<vo
         return reject(err);
       }
       
+      // Filter out empty answers and handle edge cases
+      const validAnswers = answers.filter(answer => answer && answer.trim() !== '');
+      
+      // If no valid answers, just resolve
+      if (validAnswers.length === 0) {
+        return resolve();
+      }
+      
       const stmt = db.prepare(`
         INSERT INTO media_answers (answer, isPrimary, mediaId)
         VALUES (?, ?, ?)
       `);
       
-      db.serialize(() => {
-        answers.forEach((answer, index) => {
-          stmt.run(answer, index === 0 ? 1 : 0, mediaId);
+      try {
+        db.serialize(() => {
+          validAnswers.forEach((answer, index) => {
+            stmt.run(answer, index === 0 ? 1 : 0, mediaId);
+          });
+          
+          // Use callback form to avoid SQLITE_RANGE error
+          stmt.finalize(function(err) {
+            if (err) {
+              reject(err);
+            } else {
+              resolve();
+            }
+          });
         });
-        
-        stmt.finalize((err) => {
-          if (err) {
-            reject(err);
-          } else {
-            resolve();
-          }
-        });
-      });
+      } catch (error) {
+        // Ensure statement is finalized even on error
+        stmt.finalize();
+        reject(error);
+      }
     });
   });
 };
