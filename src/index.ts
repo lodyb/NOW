@@ -8,6 +8,7 @@ import { parseCommand } from './bot/utils/helpers';
 import { handlePlayCommand } from './bot/commands/play';
 import { handleQuizCommand, handleStopCommand, handleQuizAnswer } from './bot/commands/quiz';
 import { handleUploadCommand } from './bot/commands/upload';
+import { handleImageCommand } from './bot/commands/image';
 import apiRoutes from './web/api';
 import { generateThumbnailsForExistingMedia, scanAndProcessUnprocessedMedia } from './media/processor';
 
@@ -77,6 +78,13 @@ client.on(Events.MessageCreate, async (message) => {
           );
           break;
           
+        case 'image':
+          await handleImageCommand(
+            message,
+            commandArgs.searchTerm
+          );
+          break;
+          
         case 'quiz':
           await handleQuizCommand(
             message, 
@@ -95,7 +103,7 @@ client.on(Events.MessageCreate, async (message) => {
           
         default:
           // Unrecognized command
-          await message.reply('Unknown command. Type `NOW play`, `NOW quiz`, or `NOW upload`.');
+          await message.reply('Unknown command. Type `NOW play`, `NOW quiz`, `NOW image`, or `NOW upload`.');
       }
     } catch (error) {
       console.error('Error handling command:', error);

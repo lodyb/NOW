@@ -24,8 +24,8 @@ export const parseCommand = (message: Message): CommandArgs | null => {
     return { command };
   }
   
-  // Handle play command
-  if (command === 'play') {
+  // Handle play or image command
+  if (command === 'play' || command === 'image') {
     let args: CommandArgs = { command };
     let filterStringIndex = -1;
     
