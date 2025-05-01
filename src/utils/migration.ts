@@ -1,7 +1,7 @@
 import { DataSource } from 'typeorm';
 import { normalizeMedia } from '../services/media/normalizer';
 import { logger } from './logger';
-import { AppDataSource } from '../database/connection';
+import { db, initializeDatabase } from '../database/connection.js';
 import fs from 'fs';
 import path from 'path';
 import { config } from 'dotenv';
@@ -116,33 +116,20 @@ async function insertMediaAndGetId(
   year: number | null,
   metadata: string
 ): Promise<number> {
+  const connection = require('../../database/connection.js');
+  
   try {
-    // First try with RETURNING clause (works in newer SQLite)
-    try {
-      const result = await AppDataSource.manager.query(
-        `INSERT INTO media(title, filePath, normalizedPath, year, metadata, createdAt) 
-         VALUES (?, ?, ?, ?, ?, datetime('now')) RETURNING id`,
-        [title, filePath, normalizedPath, year, metadata]
-      );
-      
-      if (result && result[0] && typeof result[0].id === 'number') {
-        return result[0].id;
-      }
-    } catch (e) {
-      logger.warn(`RETURNING clause not supported, falling back to last_insert_rowid(): ${e}`);
-    }
-    
-    // Fallback: Use insert and then query last insert ID (works in all SQLite versions)
-    await AppDataSource.manager.query(
+    // Insert the new media record
+    await connection.runQuery(
       `INSERT INTO media(title, filePath, normalizedPath, year, metadata, createdAt) 
        VALUES (?, ?, ?, ?, ?, datetime('now'))`,
       [title, filePath, normalizedPath, year, metadata]
     );
     
     // Get the last inserted ID
-    const lastIdResult = await AppDataSource.manager.query('SELECT last_insert_rowid() as id');
-    if (lastIdResult && lastIdResult[0] && typeof lastIdResult[0].id === 'number') {
-      return lastIdResult[0].id;
+    const result = await connection.getOne('SELECT last_insert_rowid() as id');
+    if (result && typeof result.id === 'number') {
+      return result.id;
     }
     
     throw new Error('Could not determine inserted ID');
@@ -156,6 +143,8 @@ async function insertMediaAndGetId(
  * Main migration function
  */
 async function migrate() {
+  const connection = require('../database/connection.js');
+  
   try {
     // At this point, we've validated that sourceFilesDir is defined
     // Tell TypeScript that this value is definitely a string
@@ -165,10 +154,8 @@ async function migrate() {
     await SourceDataSource.initialize();
     logger.info(`Connected to source database: ${sourceDbPath}`);
 
-    // Connect to destination database (AppDataSource from connection.ts)
-    if (!AppDataSource.isInitialized) {
-      await AppDataSource.initialize();
-    }
+    // Connect to destination database
+    await initializeDatabase();
     logger.info(`Connected to destination database`);
 
     // Get all media entries from source using raw SQL query
@@ -254,15 +241,15 @@ async function migrate() {
           [sourceMedia.id]
         );
 
-        // Save each answer using raw SQL
+        // Save each answer using our runQuery method from connection.js
         for (const answer of answers) {
           const isPrimary = typeof answer.is_primary === 'number' ? 
             answer.is_primary === 1 : 
             !!answer.is_primary;
           
-          await AppDataSource.manager.query(
-            `INSERT INTO media_answers(answer, isPrimary, mediaId) VALUES (?, ?, ?)`,
-            [answer.answer, isPrimary ? 1 : 0, newMediaId]
+          await connection.runQuery(
+            `INSERT INTO media_answers(media_id, answer, isPrimary) VALUES (?, ?, ?)`,
+            [newMediaId, answer.answer, isPrimary ? 1 : 0]
           );
         }
         
@@ -281,9 +268,7 @@ async function migrate() {
     if (SourceDataSource.isInitialized) {
       await SourceDataSource.destroy();
     }
-    if (AppDataSource.isInitialized) {
-      await AppDataSource.destroy();
-    }
+    // SQLite database will be closed when the process exits
   }
 }
 

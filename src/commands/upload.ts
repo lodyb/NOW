@@ -7,13 +7,14 @@ import { logger } from '../utils/logger';
  */
 export async function uploadCommand(message: Message<boolean>, client: Client): Promise<void> {
   try {
-    // Get the configured upload URL from environment variables
-    const uploadUrl = process.env.UPLOAD_URL || 'http://localhost:3000/upload';
+    // Get the configured upload URL from environment variables or use the new direct API URL
+    const uploadUrl = process.env.UPLOAD_URL || 'http://localhost:3000';
     
     // Generate a unique token for the upload session
     const uploadToken = generateUploadToken(message.author.id);
     
-    // Create the full URL with the token
+    // Create the full URL with the token - note that we're using the root path
+    // which will serve the upload.html page in our new server.js implementation
     const fullUploadUrl = `${uploadUrl}?token=${uploadToken}&user=${message.author.id}`;
     
     // Send the upload link as an embedded message

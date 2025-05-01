@@ -29,15 +29,11 @@ if [ -z "$DISCORD_TOKEN" ]; then
   exit 1
 fi
 
-# Build TypeScript code
-log "${GREEN}Building TypeScript code...${NC}"
-npm run build
-
 # Create required directories if they don't exist
 log "${GREEN}Creating required directories...${NC}"
 mkdir -p uploads normalized
 
-# SQLite database will be created automatically by TypeORM if it doesn't exist
+# SQLite database will be created automatically if it doesn't exist
 log "${GREEN}Using SQLite database at: ${DB_PATH:-./now.sqlite}${NC}"
 
 # Check if ffmpeg is installed
@@ -47,16 +43,62 @@ if ! command -v ffmpeg &> /dev/null; then
   log "${YELLOW}Install with: sudo apt-get install ffmpeg${NC}"
 fi
 
-# Start the bot
-log "${GREEN}Starting NOW Discord Bot...${NC}"
-if [ "$1" == "--pm2" ]; then
-  # Start with PM2
-  pm2 start dist/index.js --name now --time
-  log "${GREEN}Bot started with PM2!${NC}"
-  log "Use 'pm2 logs now' to view logs"
-  log "Use 'pm2 stop now' to stop the bot"
-  log "Use 'pm2 restart now' to restart the bot"
+# Decide what to start based on arguments
+if [ "$1" == "--api-only" ]; then
+  # Start just the API server
+  log "${GREEN}Starting NOW API Server only...${NC}"
+  if [ "$2" == "--pm2" ]; then
+    # Start API with PM2
+    pm2 start server.js --name now-api --time
+    log "${GREEN}API server started with PM2!${NC}"
+    log "Use 'pm2 logs now-api' to view logs"
+    log "Use 'pm2 stop now-api' to stop the API server"
+    log "Use 'pm2 restart now-api' to restart the API server"
+  else
+    # Start API normally
+    node server.js
+  fi
+elif [ "$1" == "--all" ]; then
+  # Start both bot and API
+  log "${GREEN}Starting both NOW Discord Bot and API Server...${NC}"
+  # Build TypeScript code for the bot
+  log "${GREEN}Building TypeScript code...${NC}"
+  npm run build
+  
+  if [ "$2" == "--pm2" ]; then
+    # Start with PM2
+    pm2 start dist/index.js --name now-bot --time
+    pm2 start server.js --name now-api --time
+    log "${GREEN}Bot and API server started with PM2!${NC}"
+    log "Use 'pm2 logs' to view all logs"
+    log "Use 'pm2 logs now-bot' or 'pm2 logs now-api' to view specific logs"
+  else
+    # Start API in background and bot in foreground
+    log "${YELLOW}Starting API server in background...${NC}"
+    node server.js &
+    API_PID=$!
+    log "${GREEN}API server started with PID: $API_PID${NC}"
+    log "${GREEN}Starting Discord bot in foreground...${NC}"
+    node dist/index.js
+    # When bot terminates, kill the API server too
+    kill $API_PID
+  fi
 else
-  # Start normally
-  node dist/index.js
+  # Default: start just the bot
+  log "${GREEN}Starting NOW Discord Bot...${NC}"
+  # Build TypeScript code
+  log "${GREEN}Building TypeScript code...${NC}"
+  npm run build
+  
+  if [ "$1" == "--pm2" ]; then
+    # Start with PM2
+    pm2 start dist/index.js --name now-bot --time
+    log "${GREEN}Bot started with PM2!${NC}"
+    log "Use 'pm2 logs now-bot' to view logs"
+    log "Use 'pm2 stop now-bot' to stop the bot"
+    log "Use 'pm2 restart now-bot' to restart the bot"
+  else
+    # Start normally
+    node dist/index.js
+  fi
 fi

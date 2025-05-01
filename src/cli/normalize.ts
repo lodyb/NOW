@@ -2,9 +2,9 @@
 
 import 'reflect-metadata';
 import { Command } from 'commander';
-import { AppDataSource } from '../database/connection';
-import { logger } from '../utils/logger';
-import { processAllMedia, processSingleFile } from '../services/media/normalizer';
+import { initializeDatabase, db } from '../database/connection.js';
+import { logger } from '../utils/logger.js';
+import { processAllMedia, processSingleFile } from '../services/media/normalizer.js';
 
 // Define option types
 interface AllCommandOptions {
@@ -31,13 +31,13 @@ program
   .action(async (options: AllCommandOptions) => {
     try {
       // Initialize database connection
-      await AppDataSource.initialize();
+      await initializeDatabase();
       
       // Process all media
       const results = await processAllMedia(options.verbose);
       
       // Close database connection
-      await AppDataSource.destroy();
+      db.close();
       
       process.exit(0);
     } catch (error) {
@@ -64,13 +64,13 @@ fileCommand
       }
 
       // Initialize database connection
-      await AppDataSource.initialize();
+      await initializeDatabase();
       
       // Process single file
       const normalizedPath = await processSingleFile(options.file, undefined, options.verbose);
       
       // Close database connection
-      await AppDataSource.destroy();
+      db.close();
       
       if (normalizedPath) {
         logger.info(`Successfully normalized file to: ${normalizedPath}`);

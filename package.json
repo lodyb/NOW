@@ -15,7 +15,9 @@
     "normalize": "ts-node --transpile-only -r tsconfig-paths/register --compiler-options '{\"experimentalDecorators\":true,\"emitDecoratorMetadata\":true}' src/cli/normalize.ts all",
     "normalize:file": "ts-node --transpile-only -r tsconfig-paths/register --compiler-options '{\"experimentalDecorators\":true,\"emitDecoratorMetadata\":true}' src/cli/normalize.ts file",
     "normalize:verbose": "npm run normalize -- --verbose",
-    "preinstall": "echo 'Please make sure you have build tools installed: sudo apt-get install build-essential python3'"
+    "preinstall": "echo 'Please make sure you have build tools installed: sudo apt-get install build-essential python3'",
+    "api": "node server.js",
+    "api:pm2": "pm2 start server.js --name now-api"
   },
   "keywords": [
     "discord",
@@ -40,7 +42,6 @@
     "pm2": "^5.3.0",
     "reflect-metadata": "^0.2.2",
     "sqlite3": "^5.1.7",
-    "typeorm": "^0.3.15",
     "winston": "^3.8.2"
   },
   "optionalDependencies": {

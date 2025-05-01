@@ -715,8 +715,9 @@ export async function processAllMedia(verbose = false): Promise<{
   logger.info(`NVIDIA GPU encoding: ${hasNvenc ? 'Available' : 'Not available'}`);
   
   // Get all media records from the database using our new repository
-  const { getQuery } = await import('../../database/connection');
-  const allMedia = await getQuery<Media>('SELECT * FROM media');
+  // Use require instead of dynamic import to avoid TS errors
+  const connection = require('../../database/connection.js');
+  const allMedia = await connection.getQuery('SELECT * FROM media');
   
   logger.info(`Found ${allMedia.length} media files to process`);
   
