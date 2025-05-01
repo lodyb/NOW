@@ -142,12 +142,12 @@ export const findAllMedia = (searchTerm?: string): Promise<Media[]> => {
       if (err) {
         reject(err);
       } else {
-        // Convert answers string to array and parse thumbnails JSON
+        // Convert answers string to array and safely parse JSON fields
         const results = rows.map((row) => ({
           ...row,
           answers: row.answers ? row.answers.split('|') : [],
-          thumbnails: row.thumbnails ? JSON.parse(row.thumbnails as string) : [],
-          metadata: row.metadata ? JSON.parse(row.metadata as string) : {},
+          thumbnails: row.thumbnails ? JSON.parse(String(row.thumbnails)) : [],
+          metadata: row.metadata ? JSON.parse(String(row.metadata)) : {},
         }));
         resolve(results);
       }
@@ -211,12 +211,12 @@ export const findAllMediaPaginated = (
         if (err) {
           reject(err);
         } else {
-          // Convert answers string to array and parse thumbnails JSON
+          // Convert answers string to array and safely parse JSON fields
           const results = rows.map((row) => ({
             ...row,
             answers: row.answers ? row.answers.split('|') : [],
-            thumbnails: row.thumbnails ? JSON.parse(row.thumbnails as string) : [],
-            metadata: row.metadata ? JSON.parse(row.metadata as string) : {},
+            thumbnails: row.thumbnails ? JSON.parse(String(row.thumbnails)) : [],
+            metadata: row.metadata ? JSON.parse(String(row.metadata)) : {},
           }));
           resolve({ 
             items: results,
@@ -244,12 +244,12 @@ export const findMediaBySearch = (searchTerm: string): Promise<Media[]> => {
       if (err) {
         reject(err);
       } else {
-        // Convert answers string to array and parse thumbnails JSON
+        // Convert answers string to array and safely parse JSON fields
         const results = rows.map((row) => ({
           ...row,
           answers: row.answers ? row.answers.split('|') : [],
-          thumbnails: row.thumbnails ? JSON.parse(row.thumbnails as string) : [],
-          metadata: row.metadata ? JSON.parse(row.metadata as string) : {},
+          thumbnails: row.thumbnails ? JSON.parse(String(row.thumbnails)) : [],
+          metadata: row.metadata ? JSON.parse(String(row.metadata)) : {}
         }));
         resolve(results);
       }
@@ -272,12 +272,12 @@ export const getRandomMedia = (limit: number = 1): Promise<Media[]> => {
       if (err) {
         reject(err);
       } else {
-        // Convert answers string to array and parse thumbnails JSON
+        // Convert answers string to array and safely parse JSON fields
         const results = rows.map((row) => ({
           ...row,
           answers: row.answers ? row.answers.split('|') : [],
-          thumbnails: row.thumbnails ? JSON.parse(row.thumbnails as string) : [],
-          metadata: row.metadata ? JSON.parse(row.metadata as string) : {},
+          thumbnails: row.thumbnails ? JSON.parse(String(row.thumbnails)) : [],
+          metadata: row.metadata ? JSON.parse(String(row.metadata)) : {}
         }));
         resolve(results);
       }
@@ -420,12 +420,12 @@ export const getMediaById = async (id: number): Promise<Media | null> => {
           return;
         }
         
-        // Process the concatenated answers and thumbnails
+        // Process the concatenated answers and thumbnails with safe type handling
         const result: Media = {
           ...row,
           answers: row.answers ? row.answers.split('|') : [],
-          thumbnails: row.thumbnails ? JSON.parse(row.thumbnails as string) : [],
-          metadata: row.metadata ? JSON.parse(row.metadata as string) : {}
+          thumbnails: row.thumbnails ? JSON.parse(String(row.thumbnails)) : [],
+          metadata: row.metadata ? JSON.parse(String(row.metadata)) : {}
         };
         
         resolve(result);

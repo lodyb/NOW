@@ -9,7 +9,7 @@ import { handlePlayCommand } from './bot/commands/play';
 import { handleQuizCommand, handleStopCommand, handleQuizAnswer } from './bot/commands/quiz';
 import { handleUploadCommand } from './bot/commands/upload';
 import apiRoutes from './web/api';
-import { generateThumbnailsForExistingMedia } from './media/processor';
+import { generateThumbnailsForExistingMedia, scanAndProcessUnprocessedMedia } from './media/processor';
 
 // Load environment variables
 dotenv.config();
@@ -118,6 +118,12 @@ async function init() {
     app.listen(PORT, () => {
       console.log(`Web server running on port ${PORT}`);
       console.log(`Media manager available at http://localhost:${PORT}/`);
+      
+      // Scan for media that needs processing (files that exist in DB but not normalized)
+      console.log('Starting scan for unprocessed media...');
+      scanAndProcessUnprocessedMedia()
+        .then(() => console.log('Media processing scan completed'))
+        .catch(error => console.error('Error processing media files:', error));
       
       // Generate thumbnails for existing videos without them
       generateThumbnailsForExistingMedia()

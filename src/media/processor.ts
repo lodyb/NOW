@@ -683,3 +683,118 @@ const updateMediaWaveform = (normalizedFilename: string, waveformPaths: string[]
     }
   );
 };
+
+/**
+ * Scan and process all media that exists in the database but is missing normalization or thumbnails
+ */
+export const scanAndProcessUnprocessedMedia = async (): Promise<void> => {
+  return new Promise((resolve, reject) => {
+    console.log('Scanning for unprocessed media...');
+    
+    db.all(
+      `SELECT id, title, filePath, normalizedPath, thumbnails FROM media 
+       WHERE filePath IS NOT NULL 
+       AND (normalizedPath IS NULL OR thumbnails IS NULL OR thumbnails = '')
+       ORDER BY id ASC`,
+      async (err, rows: any[]) => {
+        if (err) {
+          console.error('Error fetching unprocessed media:', err);
+          reject(err);
+          return;
+        }
+        
+        console.log(`Found ${rows.length} media items to process.`);
+        
+        // Process in batches to avoid overloading the system
+        const batchSize = 3;
+        
+        for (let i = 0; i < rows.length; i += batchSize) {
+          const batch = rows.slice(i, i + batchSize);
+          console.log(`Processing batch ${Math.floor(i/batchSize) + 1} of ${Math.ceil(rows.length/batchSize)}...`);
+          
+          const promises = batch.map(async (media) => {
+            try {
+              // Normalize media if needed
+              if (!media.normalizedPath) {
+                console.log(`Normalizing media ${media.id}: ${media.title}`);
+                const inputPath = path.join(UPLOADS_DIR, path.basename(media.filePath));
+                
+                if (fs.existsSync(inputPath)) {
+                  try {
+                    const normalizedPath = await normalizeMedia(inputPath, (outputPath) => {
+                      // Update normalized path in database
+                      updateNormalizedPathInDatabase(media.id, outputPath);
+                    });
+                    return { id: media.id, success: true, message: 'Media normalized' };
+                  } catch (error) {
+                    console.error(`Error normalizing media ${media.id}:`, error);
+                    return { id: media.id, success: false, message: String(error) };
+                  }
+                } else {
+                  console.error(`Original file not found for media ${media.id}: ${inputPath}`);
+                  return { id: media.id, success: false, message: 'Original file not found' };
+                }
+              } 
+              // Generate thumbnails for normalized media if needed
+              else if (!media.thumbnails || media.thumbnails === '') {
+                console.log(`Generating thumbnails for media ${media.id}: ${media.title}`);
+                const normalizedPath = path.join(NORMALIZED_DIR, path.basename(media.normalizedPath));
+                
+                if (fs.existsSync(normalizedPath)) {
+                  try {
+                    // Determine if it's a video or audio and generate appropriate thumbnails
+                    if (normalizedPath.endsWith('.mp4')) {
+                      await generateThumbnails(normalizedPath);
+                    } else if (normalizedPath.endsWith('.ogg')) {
+                      await generateAudioWaveform(normalizedPath);
+                    }
+                    return { id: media.id, success: true, message: 'Thumbnails generated' };
+                  } catch (error) {
+                    console.error(`Error generating thumbnails for media ${media.id}:`, error);
+                    return { id: media.id, success: false, message: String(error) };
+                  }
+                } else {
+                  console.error(`Normalized file not found for media ${media.id}: ${normalizedPath}`);
+                  return { id: media.id, success: false, message: 'Normalized file not found' };
+                }
+              }
+            } catch (error) {
+              console.error(`Error processing media ${media.id}:`, error);
+              return { id: media.id, success: false, message: String(error) };
+            }
+          });
+          
+          // Wait for this batch to complete before starting the next
+          await Promise.all(promises);
+        }
+        
+        console.log('Media processing scan completed.');
+        resolve();
+      }
+    );
+  });
+};
+
+/**
+ * Update normalized path in database
+ */
+const updateNormalizedPathInDatabase = (mediaId: number, normalizedPath: string): Promise<void> => {
+  return new Promise((resolve, reject) => {
+    // Extract only the filename for storage
+    const normalizedFilename = path.basename(normalizedPath);
+    
+    db.run(
+      `UPDATE media SET normalizedPath = ? WHERE id = ?`,
+      [normalizedFilename, mediaId],
+      function(err) {
+        if (err) {
+          console.error(`Error updating normalizedPath for media ${mediaId}:`, err);
+          reject(err);
+        } else {
+          console.log(`Updated normalizedPath for media ${mediaId}: ${normalizedFilename}`);
+          resolve();
+        }
+      }
+    );
+  });
+};
