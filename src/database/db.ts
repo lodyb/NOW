@@ -22,6 +22,14 @@ interface Media extends Omit<MediaRow, 'answers' | 'thumbnails' | 'metadata'> {
   metadata?: any;
 }
 
+// Define interface for answer objects
+interface AnswerItem {
+  answer: string;
+  isPrimary?: boolean;
+}
+
+type AnswerInput = string | AnswerItem;
+
 const DB_PATH = path.join(process.cwd(), 'data', 'now.sqlite');
 
 // Ensure data directory exists
@@ -326,7 +334,7 @@ export const toggleMediaDeleted = (mediaId: number): Promise<void> => {
   });
 };
 
-export const saveMediaAnswers = (mediaId: number, answers: string[]): Promise<void> => {
+export const saveMediaAnswers = (mediaId: number, answers: AnswerInput[]): Promise<void> => {
   return new Promise((resolve, reject) => {
     // First delete existing answers
     db.run(`DELETE FROM media_answers WHERE mediaId = ?`, [mediaId], (err) => {
@@ -334,15 +342,24 @@ export const saveMediaAnswers = (mediaId: number, answers: string[]): Promise<vo
         return reject(err);
       }
       
-      // Filter out empty answers and handle edge cases
-      // Make sure each answer is actually a string first
-      const validAnswers = answers
+      // Process the answers which could be either strings or objects
+      const processedAnswers = answers
         .filter(answer => answer !== null && answer !== undefined)
-        .map(answer => String(answer).trim())
-        .filter(answer => answer !== '');
+        .map((answer, index): [string, boolean] => {
+          if (typeof answer === 'string') {
+            return [answer.trim(), index === 0];
+          } else if (typeof answer === 'object' && answer !== null) {
+            const answerObj = answer as AnswerItem;
+            const answerText = answerObj.answer ? String(answerObj.answer).trim() : '';
+            const isPrimary = answerObj.isPrimary === undefined ? index === 0 : !!answerObj.isPrimary;
+            return [answerText, isPrimary];
+          }
+          return ['', false]; // Fallback
+        })
+        .filter(([text]) => text !== '');
       
       // If no valid answers, just resolve
-      if (validAnswers.length === 0) {
+      if (processedAnswers.length === 0) {
         return resolve();
       }
       
@@ -353,8 +370,8 @@ export const saveMediaAnswers = (mediaId: number, answers: string[]): Promise<vo
       
       try {
         db.serialize(() => {
-          validAnswers.forEach((answer, index) => {
-            stmt.run(answer, index === 0 ? 1 : 0, mediaId);
+          processedAnswers.forEach(([answer, isPrimary]) => {
+            stmt.run(answer, isPrimary ? 1 : 0, mediaId);
           });
           
           // Use callback form to avoid SQLITE_RANGE error
