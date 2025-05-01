@@ -240,7 +240,7 @@ export const encodeMediaWithAttempts = async (
       height: 720, 
       videoQuality: hasNvenc ? 23 : 23,    // CQ/CRF value (lower = higher quality)
       audioBitrate: isVideo ? '192k' : '192k',
-      preset: hasNvenc ? 'p1' : 'medium', 
+      preset: hasNvenc ? 'p6' : 'medium', 
       trimDuration: null 
     },
     // Second attempt: 720p medium quality
@@ -248,7 +248,7 @@ export const encodeMediaWithAttempts = async (
       height: 720, 
       videoQuality: hasNvenc ? 28 : 28,    
       audioBitrate: isVideo ? '128k' : '128k',
-      preset: hasNvenc ? 'p2' : 'faster', 
+      preset: hasNvenc ? 'p6' : 'medium', 
       trimDuration: null 
     },
     // Third attempt: 360p low quality
@@ -256,7 +256,7 @@ export const encodeMediaWithAttempts = async (
       height: 360, 
       videoQuality: hasNvenc ? 35 : 35,
       audioBitrate: isVideo ? '128k' : '128k',
-      preset: hasNvenc ? 'p3' : 'veryfast', 
+      preset: hasNvenc ? 'p6' : 'medium', 
       trimDuration: null 
     },
     // Fourth attempt: 360p very low quality
@@ -264,7 +264,7 @@ export const encodeMediaWithAttempts = async (
       height: 360, 
       videoQuality: hasNvenc ? 42 : 42,
       audioBitrate: isVideo ? '128k' : '128k',
-      preset: hasNvenc ? 'p4' : 'superfast', 
+      preset: hasNvenc ? 'p6' : 'medium', 
       trimDuration: null 
     },
     // Fifth attempt: 360p extremely low quality
@@ -272,7 +272,7 @@ export const encodeMediaWithAttempts = async (
       height: 240, 
       videoQuality: hasNvenc ? 50 : 50,
       audioBitrate: isVideo ? '128k' : '128k',
-      preset: hasNvenc ? 'p4' : 'superfast', 
+      preset: hasNvenc ? 'p6' : 'medium', 
       trimDuration: null 
     },
     // Sixth attempt: 240p extremely low quality + trim to 4 minutes
@@ -280,7 +280,7 @@ export const encodeMediaWithAttempts = async (
       height: 240, 
       videoQuality: hasNvenc ? 50 : 50,
       audioBitrate: isVideo ? '128k' : '128k',
-      preset: hasNvenc ? 'p4' : 'superfast', 
+      preset: hasNvenc ? 'p6' : 'medium', 
       trimDuration: 240 
     },
     // Seventh attempt: 240p extremely low quality + trim to 2 minutes
@@ -288,7 +288,7 @@ export const encodeMediaWithAttempts = async (
       height: 240, 
       videoQuality: hasNvenc ? 50 : 50,
       audioBitrate: isVideo ? '128k' : '128k',
-      preset: hasNvenc ? 'p4' : 'superfast', 
+      preset: hasNvenc ? 'p6' : 'medium', 
       trimDuration: 120 
     },
     // Eighth attempt: 240p extremely low quality + trim to 1 minute
@@ -296,7 +296,7 @@ export const encodeMediaWithAttempts = async (
       height: 240, 
       videoQuality: hasNvenc ? 50 : 50,
       audioBitrate: isVideo ? '128k' : '128k',
-      preset: hasNvenc ? 'p4' : 'superfast', 
+      preset: hasNvenc ? 'p6' : 'medium', 
       trimDuration: 60 
     }
   ];
@@ -503,7 +503,7 @@ export const encodeMediaWithBitrates = async (
       // Use NVIDIA hardware encoding if available
       if (hasNvenc) {
         command.outputOptions('-c:v h264_nvenc');
-        command.outputOptions(`-preset p2`); // Medium preset
+        command.outputOptions(`-preset p5`); // Medium preset
         command.outputOptions('-rc:v vbr'); // Variable bitrate mode
         command.outputOptions(`-b:v ${videoBitrateKbps}k`);
         command.outputOptions('-maxrate:v 5M');
