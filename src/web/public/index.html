@@ -1,0 +1,1506 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NOW Bot - Media Manager</title>
+  <!-- Vue 3 and Axios from CDN -->
+  <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+  <style>
+    :root {
+      --primary: #5865F2;
+      --primary-dark: #4752c4;
+      --secondary: #36393f;
+      --light-bg: #f5f5f5;
+      --card-bg: #ffffff;
+      --text: #333333;
+      --danger: #ED4245;
+      --success: #57F287;
+      --border: #dddddd;
+      --processing: #FFD700;
+    }
+    
+    * {
+      box-sizing: border-box;
+    }
+    
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+      line-height: 1.6;
+      color: var(--text);
+      margin: 0;
+      padding: 0;
+      background-color: var(--light-bg);
+    }
+    
+    header {
+      background-color: var(--secondary);
+      color: white;
+      padding: 1rem;
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    }
+    
+    .header-content {
+      display: flex;
+      align-items: center;
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+    
+    .header-title {
+      margin: 0;
+      flex: 1;
+    }
+    
+    .search-bar {
+      flex: 2;
+      margin: 0 1rem;
+    }
+    
+    .search-input {
+      width: 100%;
+      padding: 0.5rem;
+      border-radius: 4px;
+      border: none;
+      font-size: 1rem;
+    }
+    
+    .dropzone {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 2rem;
+      background-color: var(--card-bg);
+      border: 2px dashed var(--primary);
+      border-radius: 8px;
+      cursor: pointer;
+      text-align: center;
+      margin: 1rem auto;
+      max-width: 1000px;
+      transition: all 0.3s;
+    }
+    
+    .dropzone:hover, .dropzone.active {
+      background-color: rgba(88, 101, 242, 0.1);
+    }
+    
+    .dropzone-icon {
+      font-size: 3rem;
+      color: var(--primary);
+      margin-bottom: 1rem;
+    }
+    
+    .upload-actions {
+      display: flex;
+      justify-content: center;
+      margin: 1rem 0;
+      gap: 1rem;
+    }
+    
+    .upload-button {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      background-color: var(--primary);
+      color: white;
+      border: none;
+      border-radius: 4px;
+      padding: 0.75rem 1.5rem;
+      font-size: 1rem;
+      font-weight: bold;
+      cursor: pointer;
+      transition: background-color 0.2s;
+    }
+    
+    .upload-button:hover {
+      background-color: var(--primary-dark);
+    }
+    
+    .upload-button:disabled {
+      opacity: 0.7;
+      cursor: not-allowed;
+    }
+    
+    .upload-button .icon {
+      font-size: 1.2rem;
+    }
+    
+    .container {
+      max-width: 1000px;
+      margin: 0 auto;
+      padding: 1rem;
+    }
+    
+    .media-grid {
+      display: flex;
+      flex-direction: column;
+      gap: 1.5rem;
+      margin-top: 2rem;
+    }
+    
+    .media-card {
+      background-color: var(--card-bg);
+      border-radius: 8px;
+      overflow: hidden;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+      transition: box-shadow 0.2s;
+      display: flex;
+      flex-direction: row;
+    }
+    
+    .media-card:hover {
+      box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
+    }
+    
+    .media-preview {
+      width: 240px;
+      height: 180px;
+      flex-shrink: 0;
+      background-color: #eee;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #999;
+      position: relative;
+    }
+    
+    .processing-indicator {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      background-color: var(--processing);
+      color: black;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 0.75rem;
+      font-weight: bold;
+      z-index: 2;
+    }
+    
+    .media-preview img, .media-preview video, .media-preview audio {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+    
+    .media-audio {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 3rem;
+      color: #666;
+      height: 100%;
+      background: #f0f0f0;
+      border-radius: 8px;
+    }
+    
+    .media-content {
+      padding: 1rem;
+      flex-grow: 1;
+      display: flex;
+      flex-direction: column;
+    }
+    
+    .media-answers {
+      width: 100%;
+      resize: vertical;
+      min-height: 80px;
+      padding: 0.5rem;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      font-family: inherit;
+      margin-top: 0.5rem;
+      transition: border 0.2s;
+      flex-grow: 1;
+    }
+    
+    .media-answers:focus {
+      border-color: var(--primary);
+      outline: none;
+    }
+    
+    .card-actions {
+      display: flex;
+      justify-content: space-between;
+      margin-top: 1rem;
+    }
+    
+    .delete-btn {
+      background-color: var(--danger);
+      color: white;
+      border: none;
+      border-radius: 4px;
+      padding: 0.5rem;
+      cursor: pointer;
+      transition: background-color 0.2s;
+    }
+    
+    .delete-btn:hover {
+      background-color: #c03537;
+    }
+    
+    .restore-btn {
+      background-color: var(--success);
+      color: white;
+      border: none;
+      border-radius: 4px;
+      padding: 0.5rem;
+      cursor: pointer;
+      transition: background-color 0.2s;
+    }
+    
+    .restore-btn:hover {
+      background-color: #45c269;
+    }
+    
+    .save-btn {
+      background-color: var(--primary);
+      color: white;
+      border: none;
+      border-radius: 4px;
+      padding: 0.5rem 1rem;
+      cursor: pointer;
+      transition: background-color 0.2s;
+    }
+    
+    .save-btn:hover {
+      background-color: var(--primary-dark);
+    }
+    
+    .toast {
+      position: fixed;
+      bottom: 1rem;
+      left: 50%;
+      transform: translateX(-50%);
+      background-color: var(--secondary);
+      color: white;
+      padding: 0.75rem 1.5rem;
+      border-radius: 4px;
+      z-index: 1000;
+      animation: fadeInOut 3s ease-in-out;
+    }
+    
+    .success-toast {
+      background-color: var (--success);
+    }
+    
+    .error-toast {
+      background-color: var(--danger);
+    }
+    
+    .loading-spinner {
+      display: inline-block;
+      width: 1.5rem;
+      height: 1.5rem;
+      border: 3px solid rgba(255, 255, 255, 0.3);
+      border-radius: 50%;
+      border-top-color: white;
+      animation: spin 1s linear infinite;
+    }
+    
+    .upload-progress {
+      width: 100%;
+      height: 4px;
+      background-color: #eee;
+      border-radius: 2px;
+      overflow: hidden;
+      margin-top: 0.5rem;
+    }
+    
+    .upload-progress-bar {
+      height: 100%;
+      background-color: var(--primary);
+      transition: width 0.3s;
+    }
+    
+    @keyframes fadeInOut {
+      0% { opacity: 0; }
+      10% { opacity: 1; }
+      90% { opacity: 1; }
+      100% { opacity: 0; }
+    }
+    
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+    
+    @media (max-width: 768px) {
+      .header-content {
+        flex-direction: column;
+      }
+      
+      .search-bar {
+        margin: 0.5rem 0;
+        width: 100%;
+      }
+      
+      .media-card {
+        flex-direction: column;
+      }
+      
+      .media-preview {
+        width: 100%;
+      }
+    }
+    
+    .thumbnail-carousel {
+      display: flex;
+      align-items: center;
+      position: relative;
+      height: 100%;
+      width: 100%;
+    }
+    
+    .thumbnail {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      transition: opacity 0.3s;
+    }
+    
+    .carousel-nav {
+      position: absolute;
+      display: flex;
+      justify-content: space-between;
+      width: 100%;
+      padding: 0 0.5rem;
+      z-index: 3;
+    }
+    
+    .carousel-btn {
+      background-color: rgba(0, 0, 0, 0.5);
+      color: white;
+      border: none;
+      border-radius: 50%;
+      width: 30px;
+      height: 30px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1rem;
+      cursor: pointer;
+      transition: background-color 0.2s;
+    }
+    
+    .carousel-btn:hover {
+      background-color: rgba(0, 0, 0, 0.8);
+    }
+    
+    .carousel-indicators {
+      position: absolute;
+      bottom: 0.5rem;
+      width: 100%;
+      display: flex;
+      justify-content: center;
+      gap: 5px;
+      z-index: 3;
+    }
+    
+    .indicator {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background-color: rgba(255, 255, 255, 0.5);
+      transition: background-color 0.2s;
+    }
+    
+    .indicator.active {
+      background-color: var(--primary);
+    }
+    
+    .play-overlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background-color: rgba(0, 0, 0, 0.3);
+      opacity: 0;
+      transition: opacity 0.2s;
+      z-index: 2;
+      cursor: pointer;
+    }
+    
+    .play-button {
+      width: 50px;
+      height: 50px;
+      border-radius: 50%;
+      background-color: rgba(255, 255, 255, 0.8);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--primary);
+      font-size: 1.5rem;
+    }
+    
+    .play-overlay:hover {
+      opacity: 1;
+    }
+    
+    .video-modal {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background-color: rgba(0, 0, 0, 0.9);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+    }
+    
+    .video-container {
+      width: 80%;
+      max-width: 1000px;
+    }
+    
+    .video-container video {
+      width: 100%;
+      max-height: 80vh;
+    }
+    
+    .close-modal {
+      position: absolute;
+      top: 1rem;
+      right: 1rem;
+      background: none;
+      border: none;
+      color: white;
+      font-size: 2rem;
+      cursor: pointer;
+    }
+
+    /* Style for thumbnail carousel */
+    .thumbnail-carousel {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      border-radius: 8px;
+      overflow: hidden;
+    }
+
+    .carousel-nav {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      padding: 8px;
+      display: flex;
+      justify-content: space-between;
+      z-index: 2;
+    }
+
+    .carousel-btn {
+      background: rgba(0, 0, 0, 0.5);
+      color: white;
+      border: none;
+      border-radius: 50%;
+      width: 28px;
+      height: 28px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      padding: 0;
+      font-size: 12px;
+      opacity: 0.7;
+      transition: opacity 0.2s;
+    }
+
+    .carousel-btn:hover {
+      opacity: 1;
+    }
+
+    .thumbnail {
+      max-width: 100%;
+      max-height: 100%;
+      object-fit: contain;
+    }
+
+    /* Styles for audio thumbnail display */
+    .media-audio {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 3rem;
+      color: #666;
+      height: 100%;
+      background: #f0f0f0;
+      border-radius: 8px;
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <header>
+      <div class="header-content">
+        <h1 class="header-title">NOW Media Manager</h1>
+        <div class="search-bar">
+          <input 
+            type="text" 
+            class="search-input" 
+            placeholder="Search media..." 
+            v-model="searchQuery"
+            @input="debounceSearch"
+          >
+        </div>
+        <button class="upload-button" @click="generateThumbnails">
+          Generate Thumbnails
+        </button>
+      </div>
+    </header>
+    
+    <div class="container">
+      <div 
+        class="dropzone" 
+        :class="{ active: isDragging }"
+        @dragover.prevent="isDragging = true"
+        @dragleave.prevent="isDragging = false"
+        @drop.prevent="handleFileDrop"
+        @click="triggerFileInput"
+      >
+        <input type="file" ref="fileInput" style="display:none" @change="handleFileChange" accept="audio/*,video/*" multiple>
+        <span class="dropzone-icon">📁</span>
+        <h2>Drop files here or click to upload</h2>
+        <p>Supported formats: MP3, WAV, FLAC, OGG, MP4, WEBM, AVI, MOV, MKV</p>
+      </div>
+      
+      <div class="upload-actions" v-if="pendingUploads.length > 0">
+        <button 
+          @click="uploadAllFiles" 
+          class="upload-button"
+          :disabled="isUploading"
+        >
+          <span v-if="isUploading" class="loading-spinner"></span>
+          <span v-else class="icon">↑</span>
+          <span>{{ isUploading ? 'Uploading...' : 'Upload ' + pendingUploads.length + ' Files' }}</span>
+        </button>
+      </div>
+      
+      <div v-if="pendingUploads.length" class="pending-uploads">
+        <h3>Pending Uploads</h3>
+        <div class="media-grid">
+          <div 
+            v-for="upload in pendingUploads" 
+            :key="upload.id" 
+            class="media-card"
+          >
+            <div class="media-preview">
+              <div v-if="upload.isAudio" class="media-audio">🎵</div>
+              <div v-else class="media-video">🎬</div>
+            </div>
+            <div class="media-content">
+              <h3>{{ upload.filename }}</h3>
+              <textarea 
+                v-model="upload.answers" 
+                class="media-answers" 
+                placeholder="Enter answers (one per line)"
+              ></textarea>
+              <div v-if="upload.uploading" class="upload-progress">
+                <div 
+                  class="upload-progress-bar" 
+                  :style="{ width: upload.progress + '%' }"
+                ></div>
+              </div>
+              <div v-if="upload.error" class="error-message">
+                {{ upload.error }}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      
+      <div v-if="loading" class="loading-container">
+        <div class="loading-spinner"></div>
+        <p>Loading media...</p>
+      </div>
+      
+      <div v-else-if="media.length === 0" class="empty-state">
+        <h2>No media found</h2>
+        <p>Upload some files to get started</p>
+      </div>
+      
+      <div class="media-grid">
+        <div v-for="item in media" 
+         :key="item.id" 
+         class="media-card">
+      <div class="media-preview">
+        <div v-if="isProcessing(item)" class="processing-indicator">Processing</div>
+
+        <!-- Audio files - always use waveform thumbnail when available -->
+        <div v-else-if="isAudio(item) && hasThumbnails(item)" class="thumbnail-carousel">
+          <img 
+            :src="item.thumbnails[0]"
+            class="thumbnail"
+            alt="Audio visualization"
+          />
+          
+          <div class="play-overlay" @click="playVideo(item)">
+            <div class="play-button">▶</div>
+          </div>
+        </div>
+        
+        <!-- Fallback for audio without thumbnails -->
+        <div v-else-if="isAudio(item)" class="media-audio">🎵</div>
+        
+        <!-- Video - always use first thumbnail when available -->
+        <div v-else-if="isVideo(item) && hasThumbnails(item)" class="thumbnail-carousel">
+          <img 
+            :src="item.thumbnails[0]"
+            class="thumbnail"
+            alt="Video thumbnail"
+          />
+          
+          <div class="play-overlay" @click="playVideo(item)">
+            <div class="play-button">▶</div>
+          </div>
+        </div>
+        
+        <!-- Fallback for video without thumbnails -->
+        <div v-else-if="isVideo(item)" class="media-video">
+          <div class="play-overlay" @click="playVideo(item)">
+            <div class="play-button">▶</div>
+          </div>
+        </div>
+        
+        <div v-else class="media-unknown">?</div>
+      </div>
+      
+      <div class="media-content">
+        <h3>{{ item.title }}</h3>
+        <textarea 
+          :value="getItemAnswers(item)" 
+          class="media-answers" 
+          placeholder="Enter answers (one per line)"
+          @change="saveAnswers(item, $event)"
+        ></textarea>
+        <div class="metadata">
+          <span>{{ new Date(item.createdAt).toLocaleDateString() }}</span>
+          <span v-if="item.answers && item.answers.length" class="answer-display">
+            {{ formatAnswersForDisplay(item.answers) }}
+          </span>
+        </div>
+        <div class="card-actions">
+          <button 
+            v-if="item.isDeleted" 
+            @click="toggleMediaDeleted(item)" 
+            class="restore-btn"
+          >
+            Restore
+          </button>
+          <button 
+            v-else 
+            @click="toggleMediaDeleted(item)" 
+            class="delete-btn"
+          >
+            Delete
+          </button>
+        </div>
+      </div>
+    </div>
+      </div>
+    </div>
+    
+    <div v-if="toast" class="toast" :class="toastClass">
+      {{ toast }}
+    </div>
+  </div>
+
+  <!-- Media item template -->
+  <template id="media-item-template">
+    <div class="media-item" :class="{ 'is-deleted': media.isDeleted, 'is-processing': isProcessing }">
+      <div class="media-thumbnail" @click="playMedia">
+        <!-- Video or audio with thumbnails -->
+        <div v-if="media.thumbnails && media.thumbnails.length > 0" class="thumbnail-carousel">
+          <img :src="media.thumbnails[media.currentThumbnail]" class="thumbnail" alt="Media thumbnail">
+          <div class="carousel-nav" v-if="media.thumbnails.length > 1">
+            <button class="carousel-btn" @click.stop="prevThumbnail">←</button>
+            <button class="carousel-btn" @click.stop="nextThumbnail">→</button>
+          </div>
+          <div class="carousel-indicators" v-if="media.thumbnails.length > 1">
+            <div 
+              v-for="(_, index) in media.thumbnails" 
+              :key="index"
+              class="indicator"
+              :class="{ active: index === media.currentThumbnail }"
+              @click.stop="showThumbnail(index)"
+            ></div>
+          </div>
+        </div>
+        
+        <!-- Audio without thumbnails -->
+        <div v-else-if="isAudio" class="media-audio">
+          <i class="fas fa-music"></i>
+        </div>
+        
+        <!-- Video without thumbnails -->
+        <div v-else-if="isVideo" class="media-video">
+          <i class="fas fa-film"></i>
+        </div>
+        
+        <!-- Processing indicator -->
+        <div v-if="isProcessing" class="processing-overlay">
+          <div class="spinner"></div>
+          <div>Processing...</div>
+        </div>
+      </div>
+      
+      <!-- Media details -->
+      <div class="media-details">
+        <div class="media-title">
+          <h3>{{ media.title }}</h3>
+          <div class="media-controls">
+            <button class="icon-button" @click="$emit('toggleDeleted', media)" :title="media.isDeleted ? 'Restore' : 'Delete'">
+              <i :class="media.isDeleted ? 'fas fa-trash-restore' : 'fas fa-trash'"></i>
+            </button>
+          </div>
+        </div>
+        
+        <!-- Answers -->
+        <div class="media-answers">
+          <div v-for="(answer, index) in media.answers" :key="index" class="answer-row">
+            <input type="text" v-model="answer.answer" @change="$emit('saveAnswers', media)" 
+                   :placeholder="index === 0 ? 'Primary answer' : 'Alternative answer'">
+            <button class="icon-button" @click="removeAnswer(index)" v-if="media.answers.length > 1">
+              <i class="fas fa-times"></i>
+            </button>
+          </div>
+          <button class="add-answer-button" @click="addAnswer">
+            <i class="fas fa-plus"></i> Add alternative answer
+          </button>
+        </div>
+        
+        <!-- Info -->
+        <div class="media-info">
+          <span class="media-date">Added: {{ formatDate(media.createdAt) }}</span>
+          <span v-if="media.metadata && media.metadata.fileSize" class="media-size">
+            Size: {{ formatFileSize(media.metadata.fileSize) }}
+          </span>
+        </div>
+      </div>
+    </div>
+  </template>
+
+  <script>
+    const { createApp, ref, computed, onMounted, watch, onUnmounted } = Vue;
+    
+    createApp({
+      setup() {
+        const media = ref([]);
+        const pendingUploads = ref([]);
+        const loading = ref(false);
+        const isUploading = ref(false);
+        const searchQuery = ref('');
+        const isDragging = ref(false);
+        const fileInput = ref(null);
+        const toast = ref('');
+        const toastClass = ref('');
+        let toastTimeout = null;
+        let eventSource = null;
+        
+        // Load all media on mount
+        onMounted(() => {
+          setupSSEListener();
+          fetchMedia();
+          setupSSEConnection();
+        });
+        
+        // Setup SSE listener for media processing updates
+        const setupSSEListener = () => {
+          // Close any existing connection
+          if (window.mediaStatusEventSource) {
+            window.mediaStatusEventSource.close();
+          }
+          
+          // Create new EventSource connection
+          const eventSource = new EventSource('/api/sse/media-status');
+          window.mediaStatusEventSource = eventSource;
+          
+          eventSource.onmessage = (event) => {
+            try {
+              const data = JSON.parse(event.data);
+              
+              // Find the matching upload in our list
+              const upload = pendingUploads.value.find(u => u.mediaId === data.mediaId);
+              if (upload) {
+                upload.status = data.status;
+                upload.message = data.message;
+                upload.progress = data.progress || upload.progress;
+                
+                // If processing is complete or failed, we can update accordingly
+                if (data.status === 'complete') {
+                  upload.status = 'complete';
+                  upload.message = 'Processing complete!';
+                  
+                  // Refresh media list after a short delay
+                  setTimeout(fetchMediaList, 500);
+                  showToast(`"${data.title}" has been successfully processed!`, 'success');
+                } else if (data.status === 'error') {
+                  upload.status = 'error';
+                  showToast(`Processing failed: ${data.message}`, 'error');
+                }
+              }
+            } catch (err) {
+              console.error('Error parsing SSE message:', err);
+            }
+          };
+          
+          eventSource.onerror = () => {
+            console.error('SSE connection error');
+            // Try to reconnect after 5 seconds
+            setTimeout(() => {
+              setupSSEListener();
+            }, 5000);
+          };
+        };
+        
+        // Clean up SSE connection when component is unmounted
+        onUnmounted(() => {
+          if (window.mediaStatusEventSource) {
+            window.mediaStatusEventSource.close();
+            window.mediaStatusEventSource = null;
+          }
+        });
+        
+        // Setup SSE connection for real-time updates
+        const setupSSEConnection = () => {
+          // Close existing connection if any
+          if (eventSource) {
+            eventSource.close();
+          }
+          
+          // Create new SSE connection
+          eventSource = new EventSource('/api/sse/media-status');
+          
+          eventSource.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+            
+            if (data.type === 'mediaStatus') {
+              handleMediaStatusUpdate(data);
+            }
+          };
+          
+          eventSource.onerror = (error) => {
+            console.error('SSE connection error:', error);
+            // Try to reconnect after a delay
+            setTimeout(setupSSEConnection, 5000);
+          };
+        };
+        
+        // Handle media status updates from SSE
+        const handleMediaStatusUpdate = (data) => {
+          if (!data.mediaId) return;
+          
+          const existingIndex = media.value.findIndex(item => item.id === data.mediaId);
+          
+          // If we have this item in our list, update it
+          if (existingIndex !== -1) {
+            if (data.status === 'complete' && data.normalizedPath) {
+              // Refresh the single item to get full data
+              fetchSingleMedia(data.mediaId);
+            } else if (data.status === 'error') {
+              // Show error toast
+              showToast(`Error processing media: ${data.message}`, 'error');
+            }
+          } else {
+            // We don't have this item yet, refresh all media
+            fetchMedia();
+          }
+        };
+        
+        // Fetch a single media item by ID
+        const fetchSingleMedia = async (id) => {
+          try {
+            const response = await axios.get(`/api/media/${id}`);
+            const updatedItem = response.data;
+            
+            // Find and update the item
+            const index = media.value.findIndex(item => item.id === id);
+            if (index !== -1) {
+              // Preserve current thumbnail selection
+              const currentThumbnail = media.value[index].currentThumbnail;
+              media.value[index] = {
+                ...prepareMediaItem(updatedItem),
+                currentThumbnail
+              };
+            }
+          } catch (error) {
+            console.error(`Error fetching media ${id}:`, error);
+          }
+        };
+        
+        // Debounce search
+        let searchTimeout = null;
+        const debounceSearch = () => {
+          clearTimeout(searchTimeout);
+          searchTimeout = setTimeout(() => {
+            fetchMedia();
+          }, 300);
+        };
+        
+        // Watch for search changes
+        watch(searchQuery, () => {
+          debounceSearch();
+        });
+        
+        // Fetch media from API with smart updates
+        const fetchMedia = async () => {
+          try {
+            loading.value = media.value.length === 0; // Only show loading on initial fetch
+            
+            const params = {};
+            if (searchQuery.value) {
+              params.search = searchQuery.value;
+            }
+            
+            const response = await axios.get('/api/media', { params });
+            const newMedia = response.data;
+            
+            // Sort by creation date descending (newest first)
+            newMedia.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+            
+            // Smart update: only update changed items
+            if (media.value.length === 0) {
+              // First load - set the whole array
+              media.value = newMedia.map(prepareMediaItem);
+            } else {
+              // Update only changed items
+              newMedia.forEach(newItem => {
+                const existingIndex = media.value.findIndex(item => item.id === newItem.id);
+                
+                if (existingIndex === -1) {
+                  // New item - add to array
+                  media.value.push(prepareMediaItem(newItem));
+                } else if (JSON.stringify(media.value[existingIndex]) !== JSON.stringify(newItem)) {
+                  // Item changed - preserve current thumbnail but update other props
+                  const currentThumbnail = media.value[existingIndex].currentThumbnail;
+                  media.value[existingIndex] = {
+                    ...prepareMediaItem(newItem),
+                    currentThumbnail
+                  };
+                }
+              });
+              
+              // Remove deleted items
+              const newIds = new Set(newMedia.map(item => item.id));
+              media.value = media.value.filter(item => newIds.has(item.id));
+              
+              // Sort by creation date descending (newest first)
+              media.value.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+            }
+            
+            loading.value = false;
+          } catch (error) {
+            loading.value = false;
+            showToast('Error loading media: ' + (error.response?.data?.error || error.message), 'error');
+          }
+        };
+        
+        // Clean up SSE connection when component is unmounted
+        window.addEventListener('beforeunload', () => {
+          if (eventSource) {
+            eventSource.close();
+          }
+        });
+        
+        // Format answers for display in the UI
+        const formatAnswersForDisplay = (answers) => {
+          if (!answers || !answers.length) return '';
+          
+          // Find primary answers (could be multiple)
+          const primaryAnswers = answers.filter(a => a.isPrimary).map(a => a.answer);
+          
+          // Get secondary answers (non-primary)
+          const secondaryAnswers = answers.filter(a => !a.isPrimary).map(a => a.answer);
+          
+          let displayText = '';
+          
+          // Add primary answers
+          if (primaryAnswers.length) {
+            displayText += primaryAnswers.join(', ');
+          }
+          
+          // Add secondary answers if they exist
+          if (secondaryAnswers.length) {
+            if (displayText) {
+              displayText += ' (Alt: ';
+              displayText += secondaryAnswers.join(', ');
+              displayText += ')';
+            } else {
+              displayText = 'Alt: ' + secondaryAnswers.join(', ');
+            }
+          }
+          
+          return displayText;
+        };
+        
+        // Save answers to the server
+        const saveAnswers = async (item, event) => {
+          try {
+            const answersText = event.target.value;
+            const answers = answersText.split('\n')
+              .filter(a => a.trim())
+              .map((answer, index) => ({ 
+                answer, 
+                isPrimary: index === 0 // Mark first answer as primary
+              }));
+            
+            if (answers.length === 0) {
+              showToast('Please enter at least one answer', 'error');
+              return;
+            }
+            
+            await axios.put(`/api/media/${item.id}/answers`, { answers });
+            item.answers = answers;
+            item.formattedAnswers = formatAnswersForDisplay(answers);
+            showToast(`Answers saved for "${item.title}"`, 'success');
+          } catch (error) {
+            showToast('Error saving answers: ' + (error.response?.data?.error || error.message), 'error');
+          }
+        };
+        
+        // Trigger file input click
+        const triggerFileInput = () => {
+          fileInput.value.click();
+        };
+        
+        // Handle file selection
+        const handleFileChange = (event) => {
+          addFilesToUploadQueue(Array.from(event.target.files));
+          event.target.value = ''; // Reset file input
+        };
+        
+        // Handle file drop
+        const handleFileDrop = (event) => {
+          isDragging.value = false;
+          const files = Array.from(event.dataTransfer.files).filter(file => {
+            return file.type.startsWith('audio/') || file.type.startsWith('video/');
+          });
+          
+          if (files.length === 0) {
+            showToast('No valid audio/video files found', 'error');
+            return;
+          }
+          
+          addFilesToUploadQueue(files);
+        };
+        
+        // Add files to upload queue
+        const addFilesToUploadQueue = (files) => {
+          const newUploads = files.map(file => {
+            const filename = file.name.split('.').slice(0, -1).join('.');
+            // Clean the filename for answers (replace special chars with spaces)
+            const cleanAnswer = filename.replace(/[-_]/g, ' ');
+            
+            return {
+              id: Date.now() + Math.random(),
+              file,
+              filename,
+              answers: cleanAnswer,
+              isAudio: file.type.startsWith('audio/'),
+              progress: 0,
+              uploading: false,
+              error: null
+            };
+          });
+          
+          pendingUploads.value = [...pendingUploads.value, ...newUploads];
+          showToast(`Added ${files.length} files to upload queue`, 'success');
+        };
+        
+        // Upload all pending files
+        const uploadAllFiles = async () => {
+          if (isUploading.value) return;
+          
+          isUploading.value = true;
+          showToast('Starting uploads...', 'success');
+          
+          const uploadPromises = [];
+          
+          for (const upload of pendingUploads.value) {
+            if (upload.uploading) continue;
+            
+            try {
+              upload.uploading = true;
+              upload.error = null;
+              
+              const formData = new FormData();
+              formData.append('file', upload.file);
+              
+              if (upload.answers && upload.answers.trim() !== '') {
+                formData.append('answers', upload.answers);
+              }
+              
+              const uploadPromise = axios.post('/api/upload', formData, {
+                onUploadProgress: (progressEvent) => {
+                  upload.progress = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+                }
+              })
+              .then(async (response) => {
+                // Remove from pending uploads
+                pendingUploads.value = pendingUploads.value.filter(u => u.id !== upload.id);
+                return response.data;
+              })
+              .catch(error => {
+                upload.uploading = false;
+                upload.error = error.response?.data?.error || error.message;
+                throw error;
+              });
+              
+              uploadPromises.push(uploadPromise);
+            } catch (error) {
+              upload.uploading = false;
+              upload.error = error.response?.data?.error || error.message;
+            }
+          }
+          
+          try {
+            if (uploadPromises.length > 0) {
+              await Promise.allSettled(uploadPromises);
+              fetchMedia(); // Refresh media list after all uploads
+            }
+          } catch (error) {
+            console.error('Upload error:', error);
+          } finally {
+            isUploading.value = false;
+            
+            if (pendingUploads.value.length === 0) {
+              showToast('All uploads completed successfully', 'success');
+            } else {
+              showToast('Some uploads failed. Check errors and try again.', 'error');
+            }
+          }
+        };
+        
+        // Toggle media deleted state
+        const toggleDeleteMedia = async (item) => {
+          try {
+            await axios.post(`/api/media/${item.id}/toggle-deleted`);
+            item.isDeleted = !item.isDeleted;
+            showToast(
+              item.isDeleted 
+                ? `"${item.title}" marked as deleted` 
+                : `"${item.title}" restored`,
+              'success'
+            );
+          } catch (error) {
+            showToast('Error toggling delete state: ' + (error.response?.data?.error || error.message), 'error');
+          }
+        };
+        
+        // Save media answers
+        const saveMediaAnswers = async (item) => {
+          try {
+            const answers = item.answersText.split('\n').filter(a => a.trim());
+            
+            if (answers.length === 0) {
+              showToast('Please enter at least one answer', 'error');
+              return;
+            }
+            
+            await axios.put(`/api/media/${item.id}/answers`, { answers });
+            item.answers = answers;
+            showToast(`Answers saved for "${item.title}"`, 'success');
+          } catch (error) {
+            showToast('Error saving answers: ' + (error.response?.data?.error || error.message), 'error');
+          }
+        };
+        
+        // Helper to show toast messages
+        const showToast = (message, type = 'success') => {
+          if (toastTimeout) {
+            clearTimeout(toastTimeout);
+          }
+          
+          toast.value = message;
+          toastClass.value = type === 'error' ? 'error-toast' : 'success-toast';
+          
+          toastTimeout = setTimeout(() => {
+            toast.value = '';
+          }, 3000);
+        };
+        
+        // Check if media is still processing (normalizedPath is null)
+        const isProcessing = (item) => {
+          return !item.normalizedPath;
+        };
+        
+        // Helper to check media type
+        const isAudio = (item) => {
+          return item.normalizedPath ? item.normalizedPath.endsWith('.ogg') : 
+                 item.filePath?.toLowerCase().match(/\.(mp3|wav|ogg|flac)$/);
+        };
+        
+        const isVideo = (item) => {
+          return item.normalizedPath ? item.normalizedPath.endsWith('.mp4') :
+                 item.filePath?.toLowerCase().match(/\.(mp4|webm|avi|mov|mkv)$/);
+        };
+        
+        // Get media URL
+        const getMediaUrl = (item) => {
+          if (item.normalizedPath) {
+            // Extract just the filename from the path
+            const filename = item.normalizedPath.split('/').pop();
+            return `/media/normalized/${filename}`;
+          } else if (item.filePath) {
+            const filename = item.filePath.split('/').pop();
+            return `/media/uploads/${filename}`;
+          }
+          return '';
+        };
+        
+        // Get thumbnails for item - filter out non-existent thumbnails
+        const getThumbnails = (item) => {
+          if (!item.thumbnails || !item.thumbnails.length) return [];
+          
+          // Filter thumbnails that don't exist by checking if they loaded successfully
+          return item.thumbnails.filter(url => {
+            // If we've already checked this URL, return the cached result
+            if (window.thumbnailCache && window.thumbnailCache[url] !== undefined) {
+              return window.thumbnailCache[url];
+            }
+            
+            // Otherwise we need to check if it exists
+            return url;
+          });
+        };
+        
+        // Initialize thumbnail cache for tracking existing thumbnails
+        window.thumbnailCache = window.thumbnailCache || {};
+        
+        // Preload thumbnail and track its existence
+        const preloadThumbnail = (url) => {
+          return new Promise((resolve) => {
+            // If we've already checked this thumbnail, use cached result
+            if (window.thumbnailCache[url] !== undefined) {
+              resolve(window.thumbnailCache[url]);
+              return;
+            }
+            
+            const img = new Image();
+            img.onload = () => {
+              window.thumbnailCache[url] = true;
+              resolve(true);
+            };
+            img.onerror = () => {
+              window.thumbnailCache[url] = false;
+              resolve(false);
+            };
+            img.src = url;
+          });
+        };
+        
+        // Preload all thumbnails for an item
+        const preloadThumbnails = async (item) => {
+          if (!item.thumbnails || !item.thumbnails.length) return;
+          
+          const results = await Promise.all(
+            item.thumbnails.map(url => preloadThumbnail(url))
+          );
+          
+          // Filter out non-existent thumbnails
+          item.thumbnails = item.thumbnails.filter((_, i) => results[i]);
+          
+          // Reset current thumbnail index if needed
+          if (item.currentThumbnail >= item.thumbnails.length) {
+            item.currentThumbnail = 0;
+          }
+        };
+        
+        // Get current thumbnail URL with fallback
+        const getCurrentThumbnailUrl = (item) => {
+          const thumbnails = getThumbnails(item);
+          if (!thumbnails.length) return '';
+          
+          // Ensure current index is valid
+          if (item.currentThumbnail >= thumbnails.length) {
+            item.currentThumbnail = 0;
+          }
+          
+          return thumbnails[item.currentThumbnail] || thumbnails[0];
+        };
+        
+        // Show specific thumbnail
+        const showThumbnail = (item, index) => {
+          item.currentThumbnail = index;
+        };
+        
+        // Show previous thumbnail
+        const prevThumbnail = (item) => {
+          const thumbnails = getThumbnails(item);
+          item.currentThumbnail = (item.currentThumbnail - 1 + thumbnails.length) % thumbnails.length;
+        };
+        
+        // Show next thumbnail
+        const nextThumbnail = (item) => {
+          const thumbnails = getThumbnails(item);
+          item.currentThumbnail = (item.currentThumbnail + 1) % thumbnails.length;
+        };
+        
+        // Play video
+        const playVideo = (item) => {
+          // Implement video play logic
+        };
+        
+        // Generate thumbnails for existing media
+        const generateThumbnails = async () => {
+          try {
+            await axios.post('/api/generate-thumbnails');
+            showToast('Thumbnails generation started', 'success');
+            fetchMedia(); // Refresh media list
+          } catch (error) {
+            showToast('Error generating thumbnails: ' + (error.response?.data?.error || error.message), 'error');
+          }
+        };
+        
+        // Handle file uploads
+        const handleUpload = async (files, answers = '') => {
+          if (!files || files.length === 0) return;
+          
+          isUploading.value = true;
+          const uploadPromises = [];
+          
+          // Track uploads for UI feedback
+          for (let i = 0; i < files.length; i++) {
+            const file = files[i];
+            const upload = {
+              id: Date.now() + i,
+              filename: file.name,
+              progress: 0,
+              status: 'uploading',
+              message: 'Preparing upload...'
+            };
+            
+            pendingUploads.value.push(upload);
+            
+            const formData = new FormData();
+            formData.append('file', file);
+            formData.append('answers', answers);
+            
+            const promise = axios.post('/api/upload', formData, {
+              onUploadProgress: (progressEvent) => {
+                const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+                upload.progress = percentCompleted;
+                upload.message = 'Uploading...';
+              }
+            }).then(response => {
+              // Update with metadata from the server
+              upload.mediaId = response.data.id;
+              upload.message = 'Processing... (updates will come via SSE)';
+              
+              // We're now relying on SSE for further status updates
+              // No need to poll manually
+            }).catch(error => {
+              upload.status = 'error';
+              upload.message = 'Upload failed: ' + (error.response?.data?.error || error.message);
+              showToast('Upload failed: ' + (error.response?.data?.error || error.message), 'error');
+            });
+            
+            uploadPromises.push(promise);
+          }
+          
+          try {
+            await Promise.all(uploadPromises);
+          } finally {
+            isUploading.value = false;
+          }
+        };
+        
+        // Computed property for answers
+        const getItemAnswers = (item) => {
+          if (!item.answers) return '';
+          
+          // Handle both string arrays and object arrays with answer property
+          const answersArray = item.answers.map(a => {
+            return typeof a === 'string' ? a : a.answer;
+          });
+          
+          return answersArray.join('\n');
+        };
+        
+        // Prepare media item for display
+        const prepareMediaItem = (item) => {
+          // Add missing properties needed for UI
+          const thumbnails = [];
+          
+          // Process video thumbnails
+          if (isVideo(item)) {
+            // For videos, look for first thumbnail file only
+            const baseFilename = item.normalizedPath?.split('/').pop().replace('.mp4', '');
+            if (baseFilename) {
+              const thumbFile = `/thumbnails/${baseFilename}_thumb0.jpg`;
+              thumbnails.push(thumbFile);
+            }
+          } 
+          // Process audio thumbnails
+          else if (isAudio(item)) {
+            // For audio, prefer waveform visualization
+            const baseFilename = item.normalizedPath?.split('/').pop().replace('.ogg', '');
+            if (baseFilename) {
+              const waveformThumb = `/thumbnails/${baseFilename}_waveform.png`;
+              thumbnails.push(waveformThumb);
+            }
+          }
+          
+          return {
+            ...item,
+            thumbnails,
+            currentThumbnail: 0
+          };
+        };
+
+        // Check if an item has thumbnails
+        const hasThumbnails = (item) => {
+          return item.thumbnails && item.thumbnails.length > 0;
+        };
+        
+        return {
+          media,
+          pendingUploads,
+          loading,
+          isUploading,
+          searchQuery,
+          isDragging,
+          fileInput,
+          toast,
+          toastClass,
+          fetchMedia,
+          triggerFileInput,
+          handleFileChange,
+          handleFileDrop,
+          uploadAllFiles,
+          toggleMediaDeleted: toggleDeleteMedia,
+          saveAnswers,
+          debounceSearch,
+          isAudio,
+          isVideo,
+          isProcessing,
+          getMediaUrl,
+          hasThumbnails,
+          getThumbnails,
+          getCurrentThumbnailUrl,
+          showThumbnail,
+          prevThumbnail,
+          nextThumbnail,
+          playVideo,
+          generateThumbnails,
+          formatAnswersForDisplay,
+          getItemAnswers
+        };
+      }
+    }).mount('#app');
+  </script>
+</body>
+</html>

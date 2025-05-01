@@ -1,47 +1,30 @@
-# node.js
+# Dependency directories
 node_modules/
-npm-debug.log
-yarn-error.log
+
+# Build outputs
 dist/
-src/media
+
+# Environment variables
 .env
-data.db
 
-# editor/os
-.DS_Store
-.idea/
-.vscode/
-*.swp
-*.swo
+# Media files
+uploads/
+normalized/
+thumbnails/
 
-# logs
-*.log
+# Logs
 logs/
-log/
+*.log
 
-# temp files
-/temp
-/tmp
-*.tmp
-
-# built files
-.phpunit.result.cache
-public/storage
-public/hot
-public/build
-/dist
-
-# misc
-.DS_Store
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
-volume_cache.json
-
-# media
-normalized
-uploads
-
-# database
+# Database files
 *.sqlite
+*.db
+data/
+
+# IDE files
+.vscode/
+.idea/
+
+# OS specific files
+.DS_Store
+Thumbs.db

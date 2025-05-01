@@ -1,123 +1,141 @@
-import { Client, IntentsBitField, GatewayIntentBits, Partials } from 'discord.js';
-import * as dotenv from 'dotenv';
-import { processCommand } from './commands';
-import { logger } from './utils/logger';
-import { startWebServer } from './services/web/server';
-import { initDB, initDirectories } from './utils/init';
-import { db } from './database/connection';
+import { Client, Events, GatewayIntentBits, Partials } from 'discord.js';
+import express from 'express';
+import cors from 'cors';
+import path from 'path';
+import dotenv from 'dotenv';
+import { initDatabase } from './database/db';
+import { parseCommand } from './bot/utils/helpers';
+import { handlePlayCommand } from './bot/commands/play';
+import { handleQuizCommand, handleStopCommand, handleQuizAnswer } from './bot/commands/quiz';
+import { handleUploadCommand } from './bot/commands/upload';
+import apiRoutes from './web/api';
+import { generateThumbnailsForExistingMedia } from './media/processor';
 
 // Load environment variables
 dotenv.config();
 
-// Create Discord client with appropriate intents
+// Initialize Express app
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+// Express middlewares
+app.use(cors());
+app.use(express.json({ limit: '200mb' }));
+app.use(express.urlencoded({ extended: true, limit: '200mb' }));
+
+// Static files
+app.use(express.static(path.join(__dirname, 'web/public')));
+app.use('/thumbnails', express.static(path.join(__dirname, '../thumbnails')));
+app.use('/media/normalized', express.static(path.join(__dirname, '../normalized')));
+app.use('/media/uploads', express.static(path.join(__dirname, '../uploads')));
+
+// API routes
+app.use('/', apiRoutes);
+
+// Health check endpoint
+app.get('/health', (req, res) => {
+  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+// Create a new Discord client
 const client = new Client({
   intents: [
-    IntentsBitField.Flags.Guilds,
-    IntentsBitField.Flags.GuildMessages,
-    IntentsBitField.Flags.GuildVoiceStates,
-    IntentsBitField.Flags.MessageContent,
-    GatewayIntentBits.DirectMessages
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.GuildMessageReactions,
+    GatewayIntentBits.MessageContent,
+    GatewayIntentBits.GuildVoiceStates,
   ],
-  partials: [Partials.Channel]
+  partials: [Partials.Message, Partials.Channel, Partials.Reaction],
 });
 
-// Handle bot ready event
-client.once('ready', async () => {
-  logger.info(`Logged in as ${client.user?.tag}`);
-  
-  // Initialize directories
-  initDirectories();
-  
-  // Initialize the database if needed
-  try {
-    await initDB();
-    logger.info('Database initialized successfully');
-  } catch (error) {
-    logger.error(`Database initialization error: ${error instanceof Error ? error.message : String(error)}`);
-  }
-  
-  // Start the web server for uploads
-  const webPort = parseInt(process.env.WEB_PORT || '3000', 10);
-  try {
-    await startWebServer(webPort);
-    logger.info(`Web server started on port ${webPort}`);
-  } catch (error) {
-    logger.error(`Web server error: ${error instanceof Error ? error.message : String(error)}`);
-  }
-  
-  // Set bot activity
-  client.user?.setActivity('NOW help', { type: 2 }); // 2 = Listening to
+// Bot is ready event
+client.once(Events.ClientReady, (readyClient) => {
+  console.log(`Ready! Logged in as ${readyClient.user.tag}`);
 });
 
-// Handle message events
-client.on('messageCreate', async (message) => {
-  try {
-    await processCommand(message, client);
-  } catch (error) {
-    logger.error(`Error processing message: ${error instanceof Error ? error.message : String(error)}`);
+// Message handling
+client.on(Events.MessageCreate, async (message) => {
+  // Ignore bot messages
+  if (message.author.bot) return;
+  
+  // Parse the command - returns null if not a NOW command
+  const commandArgs = parseCommand(message);
+  
+  // Handle different commands
+  if (commandArgs) {
+    try {
+      console.log(`Command received: ${commandArgs.command}`, commandArgs);
+      
+      switch (commandArgs.command) {
+        case 'play':
+          await handlePlayCommand(
+            message, 
+            commandArgs.searchTerm, 
+            commandArgs.filterString, 
+            commandArgs.clipOptions
+          );
+          break;
+          
+        case 'quiz':
+          await handleQuizCommand(
+            message, 
+            commandArgs.filterString, 
+            commandArgs.clipOptions
+          );
+          break;
+          
+        case 'stop':
+          await handleStopCommand(message);
+          break;
+          
+        case 'upload':
+          await handleUploadCommand(message);
+          break;
+          
+        default:
+          // Unrecognized command
+          await message.reply('Unknown command. Type `NOW play`, `NOW quiz`, or `NOW upload`.');
+      }
+    } catch (error) {
+      console.error('Error handling command:', error);
+      await message.reply(`An error occurred: ${(error as Error).message}`);
+    }
+  } else {
+    // Handle potential quiz answers (all non-command messages)
+    await handleQuizAnswer(message);
   }
 });
 
-// Handle voice state updates (for auto-disconnect when alone in voice channel)
-client.on('voiceStateUpdate', (oldState, newState) => {
+// Main initialization function
+async function init() {
   try {
-    // Check if the bot is in a voice channel
-    const botMember = newState.guild.members.cache.get(client.user?.id || '');
-    if (!botMember?.voice.channel) return;
+    // Initialize database
+    await initDatabase();
+    console.log('Database initialized');
     
-    // Check if the bot is alone in the voice channel
-    const voiceChannel = botMember.voice.channel;
-    if (voiceChannel.members.size === 1) {
-      // Bot is alone, disconnect after a delay
-      setTimeout(() => {
-        // Double check if still alone
-        if (voiceChannel.members.size === 1) {
-          botMember.voice.disconnect();
-          logger.info(`Disconnected from voice in ${voiceChannel.guild.name} (${voiceChannel.name}) due to being alone`);
-        }
-      }, 60000); // Wait 1 minute before disconnecting
+    // Start Express server
+    app.listen(PORT, () => {
+      console.log(`Web server running on port ${PORT}`);
+      console.log(`Media manager available at http://localhost:${PORT}/`);
+      
+      // Generate thumbnails for existing videos without them
+      generateThumbnailsForExistingMedia()
+        .catch(error => console.error('Error generating thumbnails:', error));
+    });
+    
+    // Log in to Discord
+    const token = process.env.DISCORD_TOKEN;
+    if (!token) {
+      throw new Error('Missing DISCORD_TOKEN environment variable');
     }
+    
+    await client.login(token);
   } catch (error) {
-    logger.error(`Voice state update error: ${error instanceof Error ? error.message : String(error)}`);
-  }
-});
-
-// Handle errors
-client.on('error', (error) => {
-  logger.error(`Discord client error: ${error.message}`);
-});
-
-// Login to Discord
-const token = process.env.DISCORD_TOKEN;
-if (!token) {
-  logger.error('DISCORD_TOKEN not found in environment variables');
-  process.exit(1);
-}
-
-client.login(token)
-  .catch((error) => {
-    logger.error(`Failed to login to Discord: ${error.message}`);
+    console.error('Initialization error:', error);
     process.exit(1);
-  });
-
-// Handle process termination
-process.on('SIGINT', handleShutdown);
-process.on('SIGTERM', handleShutdown);
-
-function handleShutdown() {
-  logger.info('Shutting down...');
-  
-  // Close Discord client connection
-  client.destroy();
-  
-  // Close database connection
-  db.close((err) => {
-    if (err) {
-      logger.error(`Error closing database connection: ${err.message}`);
-      process.exit(1);
-    } else {
-      logger.info('Database connection closed');
-      process.exit(0);
-    }
-  });
+  }
 }
+
+// Start the application
+init().catch(console.error);

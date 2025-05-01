@@ -1,269 +1,102 @@
 # NOW Discord Bot
 
-NOW is a powerful Discord bot for collecting, playing, and managing media files (video and audio) with interactive quiz functionality.
+A Discord bot for collecting media, providing playback tools, and creating interactive quiz games.
 
 ## Features
 
-- **Media Playback**: Play audio and video files directly in Discord
-- **Media Augmentation**: Apply effects like amplification, reversal, and clipping
-- **Quiz Game**: Host interactive quiz games in voice channels based on your media
-- **Media Management**: Upload, organize, and manage your media collection via web interface
-- **Smart Normalization**: On-demand file processing only when needed for Discord compatibility
-- **Hardware Acceleration**: NVIDIA GPU support for faster video processing when available
+- Media playback with custom filters and clipping
+- Interactive media quizzes in voice channels
+- Web-based media upload interface with drag-and-drop
+- SQLite database for media management
 
-## Architecture
+## Prerequisites
 
-- **Framework**: discord.js with TypeScript
-- **Runtime**: Node.js with PM2 for process management and auto-restart
-- **Database**: PostgreSQL with TypeORM for storing media metadata
-- **Media Processing**: FFmpeg for audio/video manipulation with NVIDIA hardware acceleration support
-- **Web Interface**: Express.js for the upload portal
-
-## Setup
-
-### Prerequisites
-
-- Node.js (v16.x or higher)
-- PostgreSQL database
+- Node.js 16+ and npm
 - FFmpeg installed on your system
-- Discord Bot Token
+- Discord bot token (see [Discord Developer Portal](https://discord.com/developers/applications))
 
-### Installation
+## Quick Setup
 
-1. Clone this repository:
-   ```
-   git clone https://github.com/lodyb/now.git
-   cd now
-   ```
+1. **Install dependencies**
 
-2. Install dependencies:
-   ```
-   npm install
-   ```
-
-3. Create a `.env` file with the following variables:
-   ```
-   # Discord Configuration
-   DISCORD_TOKEN=your_discord_bot_token
-   
-   # Database Configuration
-   DB_HOST=localhost
-   DB_PORT=5432
-   DB_NAME=now
-   DB_USER=postgres
-   DB_PASSWORD=your_password
-   
-   # Web Server Configuration
-   WEB_PORT=3000
-   UPLOAD_DIR=./uploads
-   NORMALIZED_DIR=./normalized
-   UPLOAD_SECRET=your_secure_string_here
-   
-   # Bot Configuration
-   MAX_FILE_SIZE=9
-   ```
-
-4. Create the PostgreSQL database:
-   ```
-   createdb now
-   ```
-
-5. Build the TypeScript project:
-   ```
-   npm run build
-   ```
-
-6. Start the bot:
-   ```
-   npm start
-   ```
-   
-   Or with PM2:
-   ```
-   npm run start:pm2
-   ```
-
-## Command Usage
-
-NOW uses the prefix `NOW` for all commands.
-
-### Media Playback
-
-- **Play media**:
-  ```
-  NOW play star wars theme
-  ```
-
-- **Play with effects**:
-  ```
-  NOW play imperial march {amplify=2,reverse=1}
-  ```
-
-- **Play a clip**:
-  ```
-  NOW clip=4s indiana jones theme
-  ```
-
-- **Play a clip from specific position**:
-  ```
-  NOW clip=4s start=3s jurassic park theme
-  ```
-
-### Quiz Game
-
-- **Start a quiz**:
-  ```
-  NOW quiz
-  ```
-
-- **Start a quiz with effects**:
-  ```
-  NOW quiz {reverse=1}
-  ```
-
-- **Start a quiz with clip options**:
-  ```
-  NOW quiz clip=4s start=2s
-  ```
-
-- **Stop a quiz**:
-  ```
-  NOW stop
-  ```
-
-### Media Management
-
-- **Get upload link**:
-  ```
-  NOW upload
-  ```
-
-## Media Processing
-
-NOW processes media files on-demand to ensure compatibility with Discord's limitations:
-
-- Files are only processed when they exceed Discord's file size limit (8MB by default)
-- Original quality is preserved for files under the size limit
-- Hardware acceleration using NVIDIA GPUs when available for faster encoding
-- Video files are re-encoded to H264 (with NVENC support for NVIDIA GPUs)
-- Audio files are converted to Opus codec for optimal quality/size ratio
-- Video resolution is adaptively scaled based on size constraints
-- Advanced encoding settings for optimal quality preservation
-- Original files are preserved, with processed versions used only when necessary
-
-## Performance Optimizations
-
-- **On-demand Processing**: Files are only normalized when they exceed Discord's size limits
-- **Hardware Acceleration**: Automatic detection and use of NVIDIA GPUs for video encoding
-- **Adaptive Encoding**: Encoding parameters are dynamically adjusted based on file characteristics
-- **Multi-pass Compression**: Progressive quality reduction to meet size requirements if needed
-- **Efficient File Management**: Original file integrity is preserved for optimal quality
-
-## Project Structure
-
-```
-now/
-├── src/                    # Source code
-│   ├── commands/           # Bot commands implementation
-│   │   ├── clip.ts         # Clip command handler
-│   │   ├── index.ts        # Command processor
-│   │   ├── play.ts         # Play command handler
-│   │   ├── quiz.ts         # Quiz command handler
-│   │   └── upload.ts       # Upload command handler
-│   ├── database/           # Database models and connection
-│   │   ├── connection.ts   # TypeORM configuration
-│   │   └── entities/       # TypeORM entity definitions
-│   ├── services/           # Business logic
-│   │   ├── media/          # Media processing services
-│   │   │   ├── clipper.ts  # File clipping functionality
-│   │   │   ├── normalizer.ts # Media normalization
-│   │   │   └── processor.ts # Media effect processing
-│   │   └── web/            # Web server for uploads
-│   │       └── server.ts   # Express server implementation
-│   ├── utils/              # Utility functions
-│   │   ├── init.ts         # Initialization utilities
-│   │   └── logger.ts       # Logging functionality
-│   └── index.ts            # Main entry point
-├── uploads/                # Original uploaded files
-├── normalized/             # Processed media files
-│   └── clips/              # Generated clips directory
-├── web/                    # Web interface static files
-│   ├── index.html          # Landing page
-│   └── upload.html         # Media upload interface
-├── tests/                  # Jest test files
-├── tsconfig.json           # TypeScript configuration
-├── jest.config.js          # Jest configuration
-├── package.json            # NPM dependencies
-└── README.md               # This file
+```bash
+npm install
 ```
 
-## Database Schema
+2. **Configure environment variables**
 
-The application uses TypeORM with the following entity structure:
+Create a `.env` file in the root directory:
 
-- **Media**: Stores metadata about media files
-- **MediaAnswer**: Alternative titles/answers for each media item
-- **MediaTag**: Junction table for media-tag relationships
-- **Tag**: Categories for organizing media
-- **User**: Stores user statistics for quiz games
-- **GameSession**: Records of quiz game sessions
+```bash
+# Required: Your Discord bot token
+DISCORD_TOKEN=your_discord_bot_token_here
 
-## TypeScript Configuration
+# Optional: Web server port (defaults to 3000)
+PORT=3000
 
-The project uses ES modules with TypeScript. Key TypeScript configurations:
-- `"module": "NodeNext"` 
-- `"moduleResolution": "NodeNext"`
-- `"target": "es2020"`
-- Enabled decorator metadata for TypeORM
-
-## Development
-
-### Building
-
+# Optional: Environment (development or production)
+NODE_ENV=development
 ```
+
+3. **Build the project**
+
+```bash
 npm run build
 ```
 
-### Running Tests
+4. **Start the application**
 
+```bash
+# Development mode with auto-restart
+npm run dev
+
+# Production mode
+npm start
+
+# Production with PM2 (recommended for servers)
+npm run pm2:start
 ```
-npm test
-```
 
-### Migration from Older Databases
+## Running Components
 
-The project includes a migration utility to import data from older database versions:
+The application has two main components that run together:
 
-```
-node dist/utils/migration.js --source-db=/path/to/old.sqlite --source-files=/path/to/media/files
-```
+1. **Discord Bot** - Handles Discord commands and interactions
+2. **Web Server** - Provides the media management interface
 
-This utility:
-- Copies all media files to the new location without processing
-- Preserves all metadata including titles and answers
-- Maintains file associations
-- Media files will be normalized on-demand only when needed for Discord compatibility
+When you start the application, both components run automatically. You can access:
 
-### Manual Start
+- Web interface: http://localhost:3000 (or your configured PORT)
+- Discord bot: Invite the bot to your server and use commands
 
-```
-node dist/index.js
-```
+## Discord Commands
+
+- `NOW play [search term]` - Play media matching the search term
+- `NOW play [search term] {filter=value}` - Apply FFmpeg filters (e.g., `{amplify=2,reverse=1}`)
+- `NOW clip=5s start=10s [search term]` - Play a clip with specific timing
+- `NOW quiz` - Start a quiz game in your voice channel
+- `NOW stop` - Stop an active quiz
+- `NOW upload` - Get a link to upload new media
+
+## Web Interface
+
+The web interface allows you to:
+
+1. **Upload media** - Drag and drop files to the top section
+2. **Manage existing media** - View, edit answers, delete/restore
+3. **Search your collection** - Use the search bar to find specific media
+
+## Project Structure
+
+- `src/` - TypeScript source code
+  - `index.ts` - Main entry point
+  - `bot/` - Discord bot command handlers
+  - `database/` - SQLite database operations
+  - `media/` - Media processing with FFmpeg
+  - `web/` - Express API and Vue SPA
 
 ## Troubleshooting
 
-Common issues:
-
-1. **FFmpeg not found**: Ensure ffmpeg is installed and in your PATH
-2. **Database connection errors**: Check your PostgreSQL credentials in .env
-3. **Discord token invalid**: Generate a new bot token in the Discord Developer Portal
-4. **File permission errors**: Ensure upload/normalized directories are writable
-5. **NVIDIA acceleration unavailable**: Install NVIDIA drivers and CUDA toolkit for hardware acceleration
-
-## License
-
-MIT
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
+- **FFmpeg not found**: Ensure FFmpeg is installed and in your PATH
+- **Discord connection issues**: Verify your token in `.env` is correct
+- **Media upload failures**: Check file permissions in uploads/ and processed/
