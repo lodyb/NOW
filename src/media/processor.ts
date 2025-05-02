@@ -1286,6 +1286,55 @@ const applyFilters = (command: ffmpeg.FfmpegCommand, filters: MediaFilter, isVid
     if (filters.__raw_complex_filter) {
       const rawFilter = filters.__raw_complex_filter;
       
+      // Check if this is just a single effect that should be handled by our custom effects
+      if (!rawFilter.includes(',')) {
+        const effectName = rawFilter.trim();
+        
+        // Try to apply as a custom effect
+        if (applyCustomEffect(command, effectName, 1, isVideo)) {
+          // Custom effect was successfully applied
+          logFFmpegCommand(`Applied custom effect as filter: ${effectName}`);
+          return; // Skip other filter processing
+        } else if (effectName in filterAliases) {
+          // It's an alias to a standard filter
+          const actualFilter = filterAliases[effectName];
+          
+          if (isVideo) {
+            if (filterTypes.video.has(actualFilter)) {
+              command.videoFilters(actualFilter);
+            } else if (filterTypes.audio.has(actualFilter)) {
+              command.audioFilters(actualFilter);
+            } else {
+              // Try as a complex filter
+              command.complexFilter(actualFilter);
+            }
+          } else {
+            // Audio only
+            if (filterTypes.audio.has(actualFilter)) {
+              command.audioFilters(actualFilter);
+            } else {
+              throw new Error(`The filter "${effectName}" can't be applied to audio-only files.`);
+            }
+          }
+          
+          logFFmpegCommand(`Applied aliased filter: ${actualFilter} (from ${effectName})`);
+          return; // Skip other filter processing
+        }
+      }
+      
+      // Handle multiple effects
+      const effectNames = rawFilter.split(',').map(part => part.trim());
+      const appliedCustom = effectNames.some(name => {
+        return applyCustomEffect(command, name, 1, isVideo);
+      });
+      
+      if (appliedCustom) {
+        // At least one custom effect was applied, skip normal processing
+        logFFmpegCommand(`Applied custom effects from filter string: ${rawFilter}`);
+        return;
+      }
+      
+      // Otherwise, fall back to processing as a normal raw filter string 
       // Process any aliases in the raw filter string
       const processedFilter = rawFilter.split(',').map(part => {
         const trimmed = part.trim();
@@ -1801,6 +1850,10 @@ const audioEffects: AudioEffects = {
 };
 
 const videoEffects: VideoEffects = {
+  'hmirror': () => 'hflip', // Simple horizontal mirror
+  
+  'vmirror': () => 'vflip', // Simple vertical mirror
+  
   'vhs': () => 
     'noise=alls=15:allf=t,curves=r=0.2:g=0.1:b=0.2,hue=h=5,colorbalance=rs=0.1:bs=-0.1,format=yuv420p,drawgrid=w=iw/24:h=2*ih:t=1:c=white@0.2', // VHS look
   
@@ -1810,14 +1863,8 @@ const videoEffects: VideoEffects = {
   'huerotate': (speed = 1) => 
     `hue=h=mod(t*${Math.max(10, speed*20)}\,360)`, // Rotating hue over time
     
-  'mirror_x': () => 
-    'split[a][b];[a]crop=iw/2:ih:0:0,hflip[left];[b]crop=iw/2:ih:iw/2:0[right];[left][right]hstack', // Mirror left half
-    
-  'mirror_y': () => 
-    'split[a][b];[a]crop=iw:ih/2:0:0,vflip[top];[b]crop=iw:ih/2:0:ih/2[bottom];[top][bottom]vstack', // Mirror top half
-  
   'kaleidoscope': () => 
-    'split[a][b];[a]crop=iw/2:ih/2:0:0,hflip[a1];[b]crop=iw/2:ih/2:iw/2:0,vflip[b1];[a1][b1]hstack[top];[a1][b1]vstack[bottom];[top][bottom]vstack', // Basic kaleidoscope
+    'split[a][b];[a]crop=iw/2:ih/2:0:0,hflip[a1];[b]crop=iw/2:ih/2:iw/2:0,vflip[b1];[a1][b1]hstack[top];[top][top]vstack', // Basic kaleidoscope
     
   'dreameffect': () => 
     'gblur=sigma=5,eq=brightness=0.1:saturation=1.5', // Dreamy blur effect
@@ -1832,10 +1879,10 @@ const videoEffects: VideoEffects = {
     'hue=h=mod(t*40\,360):b=0.4,eq=contrast=2:saturation=8,gblur=sigma=5:sigmaV=5', // Psychedelic effect
     
   'slowmo': (factor = 0.5) => 
-    `minterpolate=fps=60:mi_mode=mci:mc_mode=aobmc:me_mode=bidir:vsbmc=1,setpts=PTS*${Math.max(1, 1/factor)}`, // Slow motion with frame interpolation
+    `setpts=${Math.max(1, 1/factor)}*PTS`, // Simple slow motion effect
     
   'waves': () => 
-    'geq=lum=255*random(1),eq=contrast=20:brightness=-0.1:saturation=2', // Wavy distortion effect
+    'noise=alls=20:allf=t,eq=contrast=1.5:brightness=-0.1:saturation=1.2', // Simpler wave effect
     
   'pixelize': (pixelSize = 0.05) => 
     `scale=iw*${Math.max(0.01, pixelSize)}:-1:flags=neighbor,scale=iw*${1/Math.max(0.01, pixelSize)}:-1:flags=neighbor`, // Pixelation effect

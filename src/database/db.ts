@@ -241,45 +241,85 @@ export const findAllMediaPaginated = (
 
 export const findMediaBySearch = (searchTerm: string, requireVideo?: boolean): Promise<Media[]> => {
   return new Promise((resolve, reject) => {
-    // First do a broader search to get potential matches
-    let query = `
+    const trimmedSearch = searchTerm.trim();
+    
+    // First check for exact matches in answers
+    const exactQuery = `
       SELECT m.*, GROUP_CONCAT(ma.answer) as answers
       FROM media m
-      LEFT JOIN media_answers ma ON ma.mediaId = m.id
+      JOIN media_answers ma ON ma.mediaId = m.id
       WHERE m.isDeleted = 0
+      AND ma.answer = ?
     `;
     
-    const params: any[] = [];
+    // Add video filter if required
+    const videoFilter = requireVideo ? ` AND (m.normalizedPath LIKE '%.mp4')` : '';
+    const exactQueryWithFilter = exactQuery + videoFilter + ` GROUP BY m.id`;
     
-    if (searchTerm && searchTerm !== '%') {
-      query += ` AND (m.title LIKE ? OR ma.answer LIKE ?)`;
-      const param = `%${searchTerm}%`;
-      params.push(param, param);
-    }
-    
-    // Filter for video files if required (when video filters are used)
-    if (requireVideo) {
-      query += ` AND (m.normalizedPath LIKE '%.mp4')`;
-    }
-    
-    query += `
-      GROUP BY m.id
-      ORDER BY RANDOM()
-    `;
-    
-    db.all(query, params, (err, rows: MediaRow[]) => {
+    db.all(exactQueryWithFilter, [trimmedSearch], (err, exactRows: MediaRow[]) => {
       if (err) {
         reject(err);
-      } else {
-        // Convert answers string to array and safely parse JSON fields
-        const results = rows.map((row) => ({
+        return;
+      }
+      
+      // If we found exact matches, return them in random order
+      if (exactRows.length > 0) {
+        // Process results
+        const exactResults = exactRows.map((row) => ({
           ...row,
           answers: row.answers ? row.answers.split(',') : [],
           thumbnails: row.thumbnails ? JSON.parse(String(row.thumbnails)) : [],
           metadata: row.metadata ? JSON.parse(String(row.metadata)) : {}
         }));
-        resolve(results);
+        
+        // Shuffle exact results
+        const shuffledExact = [...exactResults].sort(() => Math.random() - 0.5);
+        resolve(shuffledExact);
+        return;
       }
+      
+      // No exact matches, do fuzzy search
+      let fuzzyQuery = `
+        SELECT m.*, GROUP_CONCAT(ma.answer) as answers
+        FROM media m
+        LEFT JOIN media_answers ma ON ma.mediaId = m.id
+        WHERE m.isDeleted = 0
+      `;
+      
+      const params: any[] = [];
+      
+      if (trimmedSearch !== '%') {
+        fuzzyQuery += ` AND (m.title LIKE ? OR ma.answer LIKE ?)`;
+        const param = `%${trimmedSearch}%`;
+        params.push(param, param);
+      }
+      
+      // Add video filter if required
+      if (requireVideo) {
+        fuzzyQuery += ` AND (m.normalizedPath LIKE '%.mp4')`;
+      }
+      
+      fuzzyQuery += `
+        GROUP BY m.id
+        ORDER BY RANDOM()
+      `;
+      
+      db.all(fuzzyQuery, params, (fuzzyErr, fuzzyRows: MediaRow[]) => {
+        if (fuzzyErr) {
+          reject(fuzzyErr);
+          return;
+        }
+        
+        // Process partial match results
+        const fuzzyResults = fuzzyRows.map((row) => ({
+          ...row,
+          answers: row.answers ? row.answers.split(',') : [],
+          thumbnails: row.thumbnails ? JSON.parse(String(row.thumbnails)) : [],
+          metadata: row.metadata ? JSON.parse(String(row.metadata)) : {}
+        }));
+        
+        resolve(fuzzyResults);
+      });
     });
   });
 };
