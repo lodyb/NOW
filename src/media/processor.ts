@@ -1081,26 +1081,8 @@ const calculateBitrates = (
  * Apply ffmpeg filters to a command
  */
 const applyFilters = (command: ffmpeg.FfmpegCommand, filters: MediaFilter, isVideo: boolean): void => {
-  // Common audio filters that can be applied directly
-  const commonAudioFilters = [
-    'volume', 'loudnorm', 'equalizer', 'highpass', 'lowpass', 
-    'bass', 'treble', 'acompressor', 'aecho', 'areverb',
-    'aphaser', 'vibrato', 'tempo', 'atempo', 'pitch', 'agate',
-    'compand', 'normalizer'
-  ];
-  
-  // Common video filters that need to be applied via -vf
-  const commonVideoFilters = [
-    'fade', 'crop', 'scale', 'rotate', 'transpose', 'hflip', 'vflip',
-    'unsharp', 'sharpen', 'eq', 'hue', 'saturation', 'contrast',
-    'boxblur', 'avgblur', 'overlay', 'drawtext'
-  ];
-  
-  // Special filters that need complex handling
-  const specialFilters = ['reverse'];
-  
   // Import logger
-  const { logFFmpegCommand } = require('../utils/logger');
+  const { logFFmpegCommand, logFFmpegError } = require('../utils/logger');
   
   // Log filter application attempt
   logFFmpegCommand(`Applying filters to ${isVideo ? 'video' : 'audio'} file: ${JSON.stringify(filters)}`);
@@ -1108,22 +1090,24 @@ const applyFilters = (command: ffmpeg.FfmpegCommand, filters: MediaFilter, isVid
   // Detect if we're trying to apply video filters to audio
   if (!isVideo) {
     const videoFiltersRequested = Object.keys(filters).filter(key => 
-      commonVideoFilters.includes(key)
+      filterTypes.video.has(key)
     );
     
     if (videoFiltersRequested.length > 0) {
-      throw new Error(
+      const err = new Error(
         `Cannot apply video filters to audio file: ${videoFiltersRequested.join(', ')}. ` +
         `This file is audio-only and doesn't support video filters.`
       );
+      logFFmpegError('Filter type mismatch', err);
+      throw err;
     }
   }
   
   // Check for any filters that need special handling
-  const hasReverse = 'reverse' in filters && Boolean(filters.reverse);
+  const specialFilters = [...filterTypes.complex].filter(key => key in filters);
   
-  // If we have a special filter, handle it directly
-  if (hasReverse) {
+  // Handle special filters first
+  if (specialFilters.includes('reverse')) {
     if (isVideo) {
       // For video, reverse both audio and video streams
       command.complexFilter('[0:v]reverse[v];[0:a]areverse[a]', ['v', 'a']);
@@ -1146,11 +1130,15 @@ const applyFilters = (command: ffmpeg.FfmpegCommand, filters: MediaFilter, isVid
     const filterValue = typeof value === 'number' ? value.toString() : value;
     const filterStr = `${key}=${filterValue}`;
     
-    if (isVideo && commonVideoFilters.includes(key)) {
+    if (isVideo && filterTypes.video.has(key)) {
       videoFilters.push(filterStr);
-    } else {
-      // Default to audio filter
+    } else if (filterTypes.audio.has(key) || !isVideo) {
+      // Audio filter or default to audio if not found and is an audio file
       audioFilters.push(filterStr);
+    } else {
+      // For video files, default unknown filters to video filters
+      videoFilters.push(filterStr);
+      logFFmpegCommand(`Warning: unknown filter "${key}" categorized as video filter`);
     }
   });
   
@@ -1171,7 +1159,73 @@ const applyFilters = (command: ffmpeg.FfmpegCommand, filters: MediaFilter, isVid
   try {
     logFFmpegCommand('Full ffmpeg command:', command);
   } catch (error) {
-    // Just log and continue if we can't extract the full command
-    console.error('Could not log full command:', error);
+    logFFmpegError('Could not log full command', error);
   }
+};
+
+// Filter categorization based on FFmpeg documentation
+const filterTypes = {
+  audio: new Set([
+    'abench', 'acompressor', 'acontrast', 'acopy', 'acue', 'acrossfade', 'acrossover', 'acrusher', 
+    'adeclick', 'adeclip', 'adelay', 'adenorm', 'aderivative', 'aecho', 'aemphasis', 'aeval', 
+    'aexciter', 'afade', 'afftdn', 'afftfilt', 'afir', 'aformat', 'afreqshift', 'agate', 'aiir', 
+    'aintegral', 'ainterleave', 'alimiter', 'allpass', 'aloop', 'amerge', 'ametadata', 'amix', 
+    'amultiply', 'anequalizer', 'anlmdn', 'anlms', 'anull', 'apad', 'aperms', 'aphaser', 
+    'aphaseshift', 'apulsator', 'arealtime', 'aresample', 'areverse', 'arnndn', 'aselect', 
+    'asendcmd', 'asetnsamples', 'asetpts', 'asetrate', 'asettb', 'ashowinfo', 'asidedata', 
+    'asoftclip', 'asplit', 'asr', 'astats', 'astreamselect', 'asubboost', 'asubcut', 'asupercut', 
+    'asuperpass', 'asuperstop', 'atempo', 'atrim', 'axcorrelate', 'azmq', 'bandpass', 'bandreject', 
+    'bass', 'biquad', 'bs2b', 'channelmap', 'channelsplit', 'chorus', 'compand', 'compensationdelay', 
+    'crossfeed', 'crystalizer', 'dcshift', 'deesser', 'drmeter', 'dynaudnorm', 'earwax', 'ebur128', 
+    'equalizer', 'extrastereo', 'firequalizer', 'flanger', 'haas', 'hdcd', 'headphone', 'highpass', 
+    'highshelf', 'join', 'ladspa', 'loudnorm', 'lowpass', 'lowshelf', 'lv2', 'mcompand', 'pan', 
+    'replaygain', 'rubberband', 'sidechaincompress', 'sidechaingate', 'silencedetect', 'silenceremove', 
+    'sofalizer', 'speechnorm', 'stereotools', 'stereowiden', 'superequalizer', 'surround', 'treble', 
+    'tremolo', 'vibrato', 'volume', 'volumedetect'
+  ]),
+  
+  video: new Set([
+    'addroi', 'alphaextract', 'alphamerge', 'amplify', 'ass', 'atadenoise', 'avgblur', 'avgblur_opencl', 
+    'bbox', 'bench', 'bilateral', 'bitplanenoise', 'blackdetect', 'blackframe', 'blend', 'bm3d', 
+    'boxblur', 'boxblur_opencl', 'bwdif', 'cas', 'chromahold', 'chromakey', 'chromanr', 'chromashift', 
+    'ciescope', 'codecview', 'colorbalance', 'colorchannelmixer', 'colorcontrast', 'colorcorrect', 
+    'colorize', 'colorkey', 'colorkey_opencl', 'colorhold', 'colorlevels', 'colormatrix', 'colorspace', 
+    'colortemperature', 'convolution', 'convolution_opencl', 'convolve', 'copy', 'cover_rect', 'crop', 
+    'cropdetect', 'cue', 'curves', 'datascope', 'dblur', 'dctdnoiz', 'deband', 'deblock', 'decimate', 
+    'deconvolve', 'dedot', 'deflate', 'deflicker', 'deinterlace_qsv', 'deinterlace_vaapi', 'dejudder', 
+    'delogo', 'denoise_vaapi', 'derain', 'deshake', 'deshake_opencl', 'despill', 'detelecine', 
+    'dilation', 'dilation_opencl', 'displace', 'dnn_processing', 'doubleweave', 'drawbox', 'drawgraph', 
+    'drawgrid', 'drawtext', 'edgedetect', 'elbg', 'entropy', 'epx', 'eq', 'erosion', 'erosion_opencl', 
+    'estdif', 'exposure', 'extractplanes', 'fade', 'fftdnoiz', 'fftfilt', 'field', 'fieldhint', 
+    'fieldmatch', 'fieldorder', 'fillborders', 'find_rect', 'floodfill', 'format', 'fps', 'framepack', 
+    'framerate', 'framestep', 'freezedetect', 'freezeframes', 'frei0r', 'fspp', 'gblur', 'geq', 
+    'gradfun', 'graphmonitor', 'greyedge', 'haldclut', 'hflip', 'histeq', 'histogram', 'hqdn3d', 'hqx', 
+    'hstack', 'hue', 'hwdownload', 'hwmap', 'hwupload', 'hwupload_cuda', 'hysteresis', 'identity', 
+    'idet', 'il', 'inflate', 'interlace', 'interleave', 'kerndeint', 'kirsch', 'lagfun', 'lenscorrection', 
+    'limiter', 'loop', 'lumakey', 'lut', 'lut1d', 'lut2', 'lut3d', 'lutrgb', 'lutyuv', 'maskedclamp', 
+    'maskedmax', 'maskedmerge', 'maskedmin', 'maskedthreshold', 'maskfun', 'mcdeint', 'median', 
+    'mergeplanes', 'mestimate', 'metadata', 'midequalizer', 'minterpolate', 'mix', 'monochrome', 
+    'mpdecimate', 'msad', 'negate', 'nlmeans', 'nlmeans_opencl', 'nnedi', 'noformat', 'noise', 
+    'normalize', 'null', 'oscilloscope', 'overlay', 'overlay_opencl', 'overlay_qsv', 'overlay_cuda', 
+    'owdenoise', 'pad', 'pad_opencl', 'palettegen', 'paletteuse', 'perms', 'perspective', 'phase', 
+    'photosensitivity', 'pixdesctest', 'pixscope', 'pp', 'pp7', 'premultiply', 'prewitt', 'prewitt_opencl', 
+    'procamp_vaapi', 'program_opencl', 'pseudocolor', 'psnr', 'pullup', 'qp', 'random', 'readeia608', 
+    'readvitc', 'realtime', 'remap', 'removegrain', 'removelogo', 'repeatfields', 'reverse', 'rgbashift', 
+    'roberts', 'roberts_opencl', 'rotate', 'sab', 'scale', 'scale_cuda', 'scale_qsv', 'scale_vaapi', 
+    'scale2ref', 'scdet', 'scroll', 'select', 'selectivecolor', 'sendcmd', 'separatefields', 'setdar', 
+    'setfield', 'setparams', 'setpts', 'setrange', 'setsar', 'settb', 'sharpness_vaapi', 'shear', 
+    'showinfo', 'showpalette', 'shuffleframes', 'shufflepixels', 'shuffleplanes', 'sidedata', 
+    'signalstats', 'signature', 'smartblur', 'sobel', 'sobel_opencl', 'split', 'spp', 'sr', 'ssim', 
+    'stereo3d', 'streamselect', 'subtitles', 'super2xsai', 'swaprect', 'swapuv', 'tblend', 'telecine', 
+    'thistogram', 'threshold', 'thumbnail', 'thumbnail_cuda', 'tile', 'tinterlace', 'tlut2', 'tmedian', 
+    'tmidequalizer', 'tmix', 'tonemap', 'tonemap_opencl', 'tonemap_vaapi', 'tpad', 'transpose', 
+    'transpose_opencl', 'transpose_vaapi', 'trim', 'unpremultiply', 'unsharp', 'unsharp_opencl', 
+    'untile', 'uspp', 'v360', 'vaguedenoiser', 'vectorscope', 'vflip', 'vfrdet', 'vibrance', 
+    'vidstabdetect', 'vidstabtransform', 'vif', 'vignette', 'vmafmotion', 'vpp_qsv', 'vstack', 
+    'w3fdif', 'waveform', 'weave', 'xbr', 'xfade', 'xfade_opencl', 'xmedian', 'xstack', 'yadif', 
+    'yadif_cuda', 'yaepblur', 'zmq', 'zoompan', 'zscale'
+  ]),
+  
+  // Filters requiring special handling (complex filter syntax)
+  complex: new Set(['reverse'])
 };
