@@ -1272,6 +1272,16 @@ const applyFilters = (command: ffmpeg.FfmpegCommand, filters: MediaFilter, isVid
     // Log filter application attempt
     logFFmpegCommand(`Applying filters to ${isVideo ? 'video' : 'audio'} file: ${JSON.stringify(filters)}`);
     
+    // Handle filter aliases (map user-friendly names to actual filter names)
+    Object.keys(filters).forEach(key => {
+      if (key in filterAliases) {
+        const actualFilterName = filterAliases[key];
+        filters[actualFilterName] = filters[key];
+        delete filters[key];
+        logFFmpegCommand(`Mapped filter alias '${key}' to '${actualFilterName}'`);
+      }
+    });
+    
     // Handle raw complex filter string if it exists
     if (filters.__raw_complex_filter) {
       const rawFilter = filters.__raw_complex_filter;
@@ -1490,6 +1500,21 @@ const applyFilters = (command: ffmpeg.FfmpegCommand, filters: MediaFilter, isVid
       command.videoFilters(videoFilterStr);
       logFFmpegCommand(`Applied video filters: ${videoFilterStr}`);
     }
+
+    // Add custom effects to the filter system
+    const customEffectKeys = Object.keys(filters).filter(key => 
+      audioEffects[key.toLowerCase() as keyof typeof audioEffects] || 
+      (isVideo && videoEffects[key.toLowerCase() as keyof typeof videoEffects])
+    );
+
+    if (customEffectKeys.some(key => {
+      return applyCustomEffect(command, key, filters[key] || 0, isVideo);
+    })) {
+      // If any custom effects were applied, remove them from filters object
+      customEffectKeys.forEach(key => {
+        delete filters[key];
+      });
+    }
   } catch (error) {
     console.error(`Error in applyFilters: ${error}`);
     throw new Error(`Error applying filters: ${error instanceof Error ? error.message : String(error)}`);
@@ -1613,6 +1638,26 @@ const filterTypes = {
   complex: new Set(['reverse', 'speed'])
 };
 
+// Filter aliases for user-friendly alternative names
+const filterAliases: Record<string, string> = {
+  'fast': 'speed',
+  'slow': 'speed',
+  'echo': 'aecho',
+  'robot': 'robotize',
+  'phone': 'telephone',
+  'tv': 'vhs',
+  'retro': 'vhs',
+  'old': 'oldfilm',
+  'mirror': 'hmirror',
+  'flip': 'vmirror',
+  'rainbow': 'huerotate',
+  'pixelate': 'pixelize',
+  'dream': 'dreameffect',
+  'acid': 'psychedelic',
+  'wave': 'waves',
+  '8bit': 'retroaudio'
+};
+
 /**
  * Execute an ffmpeg command with a timeout
  * @returns Promise that resolves when command completes or rejects if timeout/error occurs
@@ -1699,4 +1744,116 @@ export const containsVideoFilters = (filters: MediaFilter): boolean => {
   return Object.keys(filters).some(key => 
     filterTypes.video.has(key) && !filterTypes.audio.has(key)
   );
+};
+
+// Define additional filters for audio and video effects
+interface AudioEffectFunction {
+  (level?: number): string;
+}
+
+interface VideoEffectFunction {
+  (level?: number): string;
+}
+
+type AudioEffects = Record<string, AudioEffectFunction>;
+type VideoEffects = Record<string, VideoEffectFunction>;
+
+const audioEffects: AudioEffects = {
+  'aecho': (level = 0.6) => 
+    `aecho=0.8:0.8:${90 + level * 100}:0.6`, // Customizable echo effect
+  
+  'robotize': () => 
+    'asetrate=8000,vibrato=f=5:d=0.5,aresample=8000', // Robot voice effect
+  
+  'telephone': () => 
+    'highpass=600,lowpass=3000,equalizer=f=1200:t=q:g=10', // Telephone effect
+  
+  'retroaudio': () => 
+    'aresample=8000,aformat=sample_fmts=u8', // 8-bit retro game audio
+  
+  'stutter': (rate = 0.5) => 
+    `aevalsrc=0:d=${rate}:sample_rate=44100[silence];[0][silence]acrossfade=d=${rate}:c1=exp:c2=exp,atempo=1/${1-rate}`, // Stutter effect
+    
+  'phaser': (rate = 1) => 
+    `aphaser=type=t:speed=${Math.max(0.1, rate * 0.7)}:decay=0.5`, // Phaser effect
+    
+  'flanger': (depth = 0.5) => 
+    `flanger=delay=${Math.max(1, depth * 10)}:depth=${Math.max(1, depth * 10)}`, // Flanger effect
+    
+  'tremolo': (rate = 4) => 
+    `tremolo=f=${Math.max(0.5, rate * 2)}:d=0.8`, // Tremolo effect
+    
+  'vibrato': (rate = 5) => 
+    `vibrato=f=${Math.max(1, rate * 2)}:d=0.5`, // Vibrato effect
+    
+  'chorus': (strength = 0.5) => 
+    `chorus=0.5:0.9:${50+strength*20}:0.4:0.25:2`, // Chorus effect
+};
+
+const videoEffects: VideoEffects = {
+  'vhs': () => 
+    'noise=alls=15:allf=t,curves=r=0.2:g=0.1:b=0.2,hue=h=5,colorbalance=rs=0.1:bs=-0.1,format=yuv420p,drawgrid=w=iw/24:h=2*ih:t=1:c=white@0.2', // VHS look
+  
+  'oldfilm': () => 
+    'curves=r=0.2:g=0.1:b=0.2,noise=alls=7:allf=t,hue=h=9,eq=brightness=0.05:saturation=0.5,vignette', // Old film look
+    
+  'huerotate': (speed = 1) => 
+    `hue=h=mod(t*${Math.max(10, speed*20)}\,360)`, // Rotating hue over time
+    
+  'mirror_x': () => 
+    'split[a][b];[a]crop=iw/2:ih:0:0,hflip[left];[b]crop=iw/2:ih:iw/2:0[right];[left][right]hstack', // Mirror left half
+    
+  'mirror_y': () => 
+    'split[a][b];[a]crop=iw:ih/2:0:0,vflip[top];[b]crop=iw:ih/2:0:ih/2[bottom];[top][bottom]vstack', // Mirror top half
+  
+  'kaleidoscope': () => 
+    'split[a][b];[a]crop=iw/2:ih/2:0:0,hflip[a1];[b]crop=iw/2:ih/2:iw/2:0,vflip[b1];[a1][b1]hstack[top];[a1][b1]vstack[bottom];[top][bottom]vstack', // Basic kaleidoscope
+    
+  'dreameffect': () => 
+    'gblur=sigma=5,eq=brightness=0.1:saturation=1.5', // Dreamy blur effect
+    
+  'ascii': () => 
+    'format=gray,scale=iw*0.2:-1,eq=brightness=0.3,boxblur=1:1,scale=iw*5:-1:flags=neighbor', // ASCII-like effect
+    
+  'crt': () => 
+    'scale=iw:ih,pad=iw+6:ih+6:3:3:black,curves=r=0.2:g=0.1:b=0.28,drawgrid=w=iw/100:h=ih:t=1:c=black@0.4,drawgrid=w=iw:h=1:t=1:c=blue@0.2', // CRT monitor effect
+    
+  'psychedelic': () => 
+    'hue=h=mod(t*40\,360):b=0.4,eq=contrast=2:saturation=8,gblur=sigma=5:sigmaV=5', // Psychedelic effect
+    
+  'slowmo': (factor = 0.5) => 
+    `minterpolate=fps=60:mi_mode=mci:mc_mode=aobmc:me_mode=bidir:vsbmc=1,setpts=PTS*${Math.max(1, 1/factor)}`, // Slow motion with frame interpolation
+    
+  'waves': () => 
+    'geq=lum=255*random(1),eq=contrast=20:brightness=-0.1:saturation=2', // Wavy distortion effect
+    
+  'pixelize': (pixelSize = 0.05) => 
+    `scale=iw*${Math.max(0.01, pixelSize)}:-1:flags=neighbor,scale=iw*${1/Math.max(0.01, pixelSize)}:-1:flags=neighbor`, // Pixelation effect
+};
+
+// Apply special custom effects to media
+const applyCustomEffect = (command: ffmpeg.FfmpegCommand, effectName: string, value: string | number, isVideo: boolean): boolean => {
+  effectName = effectName.toLowerCase();
+  const numValue = typeof value === 'string' ? parseFloat(value) : value;
+  
+  // Handle special audio effects
+  if (audioEffects[effectName]) {
+    command.audioFilters(audioEffects[effectName](numValue));
+    logFFmpegCommand(`Applied custom audio effect: ${effectName}`);
+    return true;
+  }
+  
+  // Handle special video effects (only for video files)
+  if (isVideo && videoEffects[effectName]) {
+    // Some effects need to use complexFilter instead of videoFilters
+    if (['mirror_x', 'mirror_y', 'kaleidoscope'].includes(effectName)) {
+      command.complexFilter(videoEffects[effectName]());
+    } else {
+      command.videoFilters(videoEffects[effectName](numValue));
+    }
+    logFFmpegCommand(`Applied custom video effect: ${effectName}`);
+    return true;
+  }
+  
+  return false; // Effect not found or not applicable
 };
