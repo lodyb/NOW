@@ -1519,6 +1519,16 @@ const applyFilters = (command: ffmpeg.FfmpegCommand, filters: MediaFilter, isVid
       delete filters.speed;
     }
     
+    // Check that filters are appropriate for media type
+    if (!isVideo) {
+      // For audio files, only apply known audio filters
+      Object.keys(filters).forEach(key => {
+        if (filterTypes.video.has(key) && !filterTypes.audio.has(key)) {
+          throw new Error(`Cannot apply video filter '${key}' to audio-only file.`);
+        }
+      });
+    } 
+
     // Filter keys by type
     const audioFilters: string[] = [];
     const videoFilters: string[] = [];
@@ -1529,21 +1539,12 @@ const applyFilters = (command: ffmpeg.FfmpegCommand, filters: MediaFilter, isVid
       const filterStr = `${key}=${filterValue}`;
       
       // Skip filters that don't exist in our defined sets to avoid errors
-      if (isVideo) {
-        if (filterTypes.video.has(key)) {
-          videoFilters.push(filterStr);
-        } else if (filterTypes.audio.has(key)) {
-          audioFilters.push(filterStr);
-        } else {
-          console.log(`Warning: ignoring unknown filter "${key}"`);
-        }
-      } else {
-        // For audio files, only apply known audio filters
-        if (filterTypes.audio.has(key)) {
-          audioFilters.push(filterStr);
-        } else {
-          console.log(`Warning: ignoring unknown filter "${key}" for audio file`);
-        }
+      if (filterTypes.audio.has(key)) {
+        audioFilters.push(filterStr);
+      } else if (isVideo && filterTypes.video.has(key)) {
+        videoFilters.push(filterStr);
+      } else if (!filterTypes.audio.has(key) && !filterTypes.video.has(key)) {
+        console.log(`Warning: ignoring unknown filter "${key}"`);
       }
     });
     
