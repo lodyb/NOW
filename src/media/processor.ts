@@ -1294,6 +1294,67 @@ const applyFilters = (command: ffmpeg.FfmpegCommand, filters: MediaFilter, isVid
         return; // Skip other filter processing
       }
     }
+
+    // Handle datamosh/glitch effects
+    if ('datamosh' in filters || 'glitch' in filters) {
+      const glitchLevel = Number(filters.datamosh || filters.glitch) || 1;
+      const filter = `noise=${Math.max(1, Math.floor(10000000/glitchLevel))}`;
+      
+      // Set codecs for proper glitching
+      command.outputOptions('-c:v huffyuv');
+      command.outputOptions('-c:a pcm_s16le');
+      command.outputOptions(`-bsf:v ${filter}`);
+      
+      if (glitchLevel > 3) {
+        // Also apply to audio at higher levels
+        command.outputOptions(`-bsf:a noise=${Math.max(1, Math.floor(1000/glitchLevel))}`);
+      }
+      
+      logFFmpegCommand(`Applied datamosh/glitch effect: ${filter}`);
+      delete filters.datamosh;
+      delete filters.glitch;
+      return; // Skip other filter processing as we've set specific codecs
+    }
+    
+    // Handle macroblock effect
+    if ('macroblock' in filters) {
+      const strength = Number(filters.macroblock) || 1;
+      const qValue = Math.min(31, Math.max(2, Math.floor(2 + (strength * 18))));
+      
+      // Set specific codec and quality for macroblock effect
+      command.outputOptions('-c:v mpeg2video');
+      command.outputOptions(`-q:v ${qValue}`);
+      command.outputOptions('-bsf:v noise');
+      
+      logFFmpegCommand(`Applied macroblock effect with q:v=${qValue}`);
+      delete filters.macroblock;
+      return; // Skip other filter processing
+    }
+    
+    // Handle noise generation
+    if ('noise' in filters) {
+      const type = String(filters.noise).toLowerCase();
+      
+      if (isVideo) {
+        if (type === 'mono' || type === 'bw') {
+          // Black and white noise
+          command.videoFilters('geq=random(1)*255:128:128');
+        } else {
+          // Colored noise (default)
+          command.videoFilters('geq=r=random(1)*255:g=random(1)*255:b=random(1)*255');
+        }
+        
+        // Add audio noise
+        command.audioFilters('aevalsrc=-2+random(0)');
+        logFFmpegCommand(`Applied ${type === 'mono' || type === 'bw' ? 'monochrome' : 'color'} noise filter`);
+      } else {
+        // Audio only noise
+        command.audioFilters('aevalsrc=-2+random(0)');
+        logFFmpegCommand('Applied audio noise filter');
+      }
+      
+      delete filters.noise;
+    }
     
     // Detect if we're trying to apply video filters to audio
     if (!isVideo) {

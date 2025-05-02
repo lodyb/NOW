@@ -43,11 +43,15 @@ const helpContent: HelpContent = {
       { name: 'NOW play star wars {reverse=1}', description: 'Play media in reverse' },
       { name: 'NOW play jedi {amplify=2,eq=contrast=2:saturation=3}', description: 'Amplify and enhance colors' },
       { name: 'NOW play vader {atempo=0.8}', description: 'Slow down audio only' },
+      { name: 'NOW play matrix {datamosh=3}', description: 'Apply digital glitch/corruption effect' },
+      { name: 'NOW play futuristic {noise=color}', description: 'Generate colorful visual noise' },
+      { name: 'NOW play retro {macroblock=2}', description: 'Create macroblock/compression artifacts' },
+      { name: 'NOW play static {geq=random(1)*255:128:128;aevalsrc=-2+random(0)}', description: 'Raw noise generator' },
       { name: 'NOW quiz {speed=1.5}', description: 'Quiz with sped up audio' },
       { name: 'NOW quiz {bass=5,treble=2}', description: 'Quiz with enhanced bass and treble' },
       { name: 'NOW quiz {reverse=1,pitch=0.8}', description: 'Quiz with reversed and pitched audio' }
     ],
-    footer: 'You can combine multiple filters with commas: {filter1=value,filter2=value}'
+    footer: 'You can combine multiple filters with commas: {filter1=value,filter2=value}\nUse {datamosh=1} to {datamosh=10} for varying glitch intensity (higher = more intense).'
   },
   
   play: {
