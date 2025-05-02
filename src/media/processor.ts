@@ -1298,37 +1298,25 @@ const applyFilters = (command: ffmpeg.FfmpegCommand, filters: MediaFilter, isVid
     // Handle datamosh/glitch effects
     if ('datamosh' in filters || 'glitch' in filters) {
       const glitchLevel = Number(filters.datamosh || filters.glitch) || 1;
-      const filter = `noise=${Math.max(1, Math.floor(10000000/glitchLevel))}`;
       
-      // Set codecs for proper glitching
-      command.outputOptions('-c:v huffyuv');
-      command.outputOptions('-c:a pcm_s16le');
-      command.outputOptions(`-bsf:v ${filter}`);
+      // Use huffyuv output without bitstream filters for first pass
+      command.outputOptions('-c:v libx264');
+      command.outputOptions('-c:a libopus');
+      command.outputOptions('-pix_fmt yuv420p');
+      
+      // Add video corruption filter as a complex filter instead of bsf
+      const noiseAmount = Math.max(1, Math.floor(10000000/glitchLevel));
+      command.videoFilters(`noise=alls=${noiseAmount}:allf=t`);
       
       if (glitchLevel > 3) {
         // Also apply to audio at higher levels
-        command.outputOptions(`-bsf:a noise=${Math.max(1, Math.floor(1000/glitchLevel))}`);
+        command.audioFilters(`anoisesrc=a=${Math.min(0.1, glitchLevel * 0.01)}:color=pink[noise];[0:a][noise]amix=weights=10|1`);
       }
       
-      logFFmpegCommand(`Applied datamosh/glitch effect: ${filter}`);
+      logFFmpegCommand(`Applied datamosh/glitch effect: noise with amount ${noiseAmount}`);
       delete filters.datamosh;
       delete filters.glitch;
       return; // Skip other filter processing as we've set specific codecs
-    }
-    
-    // Handle macroblock effect
-    if ('macroblock' in filters) {
-      const strength = Number(filters.macroblock) || 1;
-      const qValue = Math.min(31, Math.max(2, Math.floor(2 + (strength * 18))));
-      
-      // Set specific codec and quality for macroblock effect
-      command.outputOptions('-c:v mpeg2video');
-      command.outputOptions(`-q:v ${qValue}`);
-      command.outputOptions('-bsf:v noise');
-      
-      logFFmpegCommand(`Applied macroblock effect with q:v=${qValue}`);
-      delete filters.macroblock;
-      return; // Skip other filter processing
     }
     
     // Handle noise generation
@@ -1338,18 +1326,18 @@ const applyFilters = (command: ffmpeg.FfmpegCommand, filters: MediaFilter, isVid
       if (isVideo) {
         if (type === 'mono' || type === 'bw') {
           // Black and white noise
-          command.videoFilters('geq=random(1)*255:128:128');
+          command.videoFilters('geq=lum=random(1)*255:cb=128:cr=128');
         } else {
           // Colored noise (default)
-          command.videoFilters('geq=r=random(1)*255:g=random(1)*255:b=random(1)*255');
+          command.videoFilters(`geq=lum=random(1)*255:cb=random(1)*255-128:cr=random(1)*255-128`);
         }
         
         // Add audio noise
-        command.audioFilters('aevalsrc=-2+random(0)');
+        command.audioFilters('anoisesrc=a=0.05:color=white');
         logFFmpegCommand(`Applied ${type === 'mono' || type === 'bw' ? 'monochrome' : 'color'} noise filter`);
       } else {
         // Audio only noise
-        command.audioFilters('aevalsrc=-2+random(0)');
+        command.audioFilters('anoisesrc=a=0.05:color=white');
         logFFmpegCommand('Applied audio noise filter');
       }
       
