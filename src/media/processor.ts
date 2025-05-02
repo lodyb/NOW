@@ -1648,7 +1648,7 @@ const filterTypes = {
     'highshelf', 'join', 'ladspa', 'loudnorm', 'lowpass', 'lowshelf', 'lv2', 'mcompand', 'pan', 
     'replaygain', 'rubberband', 'sidechaincompress', 'sidechaingate', 'silencedetect', 'silenceremove', 
     'sofalizer', 'speechnorm', 'stereotools', 'stereowiden', 'superequalizer', 'surround', 'treble', 
-    'tremolo', 'vibrato', 'volume', 'volumedetect', 'amplify', 'pitch' // Add amplify and pitch to audio filters
+    'tremolo', 'vibrato', 'volume', 'volumedetect', 'amplify', 'pitch'
   ]),
   
   video: new Set([
@@ -1886,6 +1886,35 @@ const videoEffects: VideoEffects = {
     
   'pixelize': (pixelSize = 0.05) => 
     `scale=iw*${Math.max(0.01, pixelSize)}:-1:flags=neighbor,scale=iw*${1/Math.max(0.01, pixelSize)}:-1:flags=neighbor`, // Pixelation effect
+
+  // 360-degree video transformation filters
+  'v360_fisheye': () => 
+    'v360=equirect:fisheye:w=720:h=720',
+  'v360_cube': () => 
+    'v360=equirect:cube:w=1080:h=720',
+  'planet': () => 
+    'v360=equirect:stereographic:w=720:h=720:in_stereo=0:out_stereo=0',
+  'tiny_planet': () => 
+    'v360=equirect:stereographic:w=720:h=720:in_stereo=0:out_stereo=0:yaw=0:pitch=-90',
+  
+  // Analysis/debug filters
+  'signalstats': () => 
+    'signalstats=stat=all:color=cyan',
+  'waveform': () => 
+    'waveform=filter=lowpass:mode=column:mirror=1:display=stack:components=7',
+
+  // Ported filters from previous implementation
+  'drunk': (frames = 8) => `tmix=frames=${Math.min(48, frames)}`,
+  'oscilloscope': () => 'oscilloscope=size=1:rate=1',
+  'vectorscope': () => 'vectorscope=mode=color:m=color3:intensity=0.89:i=0.54',
+  'mountains': () => 'aecho=0.8:0.9:500|1000:0.2|0.1',
+  'whisper': () => "afftfilt=real='hypot(re,im)*cos((random(0)*2-1)*2*3.14)':imag='hypot(re,im)*sin((random(1)*2-1)*2*3.14)':win_size=128:overlap=0.8",
+  'clipping': () => 'acrusher=.1:1:64:0:log',
+  'interlace': () => 'telecine',
+  'ess': () => 'deesser=i=1:s=e',
+  'bass': (gain = 10) => `bass=g=${Math.min(30, gain)}`,
+  'crystalizer': (intensity = 5) => `crystalizer=i=${Math.min(9.9, intensity)}`,
+  '360': () => 'v360=equirect:flat',
 };
 
 // Apply special custom effects to media
@@ -1894,19 +1923,19 @@ const applyCustomEffect = (command: ffmpeg.FfmpegCommand, effectName: string, va
   const numValue = typeof value === 'string' ? parseFloat(value) : value;
   
   // Handle special audio effects
-  if (audioEffects[effectName]) {
-    command.audioFilters(audioEffects[effectName](numValue));
+  if (audioEffects[effectName as keyof typeof audioEffects]) {
+    command.audioFilters(audioEffects[effectName as keyof typeof audioEffects](numValue));
     logFFmpegCommand(`Applied custom audio effect: ${effectName}`);
     return true;
   }
   
   // Handle special video effects (only for video files)
-  if (isVideo && videoEffects[effectName]) {
+  if (isVideo && videoEffects[effectName as keyof typeof videoEffects]) {
     // Some effects need to use complexFilter instead of videoFilters
     if (['mirror_x', 'mirror_y', 'kaleidoscope'].includes(effectName)) {
-      command.complexFilter(videoEffects[effectName]());
+      command.complexFilter(videoEffects[effectName as keyof typeof videoEffects]());
     } else {
-      command.videoFilters(videoEffects[effectName](numValue));
+      command.videoFilters(videoEffects[effectName as keyof typeof videoEffects](numValue));
     }
     logFFmpegCommand(`Applied custom video effect: ${effectName}`);
     return true;
