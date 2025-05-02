@@ -1918,6 +1918,22 @@ const videoEffects: VideoEffects = {
   '360': () => 'v360=equirect:flat',
 };
 
+// Audio-only custom effects
+const audioOnlyEffects = new Set([
+  'bass', 'crystalizer', 'ess', 'clipping', 'whisper', 'mountains', 
+  'robotize', 'telephone', 'retroaudio', 'stutter', 'phaser', 
+  'flanger', 'tremolo', 'vibrato', 'chorus'
+]);
+
+// Video-only custom effects
+const videoOnlyEffects = new Set([
+  'drunk', 'oscilloscope', 'vectorscope', 'interlace', '360',
+  'hmirror', 'vmirror', 'vhs', 'oldfilm', 'huerotate', 'kaleidoscope',
+  'dreameffect', 'ascii', 'crt', 'psychedelic', 'slowmo', 'waves',
+  'pixelize', 'v360', 'v360_tiny', 'v360_fisheye', 'v360_cube',
+  'planet', 'tiny_planet', 'signalstats', 'waveform'
+]);
+
 // Apply special custom effects to media
 const applyCustomEffect = (command: ffmpeg.FfmpegCommand, effectName: string, value: string | number, isVideo: boolean): boolean => {
   effectName = effectName.toLowerCase();
