@@ -112,25 +112,43 @@ export const handleQuizAnswer = async (message: Message) => {
     return;
   }
   
-  // Stricter fuzzy matching - ensure all words are present with typo forgiveness
+  // Special case handling for number series (like "classics of game 072")
   const correctMatch = session.correctAnswers.find(correctAnswer => {
+    const correctLower = correctAnswer.toLowerCase();
+    
+    // If the correct answer has numbers at the end
+    const correctBase = correctLower.replace(/\s+\d+$/, '');
+    const answerBase = answer.replace(/\s+\d+$/, '');
+    
+    // Allow just the base text to match if the correct answer has numbers at the end
+    // This handles cases like "classics of game" matching "classics of game 072"
+    if (correctBase !== correctLower && answerBase === correctBase) {
+      return true;
+    }
+    
+    // Standard word-by-word matching with typo tolerance
     // Split into words
-    const correctWords = correctAnswer.toLowerCase().split(/\s+/);
+    const correctWords = correctLower.split(/\s+/);
     const answerWords = answer.split(/\s+/);
     
-    // Must have at least the same number of words
-    if (answerWords.length < correctWords.length) {
+    // Must have at least 75% of the words (rounded down)
+    if (answerWords.length < Math.floor(correctWords.length * 0.75)) {
       return false;
     }
     
     // Check each correct word is present with typo tolerance
     const fuse = new Fuse(answerWords, {
       includeScore: true,
-      threshold: 0.3 // Stricter threshold for individual words
+      threshold: 0.3
     });
     
     // Each correct word must have a match in the answer
     return correctWords.every(correctWord => {
+      // Skip matching numbers at the end if they're in the correct words
+      if (/^\d+$/.test(correctWord) && correctWords.indexOf(correctWord) === correctWords.length - 1) {
+        return true;
+      }
+      
       const result = fuse.search(correctWord);
       return result.length > 0 && result[0].score! < 0.4;
     });
@@ -312,44 +330,8 @@ const nextRound = async (
     const maskedTitle = generateRandomUnicodeMask(session.mediaItem.title);
     await channel.send(`Hint: ${maskedTitle}`);
     
-    // Show a visual hint at the beginning of every round
-    try {
-      // Get the correct base filename, not the full path
-      const baseFilename = session.mediaItem.normalizedPath ? 
-        path.basename(session.mediaItem.normalizedPath) : 
-        path.basename(session.mediaItem.filePath);
-      
-      // Determine the type of media and available visual hints
-      const isVideo = baseFilename.endsWith('.mp4');
-      const hintOptions = [];
-      
-      if (isVideo) {
-        // Generate and check full paths to thumbnail files
-        const baseNameWithoutExt = baseFilename.replace('.mp4', '');
-        const thumb0Path = path.join(process.cwd(), 'thumbnails', `${baseNameWithoutExt}_thumb0.jpg`);
-        const thumb1Path = path.join(process.cwd(), 'thumbnails', `${baseNameWithoutExt}_thumb1.jpg`);
-        
-        if (fs.existsSync(thumb0Path)) hintOptions.push(thumb0Path);
-        if (fs.existsSync(thumb1Path)) hintOptions.push(thumb1Path);
-      } else {
-        // Audio file - check for waveform/spectrogram
-        const baseNameWithoutExt = baseFilename.replace('.ogg', '');
-        const waveformPath = path.join(process.cwd(), 'thumbnails', `${baseNameWithoutExt}_waveform.png`);
-        const spectrogramPath = path.join(process.cwd(), 'thumbnails', `${baseNameWithoutExt}_spectrogram.png`);
-        
-        if (fs.existsSync(waveformPath)) hintOptions.push(waveformPath);
-        if (fs.existsSync(spectrogramPath)) hintOptions.push(spectrogramPath);
-      }
-      
-      if (hintOptions.length > 0) {
-        // Randomly select one of the available hints
-        const selectedHint = hintOptions[Math.floor(Math.random() * hintOptions.length)];
-        await channel.send({ content: 'Here\'s a visual hint:', files: [selectedHint] });
-        session.lastVisualHint = selectedHint;
-      }
-    } catch (error) {
-      console.error('Error providing visual hint:', error);
-    }
+    // Note: Visual hint is no longer shown at the beginning of round
+    // It will be shown after audio plays or during hint cycling
     
     // Play the audio
     const audioPlayer = createAudioPlayer();
@@ -357,6 +339,16 @@ const nextRound = async (
     
     session.connection.subscribe(audioPlayer);
     audioPlayer.play(resource);
+    
+    // Calculate clip duration if specified
+    let clipDuration = 30; // Default 30 seconds
+    if (clipOptions?.duration) {
+      // Parse duration like "5s" to seconds
+      const durationMatch = clipOptions.duration.match(/^(\d+)s$/);
+      if (durationMatch) {
+        clipDuration = parseInt(durationMatch[1], 10);
+      }
+    }
     
     // When the audio ends, wait 10 seconds before moving to the next hint
     audioPlayer.on(AudioPlayerStatus.Idle, () => {
@@ -369,8 +361,11 @@ const nextRound = async (
         // Let users know the audio has ended and they have time to answer
         channel.send("🎵 Audio finished! You have 10 seconds to answer...").catch(console.error);
         
-        // Schedule first hint after 10 seconds
+        // Schedule first hint after audio ends (including visual hint)
         session.timeout = setTimeout(() => {
+          // Show visual hint after audio finishes
+          showVisualHint(session, channel);
+          
           // Provide progressive hint
           const hint = generateProgressiveHint(session.mediaItem.title, session.revealPercentage);
           channel.send(`Hint: ${hint}`).catch(console.error);
@@ -493,4 +488,45 @@ const formatScores = (session: QuizSession): string => {
   return '\n' + sortedPlayers
     .map(([id, score], index) => `${index + 1}. <@${id}>: ${score} point${score !== 1 ? 's' : ''}`)
     .join('\n');
+};
+
+// Helper function to show visual hints
+const showVisualHint = async (session: QuizSession, channel: any) => {
+  try {
+    // Get the correct base filename, not the full path
+    const baseFilename = session.mediaItem.normalizedPath ? 
+      path.basename(session.mediaItem.normalizedPath) : 
+      path.basename(session.mediaItem.filePath);
+    
+    // Determine the type of media and available visual hints
+    const isVideo = baseFilename.endsWith('.mp4');
+    const hintOptions = [];
+    
+    if (isVideo) {
+      // Generate and check full paths to thumbnail files
+      const baseNameWithoutExt = baseFilename.replace('.mp4', '');
+      const thumb0Path = path.join(process.cwd(), 'thumbnails', `${baseNameWithoutExt}_thumb0.jpg`);
+      const thumb1Path = path.join(process.cwd(), 'thumbnails', `${baseNameWithoutExt}_thumb1.jpg`);
+      
+      if (fs.existsSync(thumb0Path)) hintOptions.push(thumb0Path);
+      if (fs.existsSync(thumb1Path)) hintOptions.push(thumb1Path);
+    } else {
+      // Audio file - check for waveform/spectrogram
+      const baseNameWithoutExt = baseFilename.replace('.ogg', '');
+      const waveformPath = path.join(process.cwd(), 'thumbnails', `${baseNameWithoutExt}_waveform.png`);
+      const spectrogramPath = path.join(process.cwd(), 'thumbnails', `${baseNameWithoutExt}_spectrogram.png`);
+      
+      if (fs.existsSync(waveformPath)) hintOptions.push(waveformPath);
+      if (fs.existsSync(spectrogramPath)) hintOptions.push(spectrogramPath);
+    }
+    
+    if (hintOptions.length > 0) {
+      // Randomly select one of the available hints
+      const selectedHint = hintOptions[Math.floor(Math.random() * hintOptions.length)];
+      await channel.send({ content: 'Here\'s a visual hint:', files: [selectedHint] });
+      session.lastVisualHint = selectedHint;
+    }
+  } catch (error) {
+    console.error('Error providing visual hint:', error);
+  }
 };
