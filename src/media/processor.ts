@@ -742,12 +742,47 @@ export const parseFilterString = (filterString: string): MediaFilter => {
   const content = filterString.substring(1, filterString.length - 1);
   const filters: MediaFilter = {};
   
-  content.split(',').forEach(pair => {
-    const [key, value] = pair.split('=');
-    if (key && value) {
-      filters[key.trim()] = isNaN(Number(value.trim())) ? value.trim() : Number(value.trim());
+  // Handle complex filters with nested parameters more intelligently
+  let segmentStart = 0;
+  let currentKey = '';
+  let inQuote = false;
+  let depth = 0;
+  
+  for (let i = 0; i <= content.length; i++) {
+    const char = i < content.length ? content[i] : ',';
+    
+    // Handle quotes
+    if (char === "'" || char === '"') {
+      inQuote = !inQuote;
+      continue;
     }
-  });
+    
+    // Skip processing if inside quotes
+    if (inQuote) continue;
+    
+    // Track nested structure depth
+    if (char === '(') depth++;
+    if (char === ')') depth--;
+    
+    // Process key-value pairs
+    if (char === '=' && !currentKey) {
+      currentKey = content.substring(segmentStart, i).trim();
+      segmentStart = i + 1;
+    } else if ((char === ',' && depth === 0) || i === content.length) {
+      // End of segment
+      if (currentKey) {
+        // We have a key-value pair
+        const value = content.substring(segmentStart, i).trim();
+        
+        // Convert to number if possible, otherwise keep as string
+        const numValue = Number(value);
+        filters[currentKey] = isNaN(numValue) ? value : numValue;
+        
+        currentKey = '';
+      }
+      segmentStart = i + 1;
+    }
+  }
   
   return filters;
 };

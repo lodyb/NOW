@@ -16,78 +16,69 @@ export const parseCommand = (message: Message): CommandArgs | null => {
     return null;
   }
 
-  const parts = message.content.substring(4).trim().split(' ');
+  // Special handling for complex filter strings
+  let content = message.content.substring(4).trim();
+  let filterString: string | undefined;
+  
+  // Extract filter string between { and } considering nested braces
+  const filterMatch = content.match(/{([^{}]*(\{[^{}]*\}[^{}]*)*)}/);
+  if (filterMatch) {
+    filterString = filterMatch[0];
+    // Remove the filter string from content
+    content = content.replace(filterString, '').trim();
+  }
+  
+  const parts = content.split(' ').filter(p => p.trim() !== '');
+  if (parts.length === 0) {
+    // Default to play command if only filter specified
+    parts.push('play');
+  }
+  
   const command = parts[0].toLowerCase();
   
   // Handle basic commands without search term
-  if (['upload', 'quiz', 'stop'].includes(command)) {
-    return { command };
-  }
-  
-  // Handle play or image command
-  if (command === 'play' || command === 'image') {
-    let args: CommandArgs = { command };
-    let filterStringIndex = -1;
-    
-    // Find filter string in curly braces
-    parts.slice(1).forEach((part, index) => {
-      if (part.startsWith('{') && part.endsWith('}')) {
-        args.filterString = part;
-        filterStringIndex = index + 1;
-      }
-    });
-    
-    // Extract search term excluding filter string
-    const searchTermParts = parts.slice(1).filter((_, i) => i + 1 !== filterStringIndex);
-    if (searchTermParts.length > 0) {
-      args.searchTerm = searchTermParts.join(' ');
-    }
-    
-    return args;
-  }
-  
-  // Handle clip command or quiz with options
-  if (parts.some(p => p.startsWith('clip=')) || parts.some(p => p.startsWith('start='))) {
-    const clipOptions: { duration?: string; start?: string } = {};
-    const otherParts: string[] = [];
-    
-    parts.forEach(part => {
-      if (part.startsWith('clip=')) {
-        clipOptions.duration = part.substring(5);
-      } else if (part.startsWith('start=')) {
-        clipOptions.start = part.substring(6);
-      } else if (part.startsWith('{') && part.endsWith('}')) {
-        otherParts.push(part);
-      } else {
-        otherParts.push(part);
-      }
-    });
-    
-    const args: CommandArgs = {
-      command: otherParts[0].toLowerCase(),
-      clipOptions
-    };
-    
-    // Extract filter string if it exists
-    const filterString = otherParts.find(p => p.startsWith('{') && p.endsWith('}'));
+  if (['upload', 'quiz', 'stop'].includes(command) && parts.length === 1) {
+    const result: CommandArgs = { command };
     if (filterString) {
-      args.filterString = filterString;
-      otherParts.splice(otherParts.indexOf(filterString), 1);
+      result.filterString = filterString;
     }
-    
-    // Extract search term if applicable
-    if (otherParts.length > 1) {
-      args.searchTerm = otherParts.slice(1).join(' ');
-    }
-    
-    return args;
+    return result;
   }
   
-  // Default case - treat as play command with search term
-  return {
-    command: 'play',
-    searchTerm: message.content.substring(4).trim()
+  // Handle clip options
+  const clipOptions: { duration?: string; start?: string } = {};
+  const searchTermParts: string[] = [];
+  
+  parts.forEach(part => {
+    if (part.startsWith('clip=')) {
+      clipOptions.duration = part.substring(5);
+    } else if (part.startsWith('start=')) {
+      clipOptions.start = part.substring(6);
+    } else {
+      searchTermParts.push(part);
+    }
+  });
+  
+  const result: CommandArgs = {
+    command: searchTermParts[0].toLowerCase()
   };
+  
+  // Add filter string if exists
+  if (filterString) {
+    result.filterString = filterString;
+  }
+  
+  // Add clip options if any
+  if (Object.keys(clipOptions).length > 0) {
+    result.clipOptions = clipOptions;
+  }
+  
+  // Add search term if exists
+  if (searchTermParts.length > 1) {
+    result.searchTerm = searchTermParts.slice(1).join(' ');
+  }
+  
+  return result;
 };
 
 export const generateRandomUnicodeMask = (text: string): string => {
