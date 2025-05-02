@@ -35,6 +35,8 @@ interface QuizSession {
   timeout?: NodeJS.Timeout;
   isActive: boolean;
   lastVisualHint?: string | null;
+  filterString?: string;
+  clipOptions?: { duration?: string; start?: string };
 }
 
 const activeSessions = new Map<string, QuizSession>();
@@ -97,7 +99,11 @@ export const handleQuizAnswer = async (message: Message) => {
     return;
   }
   
+  // Get the lowercase content for comparison
   const answer = message.content.toLowerCase().trim();
+  
+  // Log for debugging
+  console.log(`Checking answer: "${answer}" against valid answers:`, session.correctAnswers);
   
   // First check exact match (case insensitive)
   if (session.correctAnswers.some(a => a.toLowerCase() === answer)) {
@@ -123,23 +129,30 @@ const awardPoint = async (message: Message, session: QuizSession) => {
   const userId = message.author.id;
   const username = message.author.username;
   
-  // Prevent duplicate scoring
+  // Prevent duplicate scoring - only prevent for CURRENT round
   if (!session.players.has(userId)) {
-    session.players.set(userId, (session.players.get(userId) || 0) + 1);
-    
-    // Update user stats in database
-    await updateUserStats(userId, username, true);
-    
-    // Clear the hint timeout
-    if (session.timeout) {
-      clearTimeout(session.timeout);
-    }
-    
-    await message.reply(`🎉 Correct! The answer is "${session.mediaItem.title}". ${username} gets a point!`);
-    
-    // Move to next round after a short delay
-    setTimeout(() => nextRound(session, message.channel), 3000);
+    // New player
+    session.players.set(userId, 1);
+  } else {
+    // Existing player - increment their score
+    session.players.set(userId, session.players.get(userId)! + 1);
   }
+  
+  // Update user stats in database
+  await updateUserStats(userId, username, true);
+  
+  // Clear the hint timeout
+  if (session.timeout) {
+    clearTimeout(session.timeout);
+  }
+  
+  await message.reply(`🎉 Correct! The answer is "${session.mediaItem.title}". ${username} gets a point!`);
+  
+  // Reset the missed rounds counter since someone answered correctly
+  session.missedRounds = 0;
+  
+  // Move to next round after a short delay - pass the original filter parameters
+  setTimeout(() => nextRound(session, message.channel, session.filterString, session.clipOptions), 3000);
 };
 
 const startQuizSession = async (
@@ -167,7 +180,9 @@ const startQuizSession = async (
     missedRounds: 0,
     revealPercentage: 0,
     players: new Map(),
-    isActive: true
+    isActive: true,
+    filterString, 
+    clipOptions
   };
   
   activeSessions.set(voiceChannel.guild.id, session);
@@ -216,6 +231,11 @@ const nextRound = async (
       }
     }
     
+    // Reset answered state for new round
+    session.players.forEach((_, playerId) => {
+      session.lastVisualHint = null;
+    });
+    
     // Get the correct file path, considering normalized vs original path
     let filePath: string;
     if (session.mediaItem.normalizedPath) {
@@ -229,6 +249,7 @@ const nextRound = async (
     }
     
     // Apply filters or clip options if provided
+    // We use the parameters passed to this function which persists from the initial quiz setup
     if (filterString || (clipOptions && Object.keys(clipOptions).length > 0)) {
       try {
         const randomId = crypto.randomBytes(4).toString('hex');
