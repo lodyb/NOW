@@ -1285,22 +1285,32 @@ const applyFilters = (command: ffmpeg.FfmpegCommand, filters: MediaFilter, isVid
     // Handle raw complex filter string if it exists
     if (filters.__raw_complex_filter) {
       const rawFilter = filters.__raw_complex_filter;
-      logFFmpegCommand(`Applying raw complex filter: ${rawFilter}`);
+      
+      // Process any aliases in the raw filter string
+      const processedFilter = rawFilter.split(',').map(part => {
+        const trimmed = part.trim();
+        if (trimmed in filterAliases) {
+          return filterAliases[trimmed];
+        }
+        return trimmed;
+      }).join(',');
+      
+      logFFmpegCommand(`Applying raw complex filter: ${processedFilter} (was: ${rawFilter})`);
       
       if (isVideo) {
         // For video files, we can use complex filtergraph
-        command.complexFilter(rawFilter);
+        command.complexFilter(processedFilter);
         return; // Skip other filter processing
       } else {
         // For audio-only files, we need to check if this is an audio-only filter
         // If it contains semicolons or otherwise appears to be a complex filter graph,
         // we need to warn the user appropriately
-        if (rawFilter.includes(';') || /\[[0-9]+:[v]\]/.test(rawFilter)) {
-          throw new Error(`The complex filter "${rawFilter}" appears to require video streams, but this is an audio-only file.`);
+        if (processedFilter.includes(';') || /\[[0-9]+:[v]\]/.test(processedFilter)) {
+          throw new Error(`The complex filter "${processedFilter}" appears to require video streams, but this is an audio-only file.`);
         }
         
         // Apply as audio filter if it seems audio-compatible
-        command.audioFilters(rawFilter);
+        command.audioFilters(processedFilter);
         return; // Skip other filter processing
       }
     }
@@ -1308,7 +1318,7 @@ const applyFilters = (command: ffmpeg.FfmpegCommand, filters: MediaFilter, isVid
     // Handle macroblock effect
     if ('macroblock' in filters) {
       const strength = Number(filters.macroblock) || 1;
-      const qValue = Math.min(30, Math.max(2, Math.floor(2 + (strength * 3))));
+      const qValue = Math.min(300000, Math.max(2, Math.floor(2 + (strength * 3))));
       
       if (isVideo) {
         // Apply noise filter first
