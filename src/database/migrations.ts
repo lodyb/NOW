@@ -40,7 +40,7 @@ export const migrateNormalizedPaths = (): Promise<void> => {
             const filename = path.basename(row.normalizedPath);
             const newPath = `norm_${filename}`;
             
-            updateStmt.run(newPath, row.id, function(err) {
+            updateStmt.run(newPath, row.id, function(this: { changes: number }, err: Error | null) {
               if (err) {
                 console.error(`Error updating media ${row.id}:`, err);
               } else if (this.changes > 0) {
@@ -49,7 +49,7 @@ export const migrateNormalizedPaths = (): Promise<void> => {
             });
           });
           
-          updateStmt.finalize((err) => {
+          updateStmt.finalize((err: Error | null) => {
             if (err) {
               console.error('Error finalizing migration:', err);
               reject(err);
