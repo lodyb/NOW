@@ -37,7 +37,7 @@ export const parseCommand = (message: Message): CommandArgs | null => {
   const command = parts[0].toLowerCase();
   
   // Handle basic commands without search term
-  if (['upload', 'quiz', 'stop'].includes(command) && parts.length === 1) {
+  if (['upload', 'quiz', 'stop', 'help'].includes(command) && parts.length === 1) {
     const result: CommandArgs = { command };
     if (filterString) {
       result.filterString = filterString;

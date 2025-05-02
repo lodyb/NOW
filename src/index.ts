@@ -13,6 +13,7 @@ import { handleQuizCommand, handleStopCommand, handleQuizAnswer } from './bot/co
 import { handleUploadCommand } from './bot/commands/upload';
 import { handleImageCommand } from './bot/commands/image';
 import { handleWaveformCommand, handleSpectrogramCommand } from './bot/commands/visualization';
+import { handleHelpCommand } from './bot/commands/help';
 import apiRoutes from './web/api';
 import authRoutes from './web/auth-routes';
 import { setupAuth, isAuthenticated } from './web/auth';
@@ -142,9 +143,16 @@ client.on(Events.MessageCreate, async (message) => {
           );
           break;
           
+        case 'help':
+          await handleHelpCommand(
+            message,
+            commandArgs.searchTerm
+          );
+          break;
+          
         default:
           // Unrecognized command
-          await safeReply(message, 'Unknown command. Type `NOW play`, `NOW quiz`, `NOW image`, `NOW waveform`, `NOW spectrogram` or `NOW upload`.');
+          await safeReply(message, 'Unknown command. Type `NOW help` for a list of available commands.');
       }
     } catch (error) {
       console.error('Error handling command:', error);

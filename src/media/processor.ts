@@ -1297,6 +1297,30 @@ const applyFilters = (command: ffmpeg.FfmpegCommand, filters: MediaFilter, isVid
       // Remove the special filter so it's not processed again
       delete filters.reverse;
     }
+
+    // Handle speed filter (affects both audio and video timing)
+    if ('speed' in filters) {
+      const speedValue = Number(filters.speed);
+      if (isNaN(speedValue) || speedValue <= 0) {
+        throw new Error('Speed filter must be a positive number (e.g., 0.5 for half speed, 2 for double speed)');
+      }
+
+      // For video: setpts=1/speed*PTS (e.g., setpts=2*PTS for half speed)
+      if (isVideo) {
+        // Apply video speed filter
+        command.videoFilters(`setpts=${1/speedValue}*PTS`);
+        logFFmpegCommand(`Applied video speed filter: setpts=${1/speedValue}*PTS`);
+
+        // Apply audio speed filter
+        applyAudioSpeedFilter(command, speedValue);
+      } else {
+        // Audio-only file
+        applyAudioSpeedFilter(command, speedValue);
+      }
+
+      // Remove the speed filter so it's not processed again
+      delete filters.speed;
+    }
     
     // Filter keys by type
     const audioFilters: string[] = [];
@@ -1334,6 +1358,56 @@ const applyFilters = (command: ffmpeg.FfmpegCommand, filters: MediaFilter, isVid
   } catch (error) {
     console.error(`Error in applyFilters: ${error}`);
     throw new Error(`Error applying filters: ${error instanceof Error ? error.message : String(error)}`);
+  }
+};
+
+/**
+ * Apply audio speed filter, handling the atempo limitations
+ * atempo only works in the range of 0.5 to 2.0, so we need to chain
+ * multiple atempo filters for more extreme speed changes
+ */
+const applyAudioSpeedFilter = (command: ffmpeg.FfmpegCommand, speedValue: number): void => {
+  // Audio speed with atempo (has 0.5-2.0 limitation, so chain for extreme values)
+  if (speedValue >= 0.5 && speedValue <= 2.0) {
+    // Simple case - within atempo range
+    command.audioFilters(`atempo=${speedValue}`);
+    logFFmpegCommand(`Applied audio speed filter: atempo=${speedValue}`);
+  } else if (speedValue < 0.5) {
+    // Slower than 0.5x - chain multiple atempo filters
+    // Example: 0.25x speed = atempo=0.5,atempo=0.5
+    const filterValues = [];
+    let remainingSpeed = speedValue;
+    
+    while (remainingSpeed < 0.5) {
+      filterValues.push('atempo=0.5');
+      remainingSpeed /= 0.5;
+    }
+    
+    if (remainingSpeed < 1.0) {
+      filterValues.push(`atempo=${remainingSpeed}`);
+    }
+    
+    const filterStr = filterValues.join(',');
+    command.audioFilters(filterStr);
+    logFFmpegCommand(`Applied chained audio speed filter: ${filterStr}`);
+  } else {
+    // Faster than 2.0x - chain multiple atempo filters
+    // Example: 4x speed = atempo=2.0,atempo=2.0
+    const filterValues = [];
+    let remainingSpeed = speedValue;
+    
+    while (remainingSpeed > 2.0) {
+      filterValues.push('atempo=2.0');
+      remainingSpeed /= 2.0;
+    }
+    
+    if (remainingSpeed > 1.0) {
+      filterValues.push(`atempo=${remainingSpeed}`);
+    }
+    
+    const filterStr = filterValues.join(',');
+    command.audioFilters(filterStr);
+    logFFmpegCommand(`Applied chained audio speed filter: ${filterStr}`);
   }
 };
 
@@ -1401,7 +1475,7 @@ const filterTypes = {
   ]),
   
   // Filters requiring special handling (complex filter syntax)
-  complex: new Set(['reverse'])
+  complex: new Set(['reverse', 'speed'])
 };
 
 /**
