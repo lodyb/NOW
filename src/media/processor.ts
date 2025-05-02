@@ -1299,19 +1299,23 @@ const applyFilters = (command: ffmpeg.FfmpegCommand, filters: MediaFilter, isVid
     if ('datamosh' in filters || 'glitch' in filters) {
       const glitchLevel = Number(filters.datamosh || filters.glitch) || 1;
       
-      // Use complex filtergraph for datamosh/glitch effect
-      const intensity = Math.max(1, Math.floor(100/glitchLevel));
-      command.complexFilter(`[0:v]noise=alls=${intensity}:allf=t[v]`);
-      
-      // Apply subtle noise to audio too for higher glitch levels
-      if (glitchLevel > 3 && isVideo) {
-        command.complexFilter(`[0:a]aresample=44100,aformat=sample_fmts=fltp[a1];anoisesrc=a=${Math.min(0.03, glitchLevel * 0.005)}:color=pink[a2];[a1][a2]amix=weights=5|1[a]`, ['v', 'a']);
+      if (isVideo) {
+        // Use simple video filter for glitch/datamosh on video
+        command.videoFilters(`noise=alls=${Math.max(1, Math.floor(100/glitchLevel))}:allf=t`);
+        
+        // Apply subtle noise to audio for higher glitch levels
+        if (glitchLevel > 3) {
+          command.audioFilters(`aeval=0.05*random(0):c=pink`);
+        }
+      } else {
+        // For audio-only files, just add random noise
+        command.audioFilters(`aeval=0.${Math.min(9, Math.floor(glitchLevel))}*random(0):c=pink`);
       }
       
-      logFFmpegCommand(`Applied datamosh/glitch effect with intensity ${intensity}`);
+      logFFmpegCommand(`Applied datamosh/glitch effect with level ${glitchLevel}`);
       delete filters.datamosh;
       delete filters.glitch;
-      return; // Skip other filter processing
+      return;
     }
     
     // Handle noise generation
@@ -1320,24 +1324,23 @@ const applyFilters = (command: ffmpeg.FfmpegCommand, filters: MediaFilter, isVid
       
       if (isVideo) {
         if (type === 'mono' || type === 'bw') {
-          // Black and white noise using complex filtergraph
-          command.complexFilter(`[0:v]geq=lum=random(1)*255:cb=128:cr=128[v]`);
+          // Black and white noise using standard filter
+          command.videoFilters(`geq=lum=random(1)*255:cb=128:cr=128`);
         } else {
-          // Colored noise using complex filtergraph
-          command.complexFilter(`[0:v]geq=r=random(1)*255:g=random(1)*255:b=random(1)*255[v]`);
+          // Colored noise using standard filter
+          command.videoFilters(`geq=r=random(1)*255:g=random(1)*255:b=random(1)*255`);
         }
         
-        // Add audio white noise using complex filtergraph
-        command.complexFilter(`[0:a]aresample=44100,aformat=sample_fmts=fltp[a1];anoisesrc=a=0.03:color=white[a2];[a1][a2]amix=weights=3|1[a]`, ['v', 'a']);
-        logFFmpegCommand(`Applied ${type === 'mono' || type === 'bw' ? 'monochrome' : 'color'} noise filter`);
+        // Add audio white noise
+        command.audioFilters(`aeval=0.05*random(0)`);
       } else {
         // Audio only noise
-        command.complexFilter(`[0:a]aresample=44100,aformat=sample_fmts=fltp[a1];anoisesrc=a=0.03:color=white[a2];[a1][a2]amix=weights=3|1[a]`, ['a']);
-        logFFmpegCommand('Applied audio noise filter');
+        command.audioFilters(`aeval=0.05*random(0)`);
       }
       
+      logFFmpegCommand(`Applied ${type === 'mono' || type === 'bw' ? 'monochrome' : 'color'} noise filter`);
       delete filters.noise;
-      return; // Skip other filter processing
+      return;
     }
     
     // Handle macroblock effect
@@ -1345,14 +1348,23 @@ const applyFilters = (command: ffmpeg.FfmpegCommand, filters: MediaFilter, isVid
       const strength = Number(filters.macroblock) || 1;
       const qValue = Math.min(30, Math.max(2, Math.floor(2 + (strength * 3))));
       
-      // Use the right codec and settings for macroblock effect
-      command.outputOptions('-c:v mpeg2video');
-      command.outputOptions(`-q:v ${qValue}`);
-      command.videoFilters('noise=alls=12:allf=t');
+      if (isVideo) {
+        // Apply noise filter first
+        command.videoFilters('noise=alls=12:allf=t');
+        
+        // Use the right codec and settings for macroblock effect
+        command.outputOptions('-c:v mpeg2video');
+        command.outputOptions(`-q:v ${qValue}`);
+        
+        // If high strength, add bitstream noise filter
+        if (strength > 5) {
+          command.outputOptions(`-bsf:v noise=${Math.max(100, 1000000/strength)}`);
+        }
+      }
       
       logFFmpegCommand(`Applied macroblock effect with q:v=${qValue}`);
       delete filters.macroblock;
-      return; // Skip other filter processing
+      return;
     }
     
     // Detect if we're trying to apply video filters to audio
