@@ -1939,19 +1939,22 @@ const applyCustomEffect = (command: ffmpeg.FfmpegCommand, effectName: string, va
   effectName = effectName.toLowerCase();
   const numValue = typeof value === 'string' ? parseFloat(value) : value;
   
-  // Handle special audio effects
-  if (audioEffects[effectName as keyof typeof audioEffects]) {
-    command.audioFilters(audioEffects[effectName as keyof typeof audioEffects](numValue));
-    logFFmpegCommand(`Applied custom audio effect: ${effectName}`);
-    return true;
+  // Handle special audio effects - only apply to audio stream
+  if (audioOnlyEffects.has(effectName) || audioEffects[effectName as keyof typeof audioEffects]) {
+    if (audioEffects[effectName as keyof typeof audioEffects]) {
+      command.audioFilters(audioEffects[effectName as keyof typeof audioEffects](numValue));
+      logFFmpegCommand(`Applied custom audio effect: ${effectName}`);
+      return true;
+    }
+    return false;
   }
   
-  // Handle special video effects (only for video files)
-  if (isVideo && videoEffects[effectName as keyof typeof videoEffects]) {
+  // Handle special video effects - only apply to video stream and only for video files
+  if (isVideo && (videoOnlyEffects.has(effectName) || videoEffects[effectName as keyof typeof videoEffects])) {
     // Some effects need to use complexFilter instead of videoFilters
     if (['mirror_x', 'mirror_y', 'kaleidoscope'].includes(effectName)) {
       command.complexFilter(videoEffects[effectName as keyof typeof videoEffects]());
-    } else {
+    } else if (videoEffects[effectName as keyof typeof videoEffects]) {
       command.videoFilters(videoEffects[effectName as keyof typeof videoEffects](numValue));
     }
     logFFmpegCommand(`Applied custom video effect: ${effectName}`);
