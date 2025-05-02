@@ -1084,82 +1084,89 @@ const applyFilters = (command: ffmpeg.FfmpegCommand, filters: MediaFilter, isVid
   // Import logger
   const { logFFmpegCommand, logFFmpegError } = require('../utils/logger');
   
-  // Log filter application attempt
-  logFFmpegCommand(`Applying filters to ${isVideo ? 'video' : 'audio'} file: ${JSON.stringify(filters)}`);
-  
-  // Detect if we're trying to apply video filters to audio
-  if (!isVideo) {
-    const videoFiltersRequested = Object.keys(filters).filter(key => 
-      filterTypes.video.has(key)
-    );
-    
-    if (videoFiltersRequested.length > 0) {
-      const err = new Error(
-        `Cannot apply video filters to audio file: ${videoFiltersRequested.join(', ')}. ` +
-        `This file is audio-only and doesn't support video filters.`
-      );
-      logFFmpegError('Filter type mismatch', err);
-      throw err;
-    }
-  }
-  
-  // Check for any filters that need special handling
-  const specialFilters = [...filterTypes.complex].filter(key => key in filters);
-  
-  // Handle special filters first
-  if (specialFilters.includes('reverse')) {
-    if (isVideo) {
-      // For video, reverse both audio and video streams
-      command.complexFilter('[0:v]reverse[v];[0:a]areverse[a]', ['v', 'a']);
-      logFFmpegCommand('Applied complex filter: reverse for video+audio');
-    } else {
-      // For audio, just reverse the audio stream
-      command.audioFilters('areverse');
-      logFFmpegCommand('Applied audio filter: areverse');
-    }
-    // Remove the special filter so it's not processed again
-    delete filters.reverse;
-  }
-  
-  // Filter keys by type
-  const audioFilters: string[] = [];
-  const videoFilters: string[] = [];
-  
-  // Process remaining filters
-  Object.entries(filters).forEach(([key, value]) => {
-    const filterValue = typeof value === 'number' ? value.toString() : value;
-    const filterStr = `${key}=${filterValue}`;
-    
-    if (isVideo && filterTypes.video.has(key)) {
-      videoFilters.push(filterStr);
-    } else if (filterTypes.audio.has(key) || !isVideo) {
-      // Audio filter or default to audio if not found and is an audio file
-      audioFilters.push(filterStr);
-    } else {
-      // For video files, default unknown filters to video filters
-      videoFilters.push(filterStr);
-      logFFmpegCommand(`Warning: unknown filter "${key}" categorized as video filter`);
-    }
-  });
-  
-  // Apply standard filters
-  if (audioFilters.length > 0) {
-    const audioFilterStr = audioFilters.join(',');
-    command.audioFilters(audioFilterStr);
-    logFFmpegCommand(`Applied audio filters: ${audioFilterStr}`);
-  }
-  
-  if (videoFilters.length > 0 && isVideo) {
-    const videoFilterStr = videoFilters.join(',');
-    command.videoFilters(videoFilterStr);
-    logFFmpegCommand(`Applied video filters: ${videoFilterStr}`);
-  }
-  
-  // Log the full command
   try {
-    logFFmpegCommand('Full ffmpeg command:', command);
+    // Log filter application attempt
+    logFFmpegCommand(`Applying filters to ${isVideo ? 'video' : 'audio'} file: ${JSON.stringify(filters)}`);
+    
+    // Detect if we're trying to apply video filters to audio
+    if (!isVideo) {
+      const videoFiltersRequested = Object.keys(filters).filter(key => 
+        filterTypes.video.has(key)
+      );
+      
+      if (videoFiltersRequested.length > 0) {
+        const err = new Error(
+          `Cannot apply video filters to audio file: ${videoFiltersRequested.join(', ')}. ` +
+          `This file is audio-only and doesn't support video filters.`
+        );
+        logFFmpegError('Filter type mismatch', err);
+        throw err;
+      }
+    }
+    
+    // Check for any filters that need special handling
+    const specialFilters = [...filterTypes.complex].filter(key => key in filters);
+    
+    // Handle special filters first
+    if (specialFilters.includes('reverse')) {
+      if (isVideo) {
+        // For video, reverse both audio and video streams
+        command.complexFilter('[0:v]reverse[v];[0:a]areverse[a]', ['v', 'a']);
+        logFFmpegCommand('Applied complex filter: reverse for video+audio');
+      } else {
+        // For audio, just reverse the audio stream
+        command.audioFilters('areverse');
+        logFFmpegCommand('Applied audio filter: areverse');
+      }
+      // Remove the special filter so it's not processed again
+      delete filters.reverse;
+    }
+    
+    // Filter keys by type
+    const audioFilters: string[] = [];
+    const videoFilters: string[] = [];
+    
+    // Process remaining filters
+    Object.entries(filters).forEach(([key, value]) => {
+      const filterValue = typeof value === 'number' ? value.toString() : value;
+      const filterStr = `${key}=${filterValue}`;
+      
+      if (isVideo && filterTypes.video.has(key)) {
+        videoFilters.push(filterStr);
+      } else if (filterTypes.audio.has(key) || !isVideo) {
+        // Audio filter or default to audio if not found and is an audio file
+        audioFilters.push(filterStr);
+      } else {
+        // For video files, default unknown filters to video filters
+        videoFilters.push(filterStr);
+        console.log(`Warning: unknown filter "${key}" categorized as video filter`);
+      }
+    });
+    
+    // Apply standard filters
+    if (audioFilters.length > 0) {
+      const audioFilterStr = audioFilters.join(',');
+      command.audioFilters(audioFilterStr);
+      logFFmpegCommand(`Applied audio filters: ${audioFilterStr}`);
+    }
+    
+    if (videoFilters.length > 0 && isVideo) {
+      const videoFilterStr = videoFilters.join(',');
+      command.videoFilters(videoFilterStr);
+      logFFmpegCommand(`Applied video filters: ${videoFilterStr}`);
+    }
+    
+    // Log the full command (safe version)
+    try {
+      if (command && typeof command === 'object') {
+        logFFmpegCommand('Full ffmpeg command constructed successfully');
+      }
+    } catch (error) {
+      console.error('Could not log full command:', error);
+    }
   } catch (error) {
-    logFFmpegError('Could not log full command', error);
+    console.error(`Error in applyFilters: ${error}`);
+    throw new Error(`Error applying filters: ${error instanceof Error ? error.message : String(error)}`);
   }
 };
 
