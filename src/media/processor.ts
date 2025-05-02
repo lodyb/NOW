@@ -1848,6 +1848,9 @@ const audioEffects: AudioEffects = {
     
   'chorus': (strength = 0.5) => 
     `chorus=0.5:0.9:${50+strength*20}:0.4:0.25:2`, // Chorus effect
+
+  'bass': (gain = 10) => 
+    `bass=g=${Math.min(30, gain)}`, // Bass boost effect with gain limit
 };
 
 const videoEffects: VideoEffects = {
