@@ -29,6 +29,9 @@ export const handlePlayCommand = async (message: Message, searchTerm?: string, f
       media = results[0];
     }
 
+    // Send initial status message
+    const statusMessage = await message.reply(`Processing request${filterString ? ' with filters' : ''}... ⏳`);
+
     // Determine the file path by standardizing the normalized path format
     let filePath;
     
@@ -44,6 +47,9 @@ export const handlePlayCommand = async (message: Message, searchTerm?: string, f
     // Apply filters or clip options if provided
     if (filterString || (clipOptions && Object.keys(clipOptions).length > 0)) {
       try {
+        // Update status message
+        await statusMessage.edit(`Applying filters... ⚙️`);
+        
         const randomId = crypto.randomBytes(4).toString('hex');
         const outputFilename = `temp_${randomId}_${path.basename(filePath)}`;
         const options: ProcessOptions = {};
@@ -59,20 +65,35 @@ export const handlePlayCommand = async (message: Message, searchTerm?: string, f
         // Always enforce Discord limit when posting in a text channel
         options.enforceDiscordLimit = true;
         
+        // Add progress callback function
+        options.progressCallback = async (stage, progress) => {
+          try {
+            await statusMessage.edit(`${stage} (${Math.round(progress * 100)}%)... ⏳`);
+          } catch (err) {
+            console.error('Error updating status message:', err);
+          }
+        };
+        
         logFFmpegCommand(`Processing with options ${JSON.stringify(options)} for Discord message`);
         filePath = await processMedia(filePath, outputFilename, options);
+        
+        // Update status message when processing is complete
+        await statusMessage.edit(`Processing complete! Uploading... 📤`);
       } catch (error) {
         console.error('Error processing media:', error);
-        await safeReply(message, `Error applying filters: ${(error as Error).message}`);
+        await statusMessage.edit(`Error applying filters: ${(error as Error).message} ❌`);
         return;
       }
     }
     
     if (!fs.existsSync(filePath)) {
       console.error(`File not found: ${filePath}`);
-      await safeReply(message, 'Error: Media file not found');
+      await statusMessage.edit('Error: Media file not found ❌');
       return;
     }
+    
+    // Final update: delete status message since we're about to send the actual file
+    await statusMessage.delete().catch(err => console.error('Failed to delete status message:', err));
     
     const attachment = new AttachmentBuilder(filePath);
     await safeReply(message, { files: [attachment] });

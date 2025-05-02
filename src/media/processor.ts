@@ -36,6 +36,7 @@ export interface ProcessOptions {
   filters?: MediaFilter;
   clip?: ClipOptions;
   enforceDiscordLimit?: boolean; // Add this parameter to indicate if we need to enforce Discord's file size limit
+  progressCallback?: (stage: string, progress: number) => Promise<void>; // Add callback for progress updates
 }
 
 // Define interface for media row from database
@@ -150,6 +151,11 @@ export const processMedia = async (
   // Check if media is video or audio
   const isVideo = await isVideoFile(inputPath);
 
+  // Send initial status
+  if (options.progressCallback) {
+    await options.progressCallback("Analyzing media", 0.1);
+  }
+
   // When Discord limit enforcement is needed, we use a different flow
   if (options.enforceDiscordLimit) {
     logFFmpegCommand(`Processing media with Discord limit enforcement: ${outputFilename}`);
@@ -160,6 +166,7 @@ export const processMedia = async (
     // Apply any filters
     if (options.filters && Object.keys(options.filters).length > 0) {
       try {
+        await options.progressCallback?.("Applying filters", 0.2);
         applyFilters(tempCommand, options.filters, isVideo);
       } catch (error) {
         throw new Error(`Error applying filters: ${error instanceof Error ? error.message : String(error)}`);
@@ -178,20 +185,29 @@ export const processMedia = async (
     }
     
     // First, create the filtered version
+    await options.progressCallback?.("Creating filtered version", 0.3);
     await new Promise<void>((resolve, reject) => {
       tempCommand
         .outputOptions('-c:a libopus')
         .outputOptions('-b:a 128k')
         .save(tempFiltered)
+        .on('progress', (progress) => {
+          if (progress.percent) {
+            const progressValue = 0.3 + (progress.percent / 100 * 0.3);
+            options.progressCallback?.("Creating filtered version", progressValue);
+          }
+        })
         .on('end', () => resolve())
         .on('error', (err) => reject(err));
     });
     
     // Now normalize the filtered version to ensure it's under Discord's limit
     try {
-      const normalizedPath = await encodeMediaWithBitrates(tempFiltered, outputPath, isVideo);
+      await options.progressCallback?.("Optimizing for Discord", 0.6);
+      const normalizedPath = await encodeMediaWithBitrates(tempFiltered, outputPath, isVideo, options.progressCallback);
       
       // Clean up the temporary filtered file
+      await options.progressCallback?.("Finalizing", 0.95);
       if (fs.existsSync(tempFiltered)) {
         try {
           fs.unlinkSync(tempFiltered);
@@ -204,6 +220,7 @@ export const processMedia = async (
         throw new Error('Failed to normalize filtered media to fit Discord limits');
       }
       
+      await options.progressCallback?.("Complete", 1.0);
       return normalizedPath;
     } catch (error) {
       throw new Error(`Error normalizing filtered media: ${error instanceof Error ? error.message : String(error)}`);
@@ -215,6 +232,7 @@ export const processMedia = async (
     // Apply any filters
     if (options.filters && Object.keys(options.filters).length > 0) {
       try {
+        await options.progressCallback?.("Applying filters", 0.2);
         applyFilters(command, options.filters, isVideo);
       } catch (error) {
         throw new Error(`Error applying filters: ${error instanceof Error ? error.message : String(error)}`);
@@ -236,8 +254,17 @@ export const processMedia = async (
       command
         .outputOptions('-c:a libopus')
         .outputOptions('-b:a 128k')
+        .on('progress', (progress) => {
+          if (progress.percent) {
+            const progressValue = 0.2 + (progress.percent / 100 * 0.7);
+            options.progressCallback?.("Processing", progressValue);
+          }
+        })
+        .on('end', async () => {
+          await options.progressCallback?.("Complete", 1.0);
+          resolve(outputPath);
+        })
         .save(outputPath)
-        .on('end', () => resolve(outputPath))
         .on('error', (err) => reject(err));
     });
   }
@@ -480,7 +507,8 @@ export const encodeMediaWithAttempts = async (
 export const encodeMediaWithBitrates = async (
   inputPath: string, 
   outputPath: string,
-  isVideo: boolean
+  isVideo: boolean,
+  progressCallback?: (stage: string, progress: number) => Promise<void>
 ): Promise<string | null> => {
   if (!validFile(inputPath)) {
     throw new Error(`File does not exist or is empty: ${inputPath}`);
@@ -601,6 +629,12 @@ export const encodeMediaWithBitrates = async (
     await new Promise<void>((resolve, reject) => {
       command
         .save(tempOutputPath)
+        .on('progress', (progress) => {
+          if (progress.percent) {
+            const progressValue = 0.6 + (progress.percent / 100 * 0.3);
+            progressCallback?.("Encoding", progressValue);
+          }
+        })
         .on('end', () => resolve())
         .on('error', (err) => reject(err));
     });
