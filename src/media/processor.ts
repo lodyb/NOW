@@ -32,9 +32,10 @@ export interface ClipOptions {
   start?: string;
 }
 
-interface ProcessOptions {
+export interface ProcessOptions {
   filters?: MediaFilter;
   clip?: ClipOptions;
+  enforceDiscordLimit?: boolean; // Add this parameter to indicate if we need to enforce Discord's file size limit
 }
 
 // Define interface for media row from database
@@ -145,39 +146,101 @@ export const processMedia = async (
   }
 
   const outputPath = path.join(PROCESSED_DIR, outputFilename);
-  const command = ffmpeg(inputPath);
   
   // Check if media is video or audio
   const isVideo = await isVideoFile(inputPath);
-  
-  // Apply any filters
-  if (options.filters && Object.keys(options.filters).length > 0) {
-    try {
-      applyFilters(command, options.filters, isVideo);
-    } catch (error) {
-      throw new Error(`Error applying filters: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  }
-  
-  // Apply clip options
-  if (options.clip) {
-    if (options.clip.start) {
-      command.setStartTime(options.clip.start);
+
+  // When Discord limit enforcement is needed, we use a different flow
+  if (options.enforceDiscordLimit) {
+    logFFmpegCommand(`Processing media with Discord limit enforcement: ${outputFilename}`);
+    // Create a temporary file for filtered output
+    const tempFiltered = path.join(TEMP_DIR, `filtered_${outputFilename}`);
+    const tempCommand = ffmpeg(inputPath);
+    
+    // Apply any filters
+    if (options.filters && Object.keys(options.filters).length > 0) {
+      try {
+        applyFilters(tempCommand, options.filters, isVideo);
+      } catch (error) {
+        throw new Error(`Error applying filters: ${error instanceof Error ? error.message : String(error)}`);
+      }
     }
     
-    if (options.clip.duration) {
-      command.setDuration(options.clip.duration);
+    // Apply clip options
+    if (options.clip) {
+      if (options.clip.start) {
+        tempCommand.setStartTime(options.clip.start);
+      }
+      
+      if (options.clip.duration) {
+        tempCommand.setDuration(options.clip.duration);
+      }
     }
-  }
+    
+    // First, create the filtered version
+    await new Promise<void>((resolve, reject) => {
+      tempCommand
+        .outputOptions('-c:a libopus')
+        .outputOptions('-b:a 128k')
+        .save(tempFiltered)
+        .on('end', () => resolve())
+        .on('error', (err) => reject(err));
+    });
+    
+    // Now normalize the filtered version to ensure it's under Discord's limit
+    try {
+      const normalizedPath = await encodeMediaWithBitrates(tempFiltered, outputPath, isVideo);
+      
+      // Clean up the temporary filtered file
+      if (fs.existsSync(tempFiltered)) {
+        try {
+          fs.unlinkSync(tempFiltered);
+        } catch (cleanupErr) {
+          console.error(`Error cleaning up temporary filtered file: ${cleanupErr}`);
+        }
+      }
+      
+      if (!normalizedPath) {
+        throw new Error('Failed to normalize filtered media to fit Discord limits');
+      }
+      
+      return normalizedPath;
+    } catch (error) {
+      throw new Error(`Error normalizing filtered media: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  } else {
+    // Original behavior when Discord limit is not enforced
+    const command = ffmpeg(inputPath);
   
-  return new Promise((resolve, reject) => {
-    command
-      .outputOptions('-c:a libopus')
-      .outputOptions('-b:a 128k')
-      .save(outputPath)
-      .on('end', () => resolve(outputPath))
-      .on('error', (err) => reject(err));
-  });
+    // Apply any filters
+    if (options.filters && Object.keys(options.filters).length > 0) {
+      try {
+        applyFilters(command, options.filters, isVideo);
+      } catch (error) {
+        throw new Error(`Error applying filters: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+    
+    // Apply clip options
+    if (options.clip) {
+      if (options.clip.start) {
+        command.setStartTime(options.clip.start);
+      }
+      
+      if (options.clip.duration) {
+        command.setDuration(options.clip.duration);
+      }
+    }
+    
+    return new Promise((resolve, reject) => {
+      command
+        .outputOptions('-c:a libopus')
+        .outputOptions('-b:a 128k')
+        .save(outputPath)
+        .on('end', () => resolve(outputPath))
+        .on('error', (err) => reject(err));
+    });
+  }
 };
 
 /**

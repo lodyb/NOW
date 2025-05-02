@@ -1,7 +1,8 @@
 import { Message, AttachmentBuilder } from 'discord.js';
 import { findMediaBySearch, getRandomMedia } from '../../database/db';
-import { processMedia, parseFilterString, parseClipOptions } from '../../media/processor';
+import { processMedia, parseFilterString, parseClipOptions, ProcessOptions } from '../../media/processor';
 import { safeReply } from '../utils/helpers';
+import { logFFmpegCommand } from '../../utils/logger';
 import path from 'path';
 import fs from 'fs';
 import crypto from 'crypto';
@@ -45,7 +46,7 @@ export const handlePlayCommand = async (message: Message, searchTerm?: string, f
       try {
         const randomId = crypto.randomBytes(4).toString('hex');
         const outputFilename = `temp_${randomId}_${path.basename(filePath)}`;
-        const options: any = {};
+        const options: ProcessOptions = {};
         
         if (filterString) {
           options.filters = parseFilterString(filterString);
@@ -55,6 +56,10 @@ export const handlePlayCommand = async (message: Message, searchTerm?: string, f
           options.clip = clipOptions;
         }
         
+        // Always enforce Discord limit when posting in a text channel
+        options.enforceDiscordLimit = true;
+        
+        logFFmpegCommand(`Processing with options ${JSON.stringify(options)} for Discord message`);
         filePath = await processMedia(filePath, outputFilename, options);
       } catch (error) {
         console.error('Error processing media:', error);
