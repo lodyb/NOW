@@ -109,7 +109,8 @@ client.on(Events.MessageCreate, async (message) => {
       console.error('Error handling command:', error);
       // Don't attempt to send another message if we already had an error
       // This prevents the cascade of permission errors
-      if (error.code !== 50013) {
+      const discordError = error as { code?: number };
+      if (discordError.code !== 50013) {
         try {
           await safeReply(message, `An error occurred: ${(error as Error).message}`);
         } catch (replyError) {
@@ -124,7 +125,8 @@ client.on(Events.MessageCreate, async (message) => {
     } catch (error) {
       console.error('Error handling quiz answer:', error);
       // Don't log permission errors for quiz answers since they're frequent
-      if (error.code !== 50013) {
+      const discordError = error as { code?: number };
+      if (discordError.code !== 50013) {
         console.error(error);
       }
     }
