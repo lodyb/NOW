@@ -1344,7 +1344,7 @@ const applyFilters = (command: ffmpeg.FfmpegCommand, filters: MediaFilter, isVid
     // Handle macroblock effect
     if ('macroblock' in filters) {
       const strength = Number(filters.macroblock) || 1;
-      const qValue = Math.min(300, Math.max(2, Math.floor(2 + (strength * 3))));
+      const qValue = Math.min(3000, Math.max(2, Math.floor(2 + (strength * 3))));
       
       if (isVideo) {
         // Apply noise filter first
