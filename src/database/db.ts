@@ -239,10 +239,10 @@ export const findAllMediaPaginated = (
   });
 };
 
-export const findMediaBySearch = (searchTerm: string): Promise<Media[]> => {
+export const findMediaBySearch = (searchTerm: string, requireVideo?: boolean): Promise<Media[]> => {
   return new Promise((resolve, reject) => {
     // First do a broader search to get potential matches
-    const query = `
+    let query = `
       SELECT m.*, GROUP_CONCAT(ma.answer) as answers
       FROM media m
       LEFT JOIN media_answers ma ON ma.mediaId = m.id
@@ -252,19 +252,22 @@ export const findMediaBySearch = (searchTerm: string): Promise<Media[]> => {
     const params: any[] = [];
     
     if (searchTerm && searchTerm !== '%') {
-      const whereClause = ` AND (m.title LIKE ? OR ma.answer LIKE ?)`;
+      query += ` AND (m.title LIKE ? OR ma.answer LIKE ?)`;
       const param = `%${searchTerm}%`;
       params.push(param, param);
     }
     
-    const finalQuery = `
-      ${query}
-      ${searchTerm && searchTerm !== '%' ? ' AND (m.title LIKE ? OR ma.answer LIKE ?)' : ''}
+    // Filter for video files if required (when video filters are used)
+    if (requireVideo) {
+      query += ` AND (m.normalizedPath LIKE '%.mp4')`;
+    }
+    
+    query += `
       GROUP BY m.id
       ORDER BY RANDOM()
     `;
     
-    db.all(finalQuery, params, (err, rows: MediaRow[]) => {
+    db.all(query, params, (err, rows: MediaRow[]) => {
       if (err) {
         reject(err);
       } else {

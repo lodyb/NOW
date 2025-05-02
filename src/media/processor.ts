@@ -27,7 +27,8 @@ export const MAX_PROCESSING_TIME_MS = 80000;
 });
 
 export interface MediaFilter {
-  [key: string]: string | number;
+  [key: string]: string | number | undefined;
+  __raw_complex_filter?: string; // Special property for raw complex filter strings
 }
 
 export interface ClipOptions {
@@ -921,6 +922,13 @@ export const parseFilterString = (filterString: string): MediaFilter => {
   const content = filterString.substring(1, filterString.length - 1);
   const filters: MediaFilter = {};
   
+  // Check if this is a raw complex filter string (no key=value format)
+  if (!content.includes('=') || content.includes(';')) {
+    // This appears to be a raw complex filter string
+    filters.__raw_complex_filter = content;
+    return filters;
+  }
+  
   // Handle complex filters with nested parameters more intelligently
   let segmentStart = 0;
   let currentKey = '';
@@ -1264,6 +1272,29 @@ const applyFilters = (command: ffmpeg.FfmpegCommand, filters: MediaFilter, isVid
     // Log filter application attempt
     logFFmpegCommand(`Applying filters to ${isVideo ? 'video' : 'audio'} file: ${JSON.stringify(filters)}`);
     
+    // Handle raw complex filter string if it exists
+    if (filters.__raw_complex_filter) {
+      const rawFilter = filters.__raw_complex_filter;
+      logFFmpegCommand(`Applying raw complex filter: ${rawFilter}`);
+      
+      if (isVideo) {
+        // For video files, we can use complex filtergraph
+        command.complexFilter(rawFilter);
+        return; // Skip other filter processing
+      } else {
+        // For audio-only files, we need to check if this is an audio-only filter
+        // If it contains semicolons or otherwise appears to be a complex filter graph,
+        // we need to warn the user appropriately
+        if (rawFilter.includes(';') || /\[[0-9]+:[v]\]/.test(rawFilter)) {
+          throw new Error(`The complex filter "${rawFilter}" appears to require video streams, but this is an audio-only file.`);
+        }
+        
+        // Apply as audio filter if it seems audio-compatible
+        command.audioFilters(rawFilter);
+        return; // Skip other filter processing
+      }
+    }
+    
     // Detect if we're trying to apply video filters to audio
     if (!isVideo) {
       const videoFiltersRequested = Object.keys(filters).filter(key => 
@@ -1555,4 +1586,20 @@ const executeWithTimeout = <T>(
         }
       });
   });
+};
+
+/**
+ * Check if filters contain any video-only filters
+ * @returns true if filters contain any video-only filters
+ */
+export const containsVideoFilters = (filters: MediaFilter): boolean => {
+  // Check for special raw complex filter case
+  if (filters.__raw_complex_filter) {
+    // Most complex filters require video, so assume true
+    return true;
+  }
+  
+  return Object.keys(filters).some(key => 
+    filterTypes.video.has(key) && !filterTypes.audio.has(key)
+  );
 };

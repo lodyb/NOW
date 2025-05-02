@@ -1,6 +1,6 @@
 import { Message, AttachmentBuilder } from 'discord.js';
 import { findMediaBySearch, getRandomMedia } from '../../database/db';
-import { processMedia, parseFilterString, parseClipOptions, ProcessOptions } from '../../media/processor';
+import { processMedia, parseFilterString, parseClipOptions, ProcessOptions, containsVideoFilters } from '../../media/processor';
 import { safeReply } from '../utils/helpers';
 import { logFFmpegCommand } from '../../utils/logger';
 import path from 'path';
@@ -20,10 +20,30 @@ export const handlePlayCommand = async (message: Message, searchTerm?: string, f
       }
       media = randomResults[0];
     } else {
-      const results = await findMediaBySearch(searchTerm);
+      // Check if filters require video-only content
+      let requireVideo = false;
+      
+      if (filterString) {
+        try {
+          const parsedFilters = parseFilterString(filterString);
+          requireVideo = containsVideoFilters(parsedFilters);
+          
+          if (requireVideo) {
+            console.log(`Video filters detected, searching for video files only`);
+          }
+        } catch (err) {
+          console.error('Error parsing filters:', err);
+        }
+      }
+      
+      const results = await findMediaBySearch(searchTerm, requireVideo);
       
       if (results.length === 0) {
-        await safeReply(message, `No media found for "${searchTerm}"`);
+        if (requireVideo) {
+          await safeReply(message, `No video files found for "${searchTerm}" with those video filters. Try a different search or filters compatible with audio files.`);
+        } else {
+          await safeReply(message, `No media found for "${searchTerm}"`);
+        }
         return;
       }
       media = results[0];
