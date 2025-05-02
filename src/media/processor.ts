@@ -1267,7 +1267,7 @@ const applyFilters = (command: ffmpeg.FfmpegCommand, filters: MediaFilter, isVid
     // Detect if we're trying to apply video filters to audio
     if (!isVideo) {
       const videoFiltersRequested = Object.keys(filters).filter(key => 
-        filterTypes.video.has(key)
+        filterTypes.video.has(key) && !filterTypes.audio.has(key)
       );
       
       if (videoFiltersRequested.length > 0) {
@@ -1331,15 +1331,22 @@ const applyFilters = (command: ffmpeg.FfmpegCommand, filters: MediaFilter, isVid
       const filterValue = typeof value === 'number' ? value.toString() : value;
       const filterStr = `${key}=${filterValue}`;
       
-      if (isVideo && filterTypes.video.has(key)) {
-        videoFilters.push(filterStr);
-      } else if (filterTypes.audio.has(key) || !isVideo) {
-        // Audio filter or default to audio if not found and is an audio file
-        audioFilters.push(filterStr);
+      // Skip filters that don't exist in our defined sets to avoid errors
+      if (isVideo) {
+        if (filterTypes.video.has(key)) {
+          videoFilters.push(filterStr);
+        } else if (filterTypes.audio.has(key)) {
+          audioFilters.push(filterStr);
+        } else {
+          console.log(`Warning: ignoring unknown filter "${key}"`);
+        }
       } else {
-        // For video files, default unknown filters to video filters
-        videoFilters.push(filterStr);
-        console.log(`Warning: unknown filter "${key}" categorized as video filter`);
+        // For audio files, only apply known audio filters
+        if (filterTypes.audio.has(key)) {
+          audioFilters.push(filterStr);
+        } else {
+          console.log(`Warning: ignoring unknown filter "${key}" for audio file`);
+        }
       }
     });
     
@@ -1429,7 +1436,7 @@ const filterTypes = {
     'highshelf', 'join', 'ladspa', 'loudnorm', 'lowpass', 'lowshelf', 'lv2', 'mcompand', 'pan', 
     'replaygain', 'rubberband', 'sidechaincompress', 'sidechaingate', 'silencedetect', 'silenceremove', 
     'sofalizer', 'speechnorm', 'stereotools', 'stereowiden', 'superequalizer', 'surround', 'treble', 
-    'tremolo', 'vibrato', 'volume', 'volumedetect'
+    'tremolo', 'vibrato', 'volume', 'volumedetect', 'amplify', 'pitch' // Add amplify and pitch to audio filters
   ]),
   
   video: new Set([

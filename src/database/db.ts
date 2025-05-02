@@ -246,41 +246,36 @@ export const findMediaBySearch = (searchTerm: string): Promise<Media[]> => {
       SELECT m.*, GROUP_CONCAT(ma.answer) as answers
       FROM media m
       LEFT JOIN media_answers ma ON ma.mediaId = m.id
-      GROUP BY m.id
+      WHERE m.isDeleted = 0
     `;
     
-    db.all(query, [], (err, rows: MediaRow[]) => {
+    const params: any[] = [];
+    
+    if (searchTerm && searchTerm !== '%') {
+      const whereClause = ` AND (m.title LIKE ? OR ma.answer LIKE ?)`;
+      const param = `%${searchTerm}%`;
+      params.push(param, param);
+    }
+    
+    const finalQuery = `
+      ${query}
+      ${searchTerm && searchTerm !== '%' ? ' AND (m.title LIKE ? OR ma.answer LIKE ?)' : ''}
+      GROUP BY m.id
+      ORDER BY RANDOM()
+    `;
+    
+    db.all(finalQuery, params, (err, rows: MediaRow[]) => {
       if (err) {
         reject(err);
       } else {
         // Convert answers string to array and safely parse JSON fields
-        const allMedia = rows.map((row) => ({
+        const results = rows.map((row) => ({
           ...row,
           answers: row.answers ? row.answers.split(',') : [],
           thumbnails: row.thumbnails ? JSON.parse(String(row.thumbnails)) : [],
           metadata: row.metadata ? JSON.parse(String(row.metadata)) : {}
         }));
-        
-        // Create an array of media with their answers for fuzzy searching
-        const searchableMedia = allMedia.map(media => {
-          return {
-            ...media,
-            searchText: [media.title, ...media.answers].join(' ').toLowerCase()
-          };
-        });
-        
-        // Use Fuse.js for fuzzy matching
-        const fuse = new Fuse(searchableMedia, {
-          keys: ['searchText', 'title', 'answers'],
-          includeScore: true,
-          threshold: 0.4 // Lower is more strict
-        });
-        
-        // Search and sort by score
-        const results = fuse.search(searchTerm);
-        
-        // Return the items sorted by match score
-        resolve(results.map(result => result.item).slice(0, 10));
+        resolve(results);
       }
     });
   });
