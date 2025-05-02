@@ -68,7 +68,7 @@ export const generateSpectrogramForMedia = async (media: MediaItem): Promise<str
     await new Promise<void>((resolve, reject) => {
       ffmpeg(mediaPath)
         .outputOptions([
-          '-lavfi', 'showspectrumpic=s=640x480:mode=combined:color=heat',
+          '-filter_complex', 'showspectrum=s=640x480:mode=combined:color=heat:slide=1:scale=log:gain=0.3,format=yuv420p',
         ])
         .output(outputPath)
         .on('end', () => resolve())
