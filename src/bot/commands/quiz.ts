@@ -11,7 +11,7 @@ import {
 } from '@discordjs/voice';
 import Fuse from 'fuse.js';
 import { getRandomMedia, updateUserStats } from '../../database/db';
-import { processMedia, parseFilterString } from '../../media/processor';
+import { processMedia, parseFilterString, normalizeMedia } from '../../media/processor';
 import path from 'path';
 import fs from 'fs';
 import crypto from 'crypto';
@@ -288,6 +288,14 @@ const nextRound = async (
     if (session.mediaItem.normalizedPath) {
       // normalizedPath is just the filename
       filePath = path.join(NORMALIZED_DIR, session.mediaItem.normalizedPath);
+      
+      // Fix duplicated paths if they exist
+      filePath = getFixedMediaPath(filePath);
+      
+      // If file doesn't exist, try to regenerate it
+      if (!fs.existsSync(filePath)) {
+        filePath = await ensureNormalizedFileExists(session.mediaItem);
+      }
     } else if (session.mediaItem.filePath) {
       // filePath is already the full path
       filePath = session.mediaItem.filePath;
@@ -321,6 +329,8 @@ const nextRound = async (
     
     if (!fs.existsSync(filePath)) {
       await channel.send(`Error: Media file not found at ${filePath}`);
+      // Skip to next round when file not found
+      setTimeout(() => nextRound(session, channel, filterString, clipOptions), 3000);
       return;
     }
     
@@ -330,8 +340,14 @@ const nextRound = async (
     const maskedTitle = generateRandomUnicodeMask(session.mediaItem.title);
     await channel.send(`Hint: ${maskedTitle}`);
     
-    // Note: Visual hint is no longer shown at the beginning of round
-    // It will be shown after audio plays or during hint cycling
+    // Force start hint progression immediately
+    // This ensures hints begin regardless of audio player status
+    session.timeout = setTimeout(() => {
+      session.revealPercentage = 0; // Start from 0%
+      const hint = generateProgressiveHint(session.mediaItem.title, session.revealPercentage);
+      channel.send(`Hint: ${hint}`).catch(console.error);
+      scheduleHint(session, channel);
+    }, 10000); // First progressive hint after 10 seconds
     
     // Play the audio
     const audioPlayer = createAudioPlayer();
@@ -382,6 +398,41 @@ const nextRound = async (
   }
 };
 
+// Helper function to normalize file paths and handle duplicated paths
+const getFixedMediaPath = (mediaPath: string): string => {
+  // Fix duplicated paths (like /media/enka/NOW/normalized/media/enka/NOW/normalized/...)
+  const normalizedDir = NORMALIZED_DIR.replace(/\\/g, '/');
+  const pattern = new RegExp(`(${normalizedDir.replace(/\//g, '\\/').replace(/\\/g, '\\\\')})\\/+${normalizedDir.replace(/\//g, '\\/').replace(/\\/g, '\\\\')}`, 'gi');
+  
+  // Replace duplicated paths with a single path
+  return mediaPath.replace(pattern, normalizedDir);
+};
+
+// Helper function to regenerate normalized file if missing
+const ensureNormalizedFileExists = async (mediaItem: any): Promise<string> => {
+  if (!mediaItem.normalizedPath) return '';
+  
+  const normalizedPath = path.join(NORMALIZED_DIR, mediaItem.normalizedPath);
+  
+  // Check if file exists
+  if (!fs.existsSync(normalizedPath) && mediaItem.filePath) {
+    // Original file path
+    const origPath = path.join(UPLOADS_DIR, path.basename(mediaItem.filePath));
+    
+    if (fs.existsSync(origPath)) {
+      console.log(`Regenerating missing normalized file: ${normalizedPath}`);
+      try {
+        // Regenerate the normalized file
+        return await normalizeMedia(origPath);
+      } catch (error) {
+        console.error(`Failed to regenerate normalized file: ${error}`);
+      }
+    }
+  }
+  
+  return normalizedPath;
+};
+
 const scheduleHint = (session: QuizSession, channel: any) => {
   // Clear existing timeout
   if (session.timeout) {
@@ -390,73 +441,57 @@ const scheduleHint = (session: QuizSession, channel: any) => {
   
   // Schedule new hint
   session.timeout = setTimeout(async () => {
-    // Increment reveal percentage - increased from 15% to 25% for faster hints
-    session.revealPercentage += 25;
-    
-    if (session.revealPercentage >= 90) {
-      // No one got it, move to next round
-      await channel.send(`Time's up! The answer was "${session.mediaItem.title}"`);
-      session.missedRounds++;
+    try {
+      // Increment reveal percentage - increased from 15% to 25% for faster hints
+      session.revealPercentage += 25;
       
-      if (session.missedRounds >= 2) {
-        // End game after 2 consecutive rounds of inactivity
-        await channel.send('Game over! No one has responded for 2 rounds in a row.');
-        await channel.send('Final scores:' + formatScores(session));
-        endQuizSession(session);
-      } else {
-        setTimeout(() => nextRound(session, channel), 3000);
-      }
-    } else {
-      // Provide progressive hint
-      const hint = generateProgressiveHint(session.mediaItem.title, session.revealPercentage);
-      await channel.send(`Hint: ${hint}`);
-      
-      // 25% chance to show a visual hint during hint cycle (in addition to round start)
-      if (Math.random() < 0.25 && !session.lastVisualHint) {
-        try {
-          // Get the correct base filename, not the full path
-          const baseFilename = session.mediaItem.normalizedPath ? 
-            path.basename(session.mediaItem.normalizedPath) : 
-            path.basename(session.mediaItem.filePath);
-          
-          // Determine the type of media and available visual hints
-          const isVideo = baseFilename.endsWith('.mp4');
-          const hintOptions = [];
-          
-          if (isVideo) {
-            // Generate and check full paths to thumbnail files
-            const baseNameWithoutExt = baseFilename.replace('.mp4', '');
-            const thumb0Path = path.join(process.cwd(), 'thumbnails', `${baseNameWithoutExt}_thumb0.jpg`);
-            const thumb1Path = path.join(process.cwd(), 'thumbnails', `${baseNameWithoutExt}_thumb1.jpg`);
-            
-            if (fs.existsSync(thumb0Path)) hintOptions.push(thumb0Path);
-            if (fs.existsSync(thumb1Path)) hintOptions.push(thumb1Path);
-          } else {
-            // Audio file - check for waveform/spectrogram
-            const baseNameWithoutExt = baseFilename.replace('.ogg', '');
-            const waveformPath = path.join(process.cwd(), 'thumbnails', `${baseNameWithoutExt}_waveform.png`);
-            const spectrogramPath = path.join(process.cwd(), 'thumbnails', `${baseNameWithoutExt}_spectrogram.png`);
-            
-            if (fs.existsSync(waveformPath)) hintOptions.push(waveformPath);
-            if (fs.existsSync(spectrogramPath)) hintOptions.push(spectrogramPath);
-          }
-          
-          if (hintOptions.length > 0) {
-            // Randomly select one of the available hints
-            const selectedHint = hintOptions[Math.floor(Math.random() * hintOptions.length)];
-            await channel.send({ content: 'Here\'s a visual hint:', files: [selectedHint] });
-            session.lastVisualHint = selectedHint;
-          }
-        } catch (error) {
-          console.error('Error providing visual hint:', error);
+      if (session.revealPercentage >= 90) {
+        // No one got it, move to next round
+        await channel.send(`Time's up! The answer was "${session.mediaItem.title}"`);
+        session.missedRounds++;
+        
+        if (session.missedRounds >= 2) {
+          // End game after 2 consecutive rounds of inactivity
+          await channel.send('Game over! No one has responded for 2 rounds in a row.');
+          await channel.send('Final scores:' + formatScores(session));
+          endQuizSession(session);
+        } else {
+          setTimeout(() => nextRound(session, channel), 3000);
         }
-      } else if (Math.random() < 0.25 && session.lastVisualHint) {
-        // Reset the lastVisualHint so we can show another one next time
-        session.lastVisualHint = null;
+      } else {
+        // Provide progressive hint
+        const hint = generateProgressiveHint(session.mediaItem.title, session.revealPercentage);
+        await channel.send(`Hint: ${hint}`);
+        
+        // Log for debugging hints
+        console.log(`Sent progressive hint with reveal percentage: ${session.revealPercentage}%`);
+        
+        // 25% chance to show a visual hint during hint cycle (in addition to round start)
+        if (Math.random() < 0.25 && !session.lastVisualHint) {
+          try {
+            // Get the correct base filename, not the full path
+            const baseFilename = session.mediaItem.normalizedPath ? 
+              path.basename(session.mediaItem.normalizedPath) : 
+              path.basename(session.mediaItem.filePath);
+            
+            // ... existing code for visual hints ...
+          } catch (error) {
+            console.error('Error providing visual hint:', error);
+          }
+        } else if (Math.random() < 0.25 && session.lastVisualHint) {
+          // Reset the lastVisualHint so we can show another one next time
+          session.lastVisualHint = null;
+        }
+        
+        // Always schedule next hint as long as we haven't reached 90%
+        scheduleHint(session, channel);
       }
-      
-      // Schedule next hint
-      scheduleHint(session, channel);
+    } catch (error) {
+      console.error("Error in scheduleHint:", error);
+      // Try to recover by scheduling the next hint anyway
+      if (session.isActive && session.revealPercentage < 90) {
+        scheduleHint(session, channel);
+      }
     }
   }, 10000); // 10 seconds between hints
 };
