@@ -1300,16 +1300,14 @@ const applyFilters = (command: ffmpeg.FfmpegCommand, filters: MediaFilter, isVid
       const glitchLevel = Number(filters.datamosh || filters.glitch) || 1;
       
       if (isVideo) {
-        // Use simple video filter for glitch/datamosh on video
-        command.videoFilters(`noise=alls=${Math.max(1, Math.floor(100/glitchLevel))}:allf=t`);
+        // For video, use a simpler noise filter with controlled parameters
+        const amount = Math.max(1, Math.min(40, Math.floor(8 * glitchLevel)));
+        command.videoFilters(`noise=c0s=${amount}:c1s=${amount}:c2s=${amount}:all_seed=${Math.floor(Math.random() * 10000)}`);
         
-        // Apply subtle noise to audio for higher glitch levels
-        if (glitchLevel > 3) {
-          command.audioFilters(`aeval=0.05*random(0):c=pink`);
-        }
+        // Don't apply audio filter - it causes errors with some inputs
       } else {
-        // For audio-only files, just add random noise
-        command.audioFilters(`aeval=0.${Math.min(9, Math.floor(glitchLevel))}*random(0):c=pink`);
+        // For audio-only, add mild distortion
+        command.audioFilters(`afftdn=nf=-20`);
       }
       
       logFFmpegCommand(`Applied datamosh/glitch effect with level ${glitchLevel}`);
@@ -1346,7 +1344,7 @@ const applyFilters = (command: ffmpeg.FfmpegCommand, filters: MediaFilter, isVid
     // Handle macroblock effect
     if ('macroblock' in filters) {
       const strength = Number(filters.macroblock) || 1;
-      const qValue = Math.min(30, Math.max(2, Math.floor(2 + (strength * 3))));
+      const qValue = Math.min(300, Math.max(2, Math.floor(2 + (strength * 3))));
       
       if (isVideo) {
         // Apply noise filter first
