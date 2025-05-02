@@ -27,7 +27,21 @@ export const handlePlayCommand = async (message: Message, searchTerm?: string, f
       media = results[0];
     }
 
-    let filePath = media.normalizedPath || media.filePath;
+    // Determine the file path, resolving to absolute paths
+    let normalizedDir = path.join(process.cwd(), 'normalized');
+    let filePath;
+    
+    if (media.normalizedPath) {
+      // Handle relative paths starting with 'normalized/'
+      if (media.normalizedPath.startsWith('normalized/')) {
+        // Replace the 'normalized/' prefix with the actual full path
+        filePath = path.join(process.cwd(), media.normalizedPath);
+      } else {
+        filePath = media.normalizedPath;
+      }
+    } else {
+      filePath = media.filePath;
+    }
     
     // Apply filters or clip options if provided
     if (filterString || (clipOptions && Object.keys(clipOptions).length > 0)) {
@@ -53,6 +67,7 @@ export const handlePlayCommand = async (message: Message, searchTerm?: string, f
     }
     
     if (!fs.existsSync(filePath)) {
+      console.error(`File not found: ${filePath}`);
       await message.reply('Error: Media file not found');
       return;
     }
