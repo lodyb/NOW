@@ -14,6 +14,7 @@ import { handleUploadCommand } from './bot/commands/upload';
 import { handleImageCommand } from './bot/commands/image';
 import { handleWaveformCommand, handleSpectrogramCommand } from './bot/commands/visualization';
 import { handleHelpCommand } from './bot/commands/help';
+import { handleMahjongCommand } from './bot/commands/mahjong';
 import apiRoutes from './web/api';
 import authRoutes from './web/auth-routes';
 import { setupAuth, isAuthenticated } from './web/auth';
@@ -145,6 +146,13 @@ client.on(Events.MessageCreate, async (message) => {
           
         case 'help':
           await handleHelpCommand(
+            message,
+            commandArgs.searchTerm
+          );
+          break;
+          
+        case 'mahjong':
+          await handleMahjongCommand(
             message,
             commandArgs.searchTerm
           );

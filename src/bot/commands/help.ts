@@ -30,9 +30,10 @@ const helpContent: HelpContent = {
       { name: 'NOW image [search]', description: 'Show a thumbnail from a video' },
       { name: 'NOW waveform [search]', description: 'Show audio waveform visualization' },
       { name: 'NOW spectrogram [search]', description: 'Show audio spectrogram visualization' },
+      { name: 'NOW mahjong [tiles]', description: 'Analyze a Riichi Mahjong hand' },
       { name: 'NOW help [topic]', description: 'Show help for a specific topic' }
     ],
-    footer: 'Type `NOW help [topic]` for more details on a topic.\nAvailable topics: filters, quiz, play'
+    footer: 'Type `NOW help [topic]` for more details on a topic.\nAvailable topics: filters, quiz, play, mahjong'
   },
   
   filters: {
@@ -84,6 +85,18 @@ const helpContent: HelpContent = {
       { name: 'NOW quiz {speed=0.75} clip=5s', description: 'Combine filters and clip options' }
     ],
     footer: 'During a quiz, just type the name of the media to answer. First correct answer wins the point!'
+  },
+  
+  mahjong: {
+    title: '🀄 Riichi Mahjong Analyzer',
+    description: 'Analyze Mahjong hands and get insights:',
+    commands: [
+      { name: 'NOW mahjong 1s1s2s3s4p4p4p5p6p7m7m7mrr', description: 'Analyze a full 14-tile hand' },
+      { name: 'NOW mahjong 1s2s3s4p4p4p5p6p7m7m7mrr', description: 'Analyze an incomplete hand and get suggestions' },
+      { name: 'NOW mahjong 7m7m7m1p1p1prrrggg3s3s3s', description: 'Analyze a hand with triplets and pairs' },
+      { name: 'NOW mahjong 1m2m3mro4p5p6peo7s8s9sno', description: 'Analyze a hand with open (called) tiles' }
+    ],
+    footer: 'Tile notation:\n• Number tiles: 1-9 followed by m (man), p (pin), or s (sou)\n• Honor tiles: r (red dragon), g (green dragon), w (white dragon)\n• Wind tiles: e (east), s (south), x (west), n (north)\n• Open tiles: Add "o" after a tile (e.g., 1so = 1 sou open)\n\nExample: 1s2s3s = 1,2,3 of sou; rr = pair of red dragons'
   }
 };
 
