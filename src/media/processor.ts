@@ -16,6 +16,9 @@ const TEMP_DIR = path.join(process.cwd(), 'temp');
 export const MAX_FILE_SIZE_MB = 9;
 export const MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024;
 
+// Max processing time in milliseconds (80 seconds)
+export const MAX_PROCESSING_TIME_MS = 80000;
+
 // Create directories if they don't exist
 [UPLOADS_DIR, PROCESSED_DIR, NORMALIZED_DIR, THUMBNAILS_DIR, TEMP_DIR].forEach(dir => {
   if (!fs.existsSync(dir)) {
@@ -184,22 +187,35 @@ export const processMedia = async (
       }
     }
     
-    // First, create the filtered version
+    // First, create the filtered version with timeout
     await options.progressCallback?.("Creating filtered version", 0.3);
-    await new Promise<void>((resolve, reject) => {
-      tempCommand
-        .outputOptions('-c:a libopus')
-        .outputOptions('-b:a 128k')
-        .save(tempFiltered)
-        .on('progress', (progress) => {
+    try {
+      await executeWithTimeout<void>(
+        tempCommand.outputOptions('-c:a libopus').outputOptions('-b:a 128k').save(tempFiltered), 
+        MAX_PROCESSING_TIME_MS,
+        (progress) => {
           if (progress.percent) {
             const progressValue = 0.3 + (progress.percent / 100 * 0.3);
             options.progressCallback?.("Creating filtered version", progressValue);
           }
-        })
-        .on('end', () => resolve())
-        .on('error', (err) => reject(err));
-    });
+        }
+      );
+    } catch (error: unknown) {
+      // Clean up any temporary files
+      if (fs.existsSync(tempFiltered)) {
+        try {
+          fs.unlinkSync(tempFiltered);
+        } catch (cleanupErr) {
+          console.error(`Error cleaning up temporary filtered file: ${cleanupErr}`);
+        }
+      }
+      
+      if (error instanceof Error && error.message.includes('timeout')) {
+        throw new Error(`Processing timeout: operation took too long (>80s). Try simpler filters.`);
+      } else {
+        throw error;
+      }
+    }
     
     // Now normalize the filtered version to ensure it's under Discord's limit
     try {
@@ -222,8 +238,21 @@ export const processMedia = async (
       
       await options.progressCallback?.("Complete", 1.0);
       return normalizedPath;
-    } catch (error) {
-      throw new Error(`Error normalizing filtered media: ${error instanceof Error ? error.message : String(error)}`);
+    } catch (error: unknown) {
+      // Clean up any temporary files
+      if (fs.existsSync(tempFiltered)) {
+        try {
+          fs.unlinkSync(tempFiltered);
+        } catch (cleanupErr) {
+          console.error(`Error cleaning up temporary filtered file: ${cleanupErr}`);
+        }
+      }
+      
+      if (error instanceof Error && error.message.includes('timeout')) {
+        throw new Error(`Processing timeout: operation took too long (>80s). Try simpler filters.`);
+      } else {
+        throw new Error(`Error normalizing filtered media: ${error instanceof Error ? error.message : String(error)}`);
+      }
     }
   } else {
     // Original behavior when Discord limit is not enforced
@@ -250,23 +279,49 @@ export const processMedia = async (
       }
     }
     
-    return new Promise((resolve, reject) => {
-      command
-        .outputOptions('-c:a libopus')
-        .outputOptions('-b:a 128k')
-        .on('progress', (progress) => {
-          if (progress.percent) {
-            const progressValue = 0.2 + (progress.percent / 100 * 0.7);
-            options.progressCallback?.("Processing", progressValue);
+    // Run the command with timeout protection
+    try {
+      await options.progressCallback?.("Processing media", 0.3);
+      
+      return await new Promise((resolve, reject) => {
+        let progressTracker = { percent: 0 };
+        
+        executeWithTimeout(
+          command
+            .outputOptions('-c:a libopus')
+            .outputOptions('-b:a 128k')
+            .save(outputPath),
+          MAX_PROCESSING_TIME_MS,
+          (progress) => {
+            progressTracker = progress;
+            if (progress.percent) {
+              const progressValue = 0.3 + (progress.percent / 100 * 0.6);
+              options.progressCallback?.("Processing", progressValue);
+            }
           }
-        })
-        .on('end', async () => {
-          await options.progressCallback?.("Complete", 1.0);
-          resolve(outputPath);
-        })
-        .save(outputPath)
-        .on('error', (err) => reject(err));
-    });
+        )
+          .then(async () => {
+            await options.progressCallback?.("Complete", 1.0);
+            resolve(outputPath);
+          })
+          .catch((err) => reject(err));
+      });
+    } catch (error: unknown) {
+      // Clean up any output file if it exists but is incomplete
+      if (fs.existsSync(outputPath)) {
+        try {
+          fs.unlinkSync(outputPath);
+        } catch (cleanupErr) {
+          console.error(`Error cleaning up incomplete output file: ${cleanupErr}`);
+        }
+      }
+      
+      if (error instanceof Error && error.message.includes('timeout')) {
+        throw new Error(`Processing timeout: operation took too long (>80s). Try simpler filters.`);
+      } else {
+        throw error;
+      }
+    }
   }
 };
 
@@ -541,25 +596,31 @@ export const encodeMediaWithBitrates = async (
     console.log(`Trimming media to ${finalDuration}s to optimize file size`);
     
     try {
-      await new Promise<void>((resolve, reject) => {
+      // Use timeout for the trimming operation too
+      await executeWithTimeout<void>(
         ffmpeg(inputPath)
           .setDuration(finalDuration)
           .outputOptions('-c copy')
-          .save(preTrimPath)
-          .on('end', () => {
-            if (validFile(preTrimPath)) {
-              inputForEncoding = preTrimPath;
-              console.log(`Successfully trimmed to ${finalDuration}s`);
-            }
-            resolve();
-          })
-          .on('error', (err) => {
-            console.error(`Error trimming: ${err}`);
-            resolve(); // Continue with original file if trimming fails
-          });
-      });
+          .save(preTrimPath),
+        MAX_PROCESSING_TIME_MS,
+        (progress) => {
+          if (progress.percent) {
+            progressCallback?.("Trimming media", 0.2 + (progress.percent / 100 * 0.1));
+          }
+        }
+      );
+      
+      if (validFile(preTrimPath)) {
+        inputForEncoding = preTrimPath;
+        console.log(`Successfully trimmed to ${finalDuration}s`);
+      }
     } catch (error) {
       console.error(`Error during trim: ${error}`);
+      // If timeout occurred during trimming, propagate the error
+      if (error instanceof Error && error.message.includes('timeout')) {
+        throw new Error(`Processing timeout: operation took too long (>80s). Try simpler filters or shorter media.`);
+      }
+      // Otherwise continue with the original file
     }
   }
 
@@ -625,19 +686,17 @@ export const encodeMediaWithBitrates = async (
       command.format('ogg');
     }
 
-    // Run the encoding
-    await new Promise<void>((resolve, reject) => {
-      command
-        .save(tempOutputPath)
-        .on('progress', (progress) => {
-          if (progress.percent) {
-            const progressValue = 0.6 + (progress.percent / 100 * 0.3);
-            progressCallback?.("Encoding", progressValue);
-          }
-        })
-        .on('end', () => resolve())
-        .on('error', (err) => reject(err));
-    });
+    // Run the encoding with timeout protection
+    await executeWithTimeout<void>(
+      command.save(tempOutputPath),
+      MAX_PROCESSING_TIME_MS,
+      (progress) => {
+        if (progress.percent) {
+          const progressValue = 0.6 + (progress.percent / 100 * 0.3);
+          progressCallback?.("Encoding", progressValue);
+        }
+      }
+    );
     
     // Check if output file exists and is under size limit
     if (validFile(tempOutputPath)) {
@@ -666,6 +725,28 @@ export const encodeMediaWithBitrates = async (
       }
     }
   } catch (error) {
+    // Clean up any temporary files
+    if (fs.existsSync(tempOutputPath)) {
+      try {
+        fs.unlinkSync(tempOutputPath);
+      } catch (cleanupErr) {
+        console.error(`Error cleaning up temporary output file: ${cleanupErr}`);
+      }
+    }
+    
+    if (inputForEncoding !== inputPath && fs.existsSync(inputForEncoding)) {
+      try {
+        fs.unlinkSync(inputForEncoding);
+      } catch (cleanupErr) {
+        console.error(`Error cleaning up pre-trimmed file: ${cleanupErr}`);
+      }
+    }
+    
+    // Propagate timeout errors
+    if (error instanceof Error && error.message.includes('timeout')) {
+      throw new Error(`Processing timeout: operation took too long (>80s). Try simpler filters.`);
+    }
+    
     console.error(`Error in smart encoding: ${error}`);
     // Fallback to the traditional approach if smart encoding fails
     return encodeMediaWithAttempts(inputPath, outputPath, isVideo);
@@ -1321,4 +1402,76 @@ const filterTypes = {
   
   // Filters requiring special handling (complex filter syntax)
   complex: new Set(['reverse'])
+};
+
+/**
+ * Execute an ffmpeg command with a timeout
+ * @returns Promise that resolves when command completes or rejects if timeout/error occurs
+ */
+const executeWithTimeout = <T>(
+  command: ffmpeg.FfmpegCommand, 
+  timeoutMs: number = MAX_PROCESSING_TIME_MS,
+  progressCallback?: (progress: any) => void
+): Promise<T> => {
+  return new Promise<T>((resolve, reject) => {
+    let timeoutId: NodeJS.Timeout;
+    let hasCompleted = false;
+    
+    // Keep track of the ffmpeg process ID for cleanup on timeout
+    let ffmpegProcess: any = null;
+    
+    command.on('start', (cmdline) => {
+      // Access the process more safely using type assertion
+      // This is accessing a private internal property, but it's necessary for killing hung processes
+      const anyCommand = command as any;
+      if (anyCommand._currentOutput?.streams?.[0]?.proc) {
+        ffmpegProcess = anyCommand._currentOutput.streams[0].proc;
+      }
+      console.log(`Started FFmpeg process with command: ${cmdline}`);
+    });
+    
+    if (progressCallback) {
+      command.on('progress', progressCallback);
+    }
+    
+    // Set timeout to kill the process if it takes too long
+    timeoutId = setTimeout(() => {
+      if (!hasCompleted && ffmpegProcess) {
+        // Attempt to kill the ffmpeg process
+        try {
+          console.error(`FFmpeg process exceeded timeout of ${timeoutMs}ms, killing process`);
+          
+          if (ffmpegProcess.kill) {
+            // Kill the direct process if available
+            ffmpegProcess.kill('SIGKILL');
+          } else {
+            // Fallback to command's kill method
+            command.kill('SIGKILL');
+          }
+        } catch (err) {
+          console.error('Error killing ffmpeg process:', err);
+        }
+        
+        hasCompleted = true;
+        reject(new Error(`Processing timeout: operation took longer than ${timeoutMs/1000} seconds`));
+      }
+    }, timeoutMs);
+    
+    // Setup event handlers
+    command
+      .on('end', () => {
+        clearTimeout(timeoutId);
+        if (!hasCompleted) {
+          hasCompleted = true;
+          resolve(null as unknown as T);
+        }
+      })
+      .on('error', (err) => {
+        clearTimeout(timeoutId);
+        if (!hasCompleted) {
+          hasCompleted = true;
+          reject(err);
+        }
+      });
+  });
 };
