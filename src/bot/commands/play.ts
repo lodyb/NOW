@@ -27,18 +27,14 @@ export const handlePlayCommand = async (message: Message, searchTerm?: string, f
       media = results[0];
     }
 
-    // Determine the file path, resolving to absolute paths
-    let normalizedDir = path.join(process.cwd(), 'normalized');
+    // Determine the file path by standardizing the normalized path format
     let filePath;
     
     if (media.normalizedPath) {
-      // Handle relative paths starting with 'normalized/'
-      if (media.normalizedPath.startsWith('normalized/')) {
-        // Replace the 'normalized/' prefix with the actual full path
-        filePath = path.join(process.cwd(), media.normalizedPath);
-      } else {
-        filePath = media.normalizedPath;
-      }
+      const filename = path.basename(media.normalizedPath);
+      // Ensure normalized path starts with 'norm_'
+      const normalizedFilename = filename.startsWith('norm_') ? filename : `norm_${filename}`;
+      filePath = path.join(process.cwd(), 'normalized', normalizedFilename);
     } else {
       filePath = media.filePath;
     }

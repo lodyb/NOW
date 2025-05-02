@@ -193,7 +193,9 @@ export const findAllMediaPaginated = (
       
       // Then get the actual data with pagination
       let query = `
-        SELECT m.*, GROUP_CONCAT(ma.answer, '|') as answers
+        SELECT m.id, m.title, m.filePath, MAX(m.normalizedPath) as normalizedPath, 
+        m.year, m.metadata, m.isDeleted, m.thumbnails, m.createdAt,
+        GROUP_CONCAT(DISTINCT ma.answer, '|') as answers
         FROM media m
         LEFT JOIN media_answers ma ON ma.mediaId = m.id
         WHERE m.isDeleted = 0
