@@ -3,13 +3,19 @@ import express from 'express';
 import cors from 'cors';
 import path from 'path';
 import dotenv from 'dotenv';
+import session from 'express-session';
+import passport from 'passport';
+import cookieParser from 'cookie-parser';
 import { initDatabase } from './database/db';
 import { parseCommand, safeReply } from './bot/utils/helpers';
 import { handlePlayCommand } from './bot/commands/play';
 import { handleQuizCommand, handleStopCommand, handleQuizAnswer } from './bot/commands/quiz';
 import { handleUploadCommand } from './bot/commands/upload';
 import { handleImageCommand } from './bot/commands/image';
+import { handleWaveformCommand, handleSpectrogramCommand } from './bot/commands/visualization';
 import apiRoutes from './web/api';
+import authRoutes from './web/auth-routes';
+import { setupAuth, isAuthenticated } from './web/auth';
 import { generateThumbnailsForExistingMedia, scanAndProcessUnprocessedMedia } from './media/processor';
 
 // Load environment variables
@@ -23,6 +29,26 @@ const PORT = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json({ limit: '200mb' }));
 app.use(express.urlencoded({ extended: true, limit: '200mb' }));
+app.use(cookieParser());
+
+// Session configuration
+app.use(session({
+  secret: process.env.SESSION_SECRET || 'dev-secret-key',
+  resave: false,
+  saveUninitialized: false,
+  cookie: { 
+    secure: process.env.NODE_ENV === 'production',
+    maxAge: 24 * 60 * 60 * 1000 // 24 hours
+  }
+}));
+
+// Initialize Passport and session management
+app.use(passport.initialize());
+app.use(passport.session());
+setupAuth();
+
+// Auth routes before protected routes
+app.use('/', authRoutes);
 
 // Static files
 app.use(express.static(path.join(__dirname, 'web/public')));
@@ -30,7 +56,8 @@ app.use('/thumbnails', express.static(path.join(__dirname, '../thumbnails')));
 app.use('/media/normalized', express.static(path.join(__dirname, '../normalized')));
 app.use('/media/uploads', express.static(path.join(__dirname, '../uploads')));
 
-// API routes
+// Protected API routes - apply auth middleware
+app.use('/api', isAuthenticated);
 app.use('/', apiRoutes);
 
 // Health check endpoint
@@ -101,9 +128,23 @@ client.on(Events.MessageCreate, async (message) => {
           await handleUploadCommand(message);
           break;
           
+        case 'waveform':
+          await handleWaveformCommand(
+            message,
+            commandArgs.searchTerm
+          );
+          break;
+          
+        case 'spectrogram':
+          await handleSpectrogramCommand(
+            message,
+            commandArgs.searchTerm
+          );
+          break;
+          
         default:
           // Unrecognized command
-          await safeReply(message, 'Unknown command. Type `NOW play`, `NOW quiz`, `NOW image`, or `NOW upload`.');
+          await safeReply(message, 'Unknown command. Type `NOW play`, `NOW quiz`, `NOW image`, `NOW waveform`, `NOW spectrogram` or `NOW upload`.');
       }
     } catch (error) {
       console.error('Error handling command:', error);
