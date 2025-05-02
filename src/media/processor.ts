@@ -1099,6 +1099,26 @@ const applyFilters = (command: ffmpeg.FfmpegCommand, filters: MediaFilter, isVid
   // Special filters that need complex handling
   const specialFilters = ['reverse'];
   
+  // Import logger
+  const { logFFmpegCommand } = require('../utils/logger');
+  
+  // Log filter application attempt
+  logFFmpegCommand(`Applying filters to ${isVideo ? 'video' : 'audio'} file: ${JSON.stringify(filters)}`);
+  
+  // Detect if we're trying to apply video filters to audio
+  if (!isVideo) {
+    const videoFiltersRequested = Object.keys(filters).filter(key => 
+      commonVideoFilters.includes(key)
+    );
+    
+    if (videoFiltersRequested.length > 0) {
+      throw new Error(
+        `Cannot apply video filters to audio file: ${videoFiltersRequested.join(', ')}. ` +
+        `This file is audio-only and doesn't support video filters.`
+      );
+    }
+  }
+  
   // Check for any filters that need special handling
   const hasReverse = 'reverse' in filters && Boolean(filters.reverse);
   
@@ -1107,9 +1127,11 @@ const applyFilters = (command: ffmpeg.FfmpegCommand, filters: MediaFilter, isVid
     if (isVideo) {
       // For video, reverse both audio and video streams
       command.complexFilter('[0:v]reverse[v];[0:a]areverse[a]', ['v', 'a']);
+      logFFmpegCommand('Applied complex filter: reverse for video+audio');
     } else {
       // For audio, just reverse the audio stream
       command.audioFilters('areverse');
+      logFFmpegCommand('Applied audio filter: areverse');
     }
     // Remove the special filter so it's not processed again
     delete filters.reverse;
@@ -1134,10 +1156,22 @@ const applyFilters = (command: ffmpeg.FfmpegCommand, filters: MediaFilter, isVid
   
   // Apply standard filters
   if (audioFilters.length > 0) {
-    command.audioFilters(audioFilters.join(','));
+    const audioFilterStr = audioFilters.join(',');
+    command.audioFilters(audioFilterStr);
+    logFFmpegCommand(`Applied audio filters: ${audioFilterStr}`);
   }
   
   if (videoFilters.length > 0 && isVideo) {
-    command.videoFilters(videoFilters.join(','));
+    const videoFilterStr = videoFilters.join(',');
+    command.videoFilters(videoFilterStr);
+    logFFmpegCommand(`Applied video filters: ${videoFilterStr}`);
+  }
+  
+  // Log the full command
+  try {
+    logFFmpegCommand('Full ffmpeg command:', command);
+  } catch (error) {
+    // Just log and continue if we can't extract the full command
+    console.error('Could not log full command:', error);
   }
 };
