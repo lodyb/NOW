@@ -199,8 +199,8 @@ const nextRound = async (
     if (session.mediaItem.answers) {
       // Handle both string and array formats for answers
       if (typeof session.mediaItem.answers === 'string') {
-        // Legacy string format with pipe separator
-        const altAnswers = session.mediaItem.answers.split('|').map((a: string) => a.toLowerCase());
+        // Legacy string format with comma separator
+        const altAnswers = session.mediaItem.answers.split(',').map((a: string) => a.toLowerCase());
         session.correctAnswers = [...session.correctAnswers, ...altAnswers];
       } else if (Array.isArray(session.mediaItem.answers)) {
         // New array format - could be array of strings or objects with answer property

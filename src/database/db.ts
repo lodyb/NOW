@@ -128,7 +128,7 @@ export const initDatabase = (): Promise<void> => {
 export const findAllMedia = (searchTerm?: string): Promise<Media[]> => {
   return new Promise((resolve, reject) => {
     let query = `
-      SELECT m.*, GROUP_CONCAT(ma.answer, '|') as answers
+      SELECT m.*, GROUP_CONCAT(ma.answer) as answers
       FROM media m
       LEFT JOIN media_answers ma ON ma.mediaId = m.id
       WHERE m.isDeleted = 0
@@ -154,7 +154,7 @@ export const findAllMedia = (searchTerm?: string): Promise<Media[]> => {
         // Convert answers string to array and safely parse JSON fields
         const results = rows.map((row) => ({
           ...row,
-          answers: row.answers ? row.answers.split('|') : [],
+          answers: row.answers ? row.answers.split(',') : [],
           thumbnails: row.thumbnails ? JSON.parse(String(row.thumbnails)) : [],
           metadata: row.metadata ? JSON.parse(String(row.metadata)) : {},
         }));
@@ -195,7 +195,7 @@ export const findAllMediaPaginated = (
       let query = `
         SELECT m.id, m.title, m.filePath, MAX(m.normalizedPath) as normalizedPath, 
         m.year, m.metadata, m.isDeleted, m.thumbnails, m.createdAt,
-        GROUP_CONCAT(DISTINCT ma.answer, '|') as answers
+        GROUP_CONCAT(DISTINCT ma.answer) as answers
         FROM media m
         LEFT JOIN media_answers ma ON ma.mediaId = m.id
         WHERE m.isDeleted = 0
@@ -225,7 +225,7 @@ export const findAllMediaPaginated = (
           // Convert answers string to array and safely parse JSON fields
           const results = rows.map((row) => ({
             ...row,
-            answers: row.answers ? row.answers.split('|') : [],
+            answers: row.answers ? row.answers.split(',') : [],
             thumbnails: row.thumbnails ? JSON.parse(String(row.thumbnails)) : [],
             metadata: row.metadata ? JSON.parse(String(row.metadata)) : {},
           }));
@@ -243,7 +243,7 @@ export const findMediaBySearch = (searchTerm: string): Promise<Media[]> => {
   return new Promise((resolve, reject) => {
     // First do a broader search to get potential matches
     const query = `
-      SELECT m.*, GROUP_CONCAT(ma.answer, '|') as answers
+      SELECT m.*, GROUP_CONCAT(ma.answer) as answers
       FROM media m
       LEFT JOIN media_answers ma ON ma.mediaId = m.id
       GROUP BY m.id
@@ -256,7 +256,7 @@ export const findMediaBySearch = (searchTerm: string): Promise<Media[]> => {
         // Convert answers string to array and safely parse JSON fields
         const allMedia = rows.map((row) => ({
           ...row,
-          answers: row.answers ? row.answers.split('|') : [],
+          answers: row.answers ? row.answers.split(',') : [],
           thumbnails: row.thumbnails ? JSON.parse(String(row.thumbnails)) : [],
           metadata: row.metadata ? JSON.parse(String(row.metadata)) : {}
         }));
@@ -289,7 +289,7 @@ export const findMediaBySearch = (searchTerm: string): Promise<Media[]> => {
 export const getRandomMedia = (limit: number = 1): Promise<Media[]> => {
   return new Promise((resolve, reject) => {
     const query = `
-      SELECT m.*, GROUP_CONCAT(ma.answer, '|') as answers
+      SELECT m.*, GROUP_CONCAT(ma.answer) as answers
       FROM media m
       LEFT JOIN media_answers ma ON ma.mediaId = m.id
       GROUP BY m.id
@@ -304,7 +304,7 @@ export const getRandomMedia = (limit: number = 1): Promise<Media[]> => {
         // Convert answers string to array and safely parse JSON fields
         const results = rows.map((row) => ({
           ...row,
-          answers: row.answers ? row.answers.split('|') : [],
+          answers: row.answers ? row.answers.split(',') : [],
           thumbnails: row.thumbnails ? JSON.parse(String(row.thumbnails)) : [],
           metadata: row.metadata ? JSON.parse(String(row.metadata)) : {}
         }));
@@ -460,7 +460,7 @@ export const updateMediaWaveform = (normalizedFileName: string, visualizationPat
 export const getMediaById = async (id: number): Promise<Media | null> => {
   return new Promise((resolve, reject) => {
     db.get(
-      `SELECT m.*, GROUP_CONCAT(ma.answer, '|') as answers 
+      `SELECT m.*, GROUP_CONCAT(ma.answer) as answers 
        FROM media m
        LEFT JOIN media_answers ma ON m.id = ma.mediaId
        WHERE m.id = ?
@@ -480,7 +480,7 @@ export const getMediaById = async (id: number): Promise<Media | null> => {
         // Process the concatenated answers and thumbnails with safe type handling
         const result: Media = {
           ...row,
-          answers: row.answers ? row.answers.split('|') : [],
+          answers: row.answers ? row.answers.split(',') : [],
           thumbnails: row.thumbnails ? JSON.parse(String(row.thumbnails)) : [],
           metadata: row.metadata ? JSON.parse(String(row.metadata)) : {}
         };
