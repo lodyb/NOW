@@ -146,13 +146,16 @@ export const processMedia = async (
   const outputPath = path.join(PROCESSED_DIR, outputFilename);
   const command = ffmpeg(inputPath);
   
+  // Check if media is video or audio
+  const isVideo = await isVideoFile(inputPath);
+  
   // Apply any filters
   if (options.filters && Object.keys(options.filters).length > 0) {
-    const filterString = Object.entries(options.filters)
-      .map(([key, value]) => `${key}=${value}`)
-      .join(',');
-    
-    command.audioFilters(filterString);
+    try {
+      applyFilters(command, options.filters, isVideo);
+    } catch (error) {
+      throw new Error(`Error applying filters: ${error.message}`);
+    }
   }
   
   // Apply clip options
@@ -1037,4 +1040,69 @@ const calculateBitrates = (
   }
 
   return { audioBitrateKbps, videoBitrateKbps, trimDurationSeconds };
+};
+
+/**
+ * Apply ffmpeg filters to a command
+ */
+const applyFilters = (command: ffmpeg.FfmpegCommand, filters: MediaFilter, isVideo: boolean): void => {
+  // Common audio filters that can be applied directly
+  const commonAudioFilters = [
+    'volume', 'loudnorm', 'equalizer', 'highpass', 'lowpass', 
+    'bass', 'treble', 'acompressor', 'aecho', 'areverb',
+    'aphaser', 'vibrato', 'tempo', 'atempo', 'pitch', 'agate',
+    'compand', 'normalizer'
+  ];
+  
+  // Common video filters that need to be applied via -vf
+  const commonVideoFilters = [
+    'fade', 'crop', 'scale', 'rotate', 'transpose', 'hflip', 'vflip',
+    'unsharp', 'sharpen', 'eq', 'hue', 'saturation', 'contrast',
+    'boxblur', 'avgblur', 'overlay', 'drawtext'
+  ];
+  
+  // Special filters that need complex handling
+  const specialFilters = ['reverse'];
+  
+  // Check for any filters that need special handling
+  const hasReverse = 'reverse' in filters && Boolean(filters.reverse);
+  
+  // If we have a special filter, handle it directly
+  if (hasReverse) {
+    if (isVideo) {
+      // For video, reverse both audio and video streams
+      command.complexFilter('[0:v]reverse[v];[0:a]areverse[a]', ['v', 'a']);
+    } else {
+      // For audio, just reverse the audio stream
+      command.audioFilters('areverse');
+    }
+    // Remove the special filter so it's not processed again
+    delete filters.reverse;
+  }
+  
+  // Filter keys by type
+  const audioFilters: string[] = [];
+  const videoFilters: string[] = [];
+  
+  // Process remaining filters
+  Object.entries(filters).forEach(([key, value]) => {
+    const filterValue = typeof value === 'number' ? value.toString() : value;
+    const filterStr = `${key}=${filterValue}`;
+    
+    if (isVideo && commonVideoFilters.includes(key)) {
+      videoFilters.push(filterStr);
+    } else {
+      // Default to audio filter
+      audioFilters.push(filterStr);
+    }
+  });
+  
+  // Apply standard filters
+  if (audioFilters.length > 0) {
+    command.audioFilters(audioFilters.join(','));
+  }
+  
+  if (videoFilters.length > 0 && isVideo) {
+    command.videoFilters(videoFilters.join(','));
+  }
 };
