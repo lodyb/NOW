@@ -37,11 +37,7 @@ export const logFFmpegError = (message: string, error: any): void => {
   console.error(logEntry);
   
   try {
-    fs.appendFileSync(
-      ERROR_LOG_FILE,
-      `${logEntry}\n`,
-      { encoding: 'utf8' }
-    );
+    fs.appendFileSync(ERROR_LOG_FILE, `${logEntry}\n`, { encoding: 'utf8' });
   } catch (e) {
     console.error(`Error writing to error log: ${e}`);
   }
