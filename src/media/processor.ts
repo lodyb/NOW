@@ -3,6 +3,7 @@ import path from 'path';
 import fs from 'fs';
 import { execSync } from 'child_process';
 import { db } from '../database/db';
+import { logFFmpegCommand, logFFmpegError } from '../utils/logger';
 
 // Define storage paths
 const UPLOADS_DIR = path.join(process.cwd(), 'uploads');
@@ -1081,9 +1082,6 @@ const calculateBitrates = (
  * Apply ffmpeg filters to a command
  */
 const applyFilters = (command: ffmpeg.FfmpegCommand, filters: MediaFilter, isVideo: boolean): void => {
-  // Import logger
-  const { logFFmpegCommand, logFFmpegError } = require('../utils/logger');
-  
   try {
     // Log filter application attempt
     logFFmpegCommand(`Applying filters to ${isVideo ? 'video' : 'audio'} file: ${JSON.stringify(filters)}`);
@@ -1154,15 +1152,6 @@ const applyFilters = (command: ffmpeg.FfmpegCommand, filters: MediaFilter, isVid
       const videoFilterStr = videoFilters.join(',');
       command.videoFilters(videoFilterStr);
       logFFmpegCommand(`Applied video filters: ${videoFilterStr}`);
-    }
-    
-    // Log the full command (safe version)
-    try {
-      if (command && typeof command === 'object') {
-        logFFmpegCommand('Full ffmpeg command constructed successfully');
-      }
-    } catch (error) {
-      console.error('Could not log full command:', error);
     }
   } catch (error) {
     console.error(`Error in applyFilters: ${error}`);
