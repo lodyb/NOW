@@ -11,7 +11,6 @@ import { handleUploadCommand } from './bot/commands/upload';
 import { handleImageCommand } from './bot/commands/image';
 import apiRoutes from './web/api';
 import { generateThumbnailsForExistingMedia, scanAndProcessUnprocessedMedia } from './media/processor';
-import { migrateNormalizedPaths } from './database/migrations';
 
 // Load environment variables
 dotenv.config();
@@ -119,40 +118,32 @@ client.on(Events.MessageCreate, async (message) => {
 // Main initialization function
 async function init() {
   try {
-    // Initialize database and run migrations
-    await initDatabase()
-      .then(() => migrateNormalizedPaths())
-      .then(() => {
-        console.log('Database initialized and migrations complete');
-        
-        // Start Express server
-        app.listen(PORT, () => {
-          console.log(`Web server running on port ${PORT}`);
-          console.log(`Media manager available at http://localhost:${PORT}/`);
-          
-          // Scan for media that needs processing (files that exist in DB but not normalized)
-          console.log('Starting scan for unprocessed media...');
-          scanAndProcessUnprocessedMedia()
-            .then(() => console.log('Media processing scan completed'))
-            .catch(error => console.error('Error processing media files:', error));
-          
-          // Generate thumbnails for existing videos without them
-          generateThumbnailsForExistingMedia()
-            .catch(error => console.error('Error generating thumbnails:', error));
-        });
-        
-        // Log in to Discord
-        const token = process.env.DISCORD_TOKEN;
-        if (!token) {
-          throw new Error('Missing DISCORD_TOKEN environment variable');
-        }
-        
-        await client.login(token);
-      })
-      .catch(err => {
-        console.error('Database initialization error:', err);
-        process.exit(1);
-      });
+    await initDatabase();
+    console.log('Database initialized');
+    
+    // Start Express server
+    app.listen(PORT, () => {
+      console.log(`Web server running on port ${PORT}`);
+      console.log(`Media manager available at http://localhost:${PORT}/`);
+      
+      // Scan for media that needs processing (files that exist in DB but not normalized)
+      console.log('Starting scan for unprocessed media...');
+      scanAndProcessUnprocessedMedia()
+        .then(() => console.log('Media processing scan completed'))
+        .catch(error => console.error('Error processing media files:', error));
+      
+      // Generate thumbnails for existing videos without them
+      generateThumbnailsForExistingMedia()
+        .catch(error => console.error('Error generating thumbnails:', error));
+    });
+    
+    // Log in to Discord
+    const token = process.env.DISCORD_TOKEN;
+    if (!token) {
+      throw new Error('Missing DISCORD_TOKEN environment variable');
+    }
+    
+    await client.login(token);
   } catch (error) {
     console.error('Initialization error:', error);
     process.exit(1);
