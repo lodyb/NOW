@@ -1299,24 +1299,19 @@ const applyFilters = (command: ffmpeg.FfmpegCommand, filters: MediaFilter, isVid
     if ('datamosh' in filters || 'glitch' in filters) {
       const glitchLevel = Number(filters.datamosh || filters.glitch) || 1;
       
-      // Use huffyuv output without bitstream filters for first pass
-      command.outputOptions('-c:v libx264');
-      command.outputOptions('-c:a libopus');
-      command.outputOptions('-pix_fmt yuv420p');
+      // Use complex filtergraph for datamosh/glitch effect
+      const intensity = Math.max(1, Math.floor(100/glitchLevel));
+      command.complexFilter(`[0:v]noise=alls=${intensity}:allf=t[v]`);
       
-      // Add video corruption filter as a complex filter instead of bsf
-      const noiseAmount = Math.max(1, Math.floor(10000000/glitchLevel));
-      command.videoFilters(`noise=alls=${noiseAmount}:allf=t`);
-      
-      if (glitchLevel > 3) {
-        // Also apply to audio at higher levels
-        command.audioFilters(`anoisesrc=a=${Math.min(0.1, glitchLevel * 0.01)}:color=pink[noise];[0:a][noise]amix=weights=10|1`);
+      // Apply subtle noise to audio too for higher glitch levels
+      if (glitchLevel > 3 && isVideo) {
+        command.complexFilter(`[0:a]aresample=44100,aformat=sample_fmts=fltp[a1];anoisesrc=a=${Math.min(0.03, glitchLevel * 0.005)}:color=pink[a2];[a1][a2]amix=weights=5|1[a]`, ['v', 'a']);
       }
       
-      logFFmpegCommand(`Applied datamosh/glitch effect: noise with amount ${noiseAmount}`);
+      logFFmpegCommand(`Applied datamosh/glitch effect with intensity ${intensity}`);
       delete filters.datamosh;
       delete filters.glitch;
-      return; // Skip other filter processing as we've set specific codecs
+      return; // Skip other filter processing
     }
     
     // Handle noise generation
@@ -1325,23 +1320,39 @@ const applyFilters = (command: ffmpeg.FfmpegCommand, filters: MediaFilter, isVid
       
       if (isVideo) {
         if (type === 'mono' || type === 'bw') {
-          // Black and white noise
-          command.videoFilters('geq=lum=random(1)*255:cb=128:cr=128');
+          // Black and white noise using complex filtergraph
+          command.complexFilter(`[0:v]geq=lum=random(1)*255:cb=128:cr=128[v]`);
         } else {
-          // Colored noise (default)
-          command.videoFilters(`geq=lum=random(1)*255:cb=random(1)*255-128:cr=random(1)*255-128`);
+          // Colored noise using complex filtergraph
+          command.complexFilter(`[0:v]geq=r=random(1)*255:g=random(1)*255:b=random(1)*255[v]`);
         }
         
-        // Add audio noise
-        command.audioFilters('anoisesrc=a=0.05:color=white');
+        // Add audio white noise using complex filtergraph
+        command.complexFilter(`[0:a]aresample=44100,aformat=sample_fmts=fltp[a1];anoisesrc=a=0.03:color=white[a2];[a1][a2]amix=weights=3|1[a]`, ['v', 'a']);
         logFFmpegCommand(`Applied ${type === 'mono' || type === 'bw' ? 'monochrome' : 'color'} noise filter`);
       } else {
         // Audio only noise
-        command.audioFilters('anoisesrc=a=0.05:color=white');
+        command.complexFilter(`[0:a]aresample=44100,aformat=sample_fmts=fltp[a1];anoisesrc=a=0.03:color=white[a2];[a1][a2]amix=weights=3|1[a]`, ['a']);
         logFFmpegCommand('Applied audio noise filter');
       }
       
       delete filters.noise;
+      return; // Skip other filter processing
+    }
+    
+    // Handle macroblock effect
+    if ('macroblock' in filters) {
+      const strength = Number(filters.macroblock) || 1;
+      const qValue = Math.min(30, Math.max(2, Math.floor(2 + (strength * 3))));
+      
+      // Use the right codec and settings for macroblock effect
+      command.outputOptions('-c:v mpeg2video');
+      command.outputOptions(`-q:v ${qValue}`);
+      command.videoFilters('noise=alls=12:allf=t');
+      
+      logFFmpegCommand(`Applied macroblock effect with q:v=${qValue}`);
+      delete filters.macroblock;
+      return; // Skip other filter processing
     }
     
     // Detect if we're trying to apply video filters to audio
