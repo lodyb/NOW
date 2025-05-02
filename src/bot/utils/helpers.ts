@@ -119,3 +119,23 @@ export const generateProgressiveHint = (
     })
     .join(' ');
 };
+
+/**
+ * Safely send a reply to a message, handling permission errors gracefully
+ * @param message The Discord message to reply to
+ * @param content The content to send in the reply
+ * @returns True if successful, false if failed
+ */
+export const safeReply = async (message: Message, content: string | { files: any[] }): Promise<boolean> => {
+  try {
+    await message.reply(content);
+    return true;
+  } catch (error) {
+    if (error.code === 50013) { // Discord Missing Permissions error
+      console.warn(`Missing permissions to reply in ${message.channel.id}`);
+    } else {
+      console.error('Error sending reply:', error);
+    }
+    return false;
+  }
+};

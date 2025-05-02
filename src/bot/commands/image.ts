@@ -1,5 +1,6 @@
 import { Message, AttachmentBuilder } from 'discord.js';
 import { findMediaBySearch, getRandomMedia } from '../../database/db';
+import { safeReply } from '../utils/helpers';
 import path from 'path';
 import fs from 'fs';
 
@@ -11,7 +12,7 @@ export const handleImageCommand = async (message: Message, searchTerm?: string) 
       // Get random media when no search term provided
       const randomResults = await getRandomMedia(1);
       if (randomResults.length === 0) {
-        await message.reply('No media found in the database');
+        await safeReply(message, 'No media found in the database');
         return;
       }
       media = randomResults[0];
@@ -19,7 +20,7 @@ export const handleImageCommand = async (message: Message, searchTerm?: string) 
       const results = await findMediaBySearch(searchTerm);
       
       if (results.length === 0) {
-        await message.reply(`No media found for "${searchTerm}"`);
+        await safeReply(message, `No media found for "${searchTerm}"`);
         return;
       }
       media = results[0];
@@ -27,7 +28,7 @@ export const handleImageCommand = async (message: Message, searchTerm?: string) 
 
     // Check if the media has any thumbnails
     if (!media.thumbnails || media.thumbnails.length === 0) {
-      await message.reply('This media does not have any thumbnails or visualizations.');
+      await safeReply(message, 'This media does not have any thumbnails or visualizations.');
       return;
     }
 
@@ -38,7 +39,7 @@ export const handleImageCommand = async (message: Message, searchTerm?: string) 
     // Extract just the filename from the path
     const filename = thumbnailPath.split('/').pop();
     if (!filename) {
-      await message.reply('Error retrieving thumbnail information.');
+      await safeReply(message, 'Error retrieving thumbnail information.');
       return;
     }
     
@@ -46,7 +47,7 @@ export const handleImageCommand = async (message: Message, searchTerm?: string) 
     const absoluteThumbnailPath = path.join(process.cwd(), 'thumbnails', filename);
     
     if (!fs.existsSync(absoluteThumbnailPath)) {
-      await message.reply('Thumbnail file not found');
+      await safeReply(message, 'Thumbnail file not found');
       return;
     }
     
@@ -59,12 +60,12 @@ export const handleImageCommand = async (message: Message, searchTerm?: string) 
     const attachment = new AttachmentBuilder(absoluteThumbnailPath);
     
     // Send the message with the image
-    await message.reply({ 
+    await safeReply(message, { 
       content: `Here's a ${visualType} of the ${mediaType}: **${media.title}**`,
       files: [attachment] 
     });
   } catch (error) {
     console.error('Error handling image command:', error);
-    await message.reply(`An error occurred: ${(error as Error).message}`);
+    await safeReply(message, `An error occurred: ${(error as Error).message}`);
   }
 };

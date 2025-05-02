@@ -4,7 +4,7 @@ import cors from 'cors';
 import path from 'path';
 import dotenv from 'dotenv';
 import { initDatabase } from './database/db';
-import { parseCommand } from './bot/utils/helpers';
+import { parseCommand, safeReply } from './bot/utils/helpers';
 import { handlePlayCommand } from './bot/commands/play';
 import { handleQuizCommand, handleStopCommand, handleQuizAnswer } from './bot/commands/quiz';
 import { handleUploadCommand } from './bot/commands/upload';
@@ -103,15 +103,31 @@ client.on(Events.MessageCreate, async (message) => {
           
         default:
           // Unrecognized command
-          await message.reply('Unknown command. Type `NOW play`, `NOW quiz`, `NOW image`, or `NOW upload`.');
+          await safeReply(message, 'Unknown command. Type `NOW play`, `NOW quiz`, `NOW image`, or `NOW upload`.');
       }
     } catch (error) {
       console.error('Error handling command:', error);
-      await message.reply(`An error occurred: ${(error as Error).message}`);
+      // Don't attempt to send another message if we already had an error
+      // This prevents the cascade of permission errors
+      if (error.code !== 50013) {
+        try {
+          await safeReply(message, `An error occurred: ${(error as Error).message}`);
+        } catch (replyError) {
+          console.error('Failed to send error reply:', replyError);
+        }
+      }
     }
   } else {
     // Handle potential quiz answers (all non-command messages)
-    await handleQuizAnswer(message);
+    try {
+      await handleQuizAnswer(message);
+    } catch (error) {
+      console.error('Error handling quiz answer:', error);
+      // Don't log permission errors for quiz answers since they're frequent
+      if (error.code !== 50013) {
+        console.error(error);
+      }
+    }
   }
 });
 

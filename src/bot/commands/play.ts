@@ -1,6 +1,7 @@
 import { Message, AttachmentBuilder } from 'discord.js';
 import { findMediaBySearch, getRandomMedia } from '../../database/db';
 import { processMedia, parseFilterString, parseClipOptions } from '../../media/processor';
+import { safeReply } from '../utils/helpers';
 import path from 'path';
 import fs from 'fs';
 import crypto from 'crypto';
@@ -13,7 +14,7 @@ export const handlePlayCommand = async (message: Message, searchTerm?: string, f
       // Get random media when no search term provided
       const randomResults = await getRandomMedia(1);
       if (randomResults.length === 0) {
-        await message.reply('No media found in the database');
+        await safeReply(message, 'No media found in the database');
         return;
       }
       media = randomResults[0];
@@ -21,7 +22,7 @@ export const handlePlayCommand = async (message: Message, searchTerm?: string, f
       const results = await findMediaBySearch(searchTerm);
       
       if (results.length === 0) {
-        await message.reply(`No media found for "${searchTerm}"`);
+        await safeReply(message, `No media found for "${searchTerm}"`);
         return;
       }
       media = results[0];
@@ -57,21 +58,21 @@ export const handlePlayCommand = async (message: Message, searchTerm?: string, f
         filePath = await processMedia(filePath, outputFilename, options);
       } catch (error) {
         console.error('Error processing media:', error);
-        await message.reply(`Error applying filters: ${(error as Error).message}`);
+        await safeReply(message, `Error applying filters: ${(error as Error).message}`);
         return;
       }
     }
     
     if (!fs.existsSync(filePath)) {
       console.error(`File not found: ${filePath}`);
-      await message.reply('Error: Media file not found');
+      await safeReply(message, 'Error: Media file not found');
       return;
     }
     
     const attachment = new AttachmentBuilder(filePath);
-    await message.reply({ files: [attachment] });
+    await safeReply(message, { files: [attachment] });
   } catch (error) {
     console.error('Error handling play command:', error);
-    await message.reply(`An error occurred: ${(error as Error).message}`);
+    await safeReply(message, `An error occurred: ${(error as Error).message}`);
   }
 };
