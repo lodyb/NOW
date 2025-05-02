@@ -17,6 +17,10 @@ import fs from 'fs';
 import crypto from 'crypto';
 import { generateProgressiveHint, generateRandomUnicodeMask } from '../utils/helpers';
 
+// Define storage paths
+const NORMALIZED_DIR = path.join(process.cwd(), 'normalized');
+const UPLOADS_DIR = path.join(process.cwd(), 'uploads');
+
 interface QuizSession {
   guildId: string;
   channelId: string;
@@ -212,7 +216,17 @@ const nextRound = async (
       }
     }
     
-    let filePath = session.mediaItem.normalizedPath || session.mediaItem.filePath;
+    // Get the correct file path, considering normalized vs original path
+    let filePath: string;
+    if (session.mediaItem.normalizedPath) {
+      // normalizedPath is just the filename
+      filePath = path.join(NORMALIZED_DIR, session.mediaItem.normalizedPath);
+    } else if (session.mediaItem.filePath) {
+      // filePath is already the full path
+      filePath = session.mediaItem.filePath;
+    } else {
+      throw new Error('Media item has no file path');
+    }
     
     // Apply filters or clip options if provided
     if (filterString || (clipOptions && Object.keys(clipOptions).length > 0)) {
@@ -238,7 +252,7 @@ const nextRound = async (
     }
     
     if (!fs.existsSync(filePath)) {
-      await channel.send('Error: Media file not found');
+      await channel.send(`Error: Media file not found at ${filePath}`);
       return;
     }
     
@@ -316,24 +330,28 @@ const scheduleHint = (session: QuizSession, channel: any) => {
       // 25% chance to show a visual hint (thumbnail, waveform, or spectrogram)
       if (Math.random() < 0.25 && !session.lastVisualHint) {
         try {
-          const mediaPath = session.mediaItem.normalizedPath || session.mediaItem.filePath;
-          const baseName = path.basename(mediaPath);
+          // Get the correct base filename, not the full path
+          const baseFilename = session.mediaItem.normalizedPath ? 
+            path.basename(session.mediaItem.normalizedPath) : 
+            path.basename(session.mediaItem.filePath);
           
           // Determine the type of media and available visual hints
-          const isVideo = mediaPath.endsWith('.mp4');
+          const isVideo = baseFilename.endsWith('.mp4');
           const hintOptions = [];
           
           if (isVideo) {
-            // Check if thumbnails exist
-            const thumb0Path = path.join(process.cwd(), 'thumbnails', `${baseName}_thumb0.jpg`);
-            const thumb1Path = path.join(process.cwd(), 'thumbnails', `${baseName}_thumb1.jpg`);
+            // Generate and check full paths to thumbnail files
+            const baseNameWithoutExt = baseFilename.replace('.mp4', '');
+            const thumb0Path = path.join(process.cwd(), 'thumbnails', `${baseNameWithoutExt}_thumb0.jpg`);
+            const thumb1Path = path.join(process.cwd(), 'thumbnails', `${baseNameWithoutExt}_thumb1.jpg`);
             
             if (fs.existsSync(thumb0Path)) hintOptions.push(thumb0Path);
             if (fs.existsSync(thumb1Path)) hintOptions.push(thumb1Path);
           } else {
             // Audio file - check for waveform/spectrogram
-            const waveformPath = path.join(process.cwd(), 'thumbnails', `${baseName}_waveform.png`);
-            const spectrogramPath = path.join(process.cwd(), 'thumbnails', `${baseName}_spectrogram.png`);
+            const baseNameWithoutExt = baseFilename.replace('.ogg', '');
+            const waveformPath = path.join(process.cwd(), 'thumbnails', `${baseNameWithoutExt}_waveform.png`);
+            const spectrogramPath = path.join(process.cwd(), 'thumbnails', `${baseNameWithoutExt}_spectrogram.png`);
             
             if (fs.existsSync(waveformPath)) hintOptions.push(waveformPath);
             if (fs.existsSync(spectrogramPath)) hintOptions.push(spectrogramPath);
