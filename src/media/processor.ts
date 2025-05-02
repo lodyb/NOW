@@ -154,7 +154,7 @@ export const processMedia = async (
     try {
       applyFilters(command, options.filters, isVideo);
     } catch (error) {
-      throw new Error(`Error applying filters: ${error.message}`);
+      throw new Error(`Error applying filters: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
   
