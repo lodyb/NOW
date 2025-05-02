@@ -131,7 +131,8 @@ export const safeReply = async (message: Message, content: string | { files: any
     await message.reply(content);
     return true;
   } catch (error) {
-    if (error.code === 50013) { // Discord Missing Permissions error
+    const discordError = error as { code?: number };
+    if (discordError.code === 50013) { // Discord Missing Permissions error
       console.warn(`Missing permissions to reply in ${message.channel.id}`);
     } else {
       console.error('Error sending reply:', error);
