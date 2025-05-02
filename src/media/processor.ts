@@ -1298,71 +1298,87 @@ const applyFilters = (command: ffmpeg.FfmpegCommand, filters: MediaFilter, isVid
     // Handle datamosh/glitch effects
     if ('datamosh' in filters || 'glitch' in filters) {
       const glitchLevel = Number(filters.datamosh || filters.glitch) || 1;
+      const noiseValue = Math.max(1, Math.floor(1000000/glitchLevel));
       
       if (isVideo) {
-        // For video, use a simpler noise filter with controlled parameters
-        const amount = Math.max(1, Math.min(40, Math.floor(8 * glitchLevel)));
-        command.videoFilters(`noise=c0s=${amount}:c1s=${amount}:c2s=${amount}:all_seed=${Math.floor(Math.random() * 10000)}`);
+        // Use huffyuv codec with bitstream filter for authentic glitching
+        command.outputOptions('-c:v huffyuv');
+        command.outputOptions(`-bsf:v noise=${noiseValue}`);
         
-        // Don't apply audio filter - it causes errors with some inputs
+        // Add audio glitching for higher levels
+        if (glitchLevel > 3) {
+          command.outputOptions('-c:a pcm_s16le'); 
+          command.outputOptions(`-bsf:a noise=${Math.max(50, 500/glitchLevel)}`);
+        }
       } else {
-        // For audio-only, add mild distortion
-        command.audioFilters(`afftdn=nf=-20`);
+        // For audio-only files, just add noise to the bitstream
+        command.outputOptions('-c:a pcm_s16le');
+        command.outputOptions(`-bsf:a noise=${Math.max(50, 500/glitchLevel)}`);
       }
       
       logFFmpegCommand(`Applied datamosh/glitch effect with level ${glitchLevel}`);
       delete filters.datamosh;
       delete filters.glitch;
-      return;
+      // Don't return - allow filter combinations
     }
     
-    // Handle noise generation
+    // Handle noise generation - now using bitstream filters
     if ('noise' in filters) {
       const type = String(filters.noise).toLowerCase();
+      const intensity = Number(filters.noise) || 5;
+      const noiseValue = Math.max(1, Math.floor(1000000/intensity));
       
       if (isVideo) {
+        // Add noise through bitstream filter for true corruption
+        command.outputOptions('-c:v huffyuv');
+        command.outputOptions(`-bsf:v noise=${noiseValue}`);
+        
+        // Apply mono/color variation if specified
         if (type === 'mono' || type === 'bw') {
-          // Black and white noise using standard filter
-          command.videoFilters(`geq=lum=random(1)*255:cb=128:cr=128`);
-        } else {
-          // Colored noise using standard filter
-          command.videoFilters(`geq=r=random(1)*255:g=random(1)*255:b=random(1)*255`);
+          command.videoFilters('hue=s=0'); // Remove saturation
         }
         
-        // Add audio white noise
-        command.audioFilters(`aeval=0.05*random(0)`);
+        // Add audio noise for a complete effect
+        command.outputOptions('-c:a pcm_s16le');
+        command.outputOptions(`-bsf:a noise=${Math.max(100, 1000/intensity)}`);
       } else {
         // Audio only noise
-        command.audioFilters(`aeval=0.05*random(0)`);
+        command.outputOptions('-c:a pcm_s16le');
+        command.outputOptions(`-bsf:a noise=${Math.max(100, 1000/intensity)}`);
       }
       
-      logFFmpegCommand(`Applied ${type === 'mono' || type === 'bw' ? 'monochrome' : 'color'} noise filter`);
+      logFFmpegCommand(`Applied ${type === 'mono' || type === 'bw' ? 'monochrome' : 'color'} noise effect with intensity ${intensity}`);
       delete filters.noise;
-      return;
+      // Don't return - allow filter combinations
     }
     
-    // Handle macroblock effect
-    if ('macroblock' in filters) {
-      const strength = Number(filters.macroblock) || 1;
-      const qValue = Math.min(50000, Math.max(2, Math.floor(2 + (strength * 3))));
-      
-      if (isVideo) {
-        // Apply noise filter first
-        command.videoFilters('noise=alls=12:allf=t');
+    // Handle pixelshift effect (forcing different pixel format)
+    if ('pixelshift' in filters) {
+      if (!isVideo) {
+        logFFmpegCommand('Pixelshift only works with video files, skipping');
+        delete filters.pixelshift;
+      } else {
+        const mode = String(filters.pixelshift).toLowerCase();
+        // Different pixel formats to create interesting corruption effects
+        const pixelFormats: Record<string, string> = {
+          'rgb': 'rgb24',
+          'yuv': 'yuv422p16le',
+          'gray': 'gray16le',
+          'bgr': 'bgr444le',
+          'gbr': 'gbrp10le',
+          'yuv10': 'yuv420p10le',
+          'yuv16': 'yuv420p16le'
+        };
         
-        // Use the right codec and settings for macroblock effect
-        command.outputOptions('-c:v mpeg2video');
-        command.outputOptions(`-q:v ${qValue}`);
+        // Default to yuv16 if not specified
+        const pixFormat = pixelFormats[mode] || 'yuv420p16le';
         
-        // If high strength, add bitstream noise filter
-        if (strength > 5) {
-          command.outputOptions(`-bsf:v noise=${Math.max(100, 1000000/strength)}`);
-        }
+        // Use a filter to interpret the video in a different colorspace
+        command.videoFilters(`format=${pixFormat},format=yuv420p`);
+        
+        logFFmpegCommand(`Applied pixelshift using ${pixFormat} colorspace`);
+        delete filters.pixelshift;
       }
-      
-      logFFmpegCommand(`Applied macroblock effect with q:v=${qValue}`);
-      delete filters.macroblock;
-      return;
     }
     
     // Detect if we're trying to apply video filters to audio
