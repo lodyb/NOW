@@ -37,6 +37,7 @@ interface QuizSession {
   lastVisualHint?: string | null;
   filterString?: string;
   clipOptions?: { duration?: string; start?: string };
+  roundLocked: boolean; // Prevents multiple answers for the same round
 }
 
 const activeSessions = new Map<string, QuizSession>();
@@ -111,25 +112,49 @@ export const handleQuizAnswer = async (message: Message) => {
     return;
   }
   
-  // Then check fuzzy matching
-  const fuse = new Fuse(session.correctAnswers, {
-    includeScore: true,
-    threshold: 0.5 // More lenient threshold
+  // Stricter fuzzy matching - ensure all words are present with typo forgiveness
+  const correctMatch = session.correctAnswers.find(correctAnswer => {
+    // Split into words
+    const correctWords = correctAnswer.toLowerCase().split(/\s+/);
+    const answerWords = answer.split(/\s+/);
+    
+    // Must have at least the same number of words
+    if (answerWords.length < correctWords.length) {
+      return false;
+    }
+    
+    // Check each correct word is present with typo tolerance
+    const fuse = new Fuse(answerWords, {
+      includeScore: true,
+      threshold: 0.3 // Stricter threshold for individual words
+    });
+    
+    // Each correct word must have a match in the answer
+    return correctWords.every(correctWord => {
+      const result = fuse.search(correctWord);
+      return result.length > 0 && result[0].score! < 0.4;
+    });
   });
   
-  const result = fuse.search(answer);
-  
-  if (result.length > 0 && result[0].score! < 0.6) {
+  if (correctMatch) {
     await awardPoint(message, session);
   }
 };
 
 // Helper function to award points and move to next round
 const awardPoint = async (message: Message, session: QuizSession) => {
+  // Prevent race condition by checking if round is already locked
+  if (session.roundLocked) {
+    return;
+  }
+  
+  // Lock the round immediately to prevent multiple answers
+  session.roundLocked = true;
+  
   const userId = message.author.id;
   const username = message.author.username;
   
-  // Prevent duplicate scoring - only prevent for CURRENT round
+  // Add points for the current player
   if (!session.players.has(userId)) {
     // New player
     session.players.set(userId, 1);
@@ -182,7 +207,8 @@ const startQuizSession = async (
     players: new Map(),
     isActive: true,
     filterString, 
-    clipOptions
+    clipOptions,
+    roundLocked: false // Initialize roundLocked to false
   };
   
   activeSessions.set(voiceChannel.guild.id, session);
@@ -203,6 +229,9 @@ const nextRound = async (
   session.currentRound++;
   session.totalRounds++;
   session.revealPercentage = 0;
+  
+  // Unlock the round for the new round
+  session.roundLocked = false;
   
   try {
     // Get random media
@@ -283,6 +312,45 @@ const nextRound = async (
     const maskedTitle = generateRandomUnicodeMask(session.mediaItem.title);
     await channel.send(`Hint: ${maskedTitle}`);
     
+    // Show a visual hint at the beginning of every round
+    try {
+      // Get the correct base filename, not the full path
+      const baseFilename = session.mediaItem.normalizedPath ? 
+        path.basename(session.mediaItem.normalizedPath) : 
+        path.basename(session.mediaItem.filePath);
+      
+      // Determine the type of media and available visual hints
+      const isVideo = baseFilename.endsWith('.mp4');
+      const hintOptions = [];
+      
+      if (isVideo) {
+        // Generate and check full paths to thumbnail files
+        const baseNameWithoutExt = baseFilename.replace('.mp4', '');
+        const thumb0Path = path.join(process.cwd(), 'thumbnails', `${baseNameWithoutExt}_thumb0.jpg`);
+        const thumb1Path = path.join(process.cwd(), 'thumbnails', `${baseNameWithoutExt}_thumb1.jpg`);
+        
+        if (fs.existsSync(thumb0Path)) hintOptions.push(thumb0Path);
+        if (fs.existsSync(thumb1Path)) hintOptions.push(thumb1Path);
+      } else {
+        // Audio file - check for waveform/spectrogram
+        const baseNameWithoutExt = baseFilename.replace('.ogg', '');
+        const waveformPath = path.join(process.cwd(), 'thumbnails', `${baseNameWithoutExt}_waveform.png`);
+        const spectrogramPath = path.join(process.cwd(), 'thumbnails', `${baseNameWithoutExt}_spectrogram.png`);
+        
+        if (fs.existsSync(waveformPath)) hintOptions.push(waveformPath);
+        if (fs.existsSync(spectrogramPath)) hintOptions.push(spectrogramPath);
+      }
+      
+      if (hintOptions.length > 0) {
+        // Randomly select one of the available hints
+        const selectedHint = hintOptions[Math.floor(Math.random() * hintOptions.length)];
+        await channel.send({ content: 'Here\'s a visual hint:', files: [selectedHint] });
+        session.lastVisualHint = selectedHint;
+      }
+    } catch (error) {
+      console.error('Error providing visual hint:', error);
+    }
+    
     // Play the audio
     const audioPlayer = createAudioPlayer();
     const resource = createAudioResource(filePath);
@@ -327,8 +395,8 @@ const scheduleHint = (session: QuizSession, channel: any) => {
   
   // Schedule new hint
   session.timeout = setTimeout(async () => {
-    // Increment reveal percentage
-    session.revealPercentage += 15;
+    // Increment reveal percentage - increased from 15% to 25% for faster hints
+    session.revealPercentage += 25;
     
     if (session.revealPercentage >= 90) {
       // No one got it, move to next round
@@ -348,7 +416,7 @@ const scheduleHint = (session: QuizSession, channel: any) => {
       const hint = generateProgressiveHint(session.mediaItem.title, session.revealPercentage);
       await channel.send(`Hint: ${hint}`);
       
-      // 25% chance to show a visual hint (thumbnail, waveform, or spectrogram)
+      // 25% chance to show a visual hint during hint cycle (in addition to round start)
       if (Math.random() < 0.25 && !session.lastVisualHint) {
         try {
           // Get the correct base filename, not the full path
