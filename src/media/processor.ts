@@ -1295,25 +1295,41 @@ const applyFilters = (command: ffmpeg.FfmpegCommand, filters: MediaFilter, isVid
       }
     }
 
-    // Handle datamosh/glitch effects
-    if ('datamosh' in filters || 'glitch' in filters) {
-      const glitchLevel = Number(filters.datamosh || filters.glitch) || 1;
-      const noiseValue = Math.max(1, Math.floor(1000000/glitchLevel));
+    // Handle macroblock effect
+    if ('macroblock' in filters) {
+      const strength = Number(filters.macroblock) || 1;
+      const qValue = Math.min(30, Math.max(2, Math.floor(2 + (strength * 3))));
       
       if (isVideo) {
-        // Use huffyuv codec with bitstream filter for authentic glitching
-        command.outputOptions('-c:v huffyuv');
-        command.outputOptions(`-bsf:v noise=${noiseValue}`);
+        // Apply noise filter first
+        command.videoFilters('noise=alls=12:allf=t');
         
-        // Add audio glitching for higher levels
-        if (glitchLevel > 3) {
-          command.outputOptions('-c:a pcm_s16le'); 
-          command.outputOptions(`-bsf:a noise=${Math.max(50, 500/glitchLevel)}`);
+        // Use the right codec and settings for macroblock effect
+        command.outputOptions('-c:v mpeg2video');
+        command.outputOptions(`-q:v ${qValue}`);
+        
+        // If high strength, add bitstream noise filter
+        if (strength > 5) {
+          command.outputOptions(`-bsf:v noise=${Math.max(100, 1000000/strength)}`);
         }
+      }
+      
+      logFFmpegCommand(`Applied macroblock effect with q:v=${qValue}`);
+      delete filters.macroblock;
+      // Don't return - allow filter combinations
+    }
+
+    // Handle datamosh/glitch effects with more reliable method
+    if ('datamosh' in filters || 'glitch' in filters) {
+      const glitchLevel = Number(filters.datamosh || filters.glitch) || 1;
+      
+      if (isVideo) {
+        // Use simple video filter for glitch/datamosh on video - more reliable than bitstream filter
+        const amount = Math.max(1, Math.min(40, Math.floor(glitchLevel * 5)));
+        command.videoFilters(`noise=c0s=${amount}:c1s=${amount}:c2s=${amount}:all_seed=${Math.floor(Math.random() * 10000)}`);
       } else {
-        // For audio-only files, just add noise to the bitstream
-        command.outputOptions('-c:a pcm_s16le');
-        command.outputOptions(`-bsf:a noise=${Math.max(50, 500/glitchLevel)}`);
+        // For audio-only files, use a more reliable audio distortion
+        command.audioFilters(`afftdn=nf=-${Math.min(30, glitchLevel * 5)}`);
       }
       
       logFFmpegCommand(`Applied datamosh/glitch effect with level ${glitchLevel}`);
@@ -1322,32 +1338,27 @@ const applyFilters = (command: ffmpeg.FfmpegCommand, filters: MediaFilter, isVid
       // Don't return - allow filter combinations
     }
     
-    // Handle noise generation - now using bitstream filters
+    // Handle noise generation
     if ('noise' in filters) {
       const type = String(filters.noise).toLowerCase();
-      const intensity = Number(filters.noise) || 5;
-      const noiseValue = Math.max(1, Math.floor(1000000/intensity));
       
       if (isVideo) {
-        // Add noise through bitstream filter for true corruption
-        command.outputOptions('-c:v huffyuv');
-        command.outputOptions(`-bsf:v noise=${noiseValue}`);
-        
-        // Apply mono/color variation if specified
         if (type === 'mono' || type === 'bw') {
-          command.videoFilters('hue=s=0'); // Remove saturation
+          // Black and white noise using standard filter
+          command.videoFilters(`noise=c0s=20:c1s=0:c2s=0:all_seed=${Math.floor(Math.random() * 10000)}`);
+        } else {
+          // Colored noise using standard filter
+          command.videoFilters(`noise=c0s=20:c1s=20:c2s=20:all_seed=${Math.floor(Math.random() * 10000)}`);
         }
         
-        // Add audio noise for a complete effect
-        command.outputOptions('-c:a pcm_s16le');
-        command.outputOptions(`-bsf:a noise=${Math.max(100, 1000/intensity)}`);
+        // Add audio white noise
+        command.audioFilters(`aeval=0.05*random(0)`);
       } else {
         // Audio only noise
-        command.outputOptions('-c:a pcm_s16le');
-        command.outputOptions(`-bsf:a noise=${Math.max(100, 1000/intensity)}`);
+        command.audioFilters(`aeval=0.05*random(0)`);
       }
       
-      logFFmpegCommand(`Applied ${type === 'mono' || type === 'bw' ? 'monochrome' : 'color'} noise effect with intensity ${intensity}`);
+      logFFmpegCommand(`Applied ${type === 'mono' || type === 'bw' ? 'monochrome' : 'color'} noise filter`);
       delete filters.noise;
       // Don't return - allow filter combinations
     }
