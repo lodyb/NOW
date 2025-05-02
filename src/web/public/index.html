@@ -686,12 +686,6 @@
           placeholder="Enter answers (one per line)"
           @change="saveAnswers(item, $event)"
         ></textarea>
-        <div class="metadata">
-          <span>{{ new Date(item.createdAt).toLocaleDateString() }}</span>
-          <span v-if="item.answers && item.answers.length" class="answer-display">
-            {{ formatAnswersForDisplay(item.answers) }}
-          </span>
-        </div>
         <div class="card-actions">
           <button 
             v-if="item.isDeleted" 

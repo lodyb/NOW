@@ -82,8 +82,14 @@ router.get('/api/media', async (req, res) => {
     const pageSize = parseInt(req.query.pageSize as string) || 20;
     
     const mediaData = await findAllMediaPaginated(page, pageSize, search);
+    
+    // Deduplicate items by ID to prevent duplicates in response
+    const uniqueItems = Array.from(
+      new Map(mediaData.items.map(item => [item.id, item])).values()
+    );
+    
     res.json({
-      items: mediaData.items,
+      items: uniqueItems,
       total: mediaData.total,
       page,
       pageSize,
