@@ -9,7 +9,12 @@
     "dev": "ts-node src/index.ts",
     "watch": "nodemon --exec ts-node src/index.ts",
     "test": "jest",
-    "pm2:start": "pm2 start dist/index.js --name now-bot"
+    "pm2:start": "pm2 start dist/index.js --name now-bot",
+    "pm2:ecosystem": "pm2 start ecosystem.config.json",
+    "pm2:stop": "pm2 stop now-discord-bot",
+    "pm2:restart": "pm2 restart now-discord-bot",
+    "pm2:logs": "pm2 logs now-discord-bot",
+    "production": "npm run build && npm run pm2:ecosystem"
   },
   "dependencies": {
     "@discordjs/voice": "^0.16.0",

@@ -19,7 +19,6 @@ Example usage:
 \`NOW quiz {mirror,echo}\`
 `;
 
-// Command to show available effects
-if (command === 'effects' || command === 'filters') {
+export const handleEffectsCommand = (message: any) => {
   return message.reply(EFFECTS_HELP);
-}
+};

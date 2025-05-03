@@ -15,6 +15,7 @@ import { handleImageCommand } from './bot/commands/image';
 import { handleWaveformCommand, handleSpectrogramCommand } from './bot/commands/visualization';
 import { handleHelpCommand } from './bot/commands/help';
 import { handleMahjongCommand } from './bot/commands/mahjong';
+import { handleEffectsCommand } from './bot/commands';
 import apiRoutes from './web/api';
 import authRoutes from './web/auth-routes';
 import { setupAuth, isAuthenticated } from './web/auth';
@@ -156,6 +157,11 @@ client.on(Events.MessageCreate, async (message) => {
             message,
             commandArgs.searchTerm
           );
+          break;
+          
+        case 'effects':
+        case 'filters':
+          await handleEffectsCommand(message);
           break;
           
         default:
