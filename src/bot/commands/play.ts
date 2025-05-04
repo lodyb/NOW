@@ -164,11 +164,43 @@ export const handleMultiMediaPlayback = async (
 ) => {
   try {
     // Cap the multi value to a reasonable maximum (3x3 grid = 9 videos)
-    const maxMulti = 64
+    const maxMulti = 9;
     multi = Math.min(Math.max(2, multi), maxMulti);
     
-    // Send initial status message
-    const statusMessage = await message.reply(`Processing multi-media request (${multi} items)... ⏳`);
+    // Parse advanced options from filterString
+    let mediaDelay = 0; // Default: no delay between videos (in ms)
+    let mediaSpeed = 1.0; // Default: all videos play at normal speed
+    
+    if (filterString) {
+      // Extract mdelay option
+      const delayMatch = filterString.match(/mdelay=(\d+)/);
+      if (delayMatch && delayMatch[1]) {
+        mediaDelay = Math.min(5000, Math.max(0, parseInt(delayMatch[1], 10))); // Limit to 0-5000ms
+        // Remove the processed option
+        filterString = filterString.replace(/mdelay=\d+,?/g, '');
+        if (filterString.endsWith(',')) {
+          filterString = filterString.slice(0, -1);
+        }
+      }
+      
+      // Extract mspeed option
+      const speedMatch = filterString.match(/mspeed=(\d+(\.\d+)?)/);
+      if (speedMatch && speedMatch[1]) {
+        mediaSpeed = Math.min(2.0, Math.max(0.5, parseFloat(speedMatch[1]))); // Limit to 0.5-2.0
+        // Remove the processed option
+        filterString = filterString.replace(/mspeed=\d+(\.\d+)?,?/g, '');
+        if (filterString.endsWith(',')) {
+          filterString = filterString.slice(0, -1);
+        }
+      }
+    }
+    
+    // Send initial status message with advanced options if specified
+    let statusText = `Processing multi-media request (${multi} items)`;
+    if (mediaDelay > 0) statusText += `, delay=${mediaDelay}ms`;
+    if (mediaSpeed !== 1.0) statusText += `, speed progression=${mediaSpeed.toFixed(2)}x`;
+    
+    const statusMessage = await message.reply(`${statusText}... ⏳`);
     
     // Determine if we need to find video files (based on the grid layout)
     const requireVideo = true; // Grid layout requires video
@@ -305,7 +337,7 @@ export const handleMultiMediaPlayback = async (
         await statusMessage.edit(`Creating ${multi}-item grid layout... ⏳`);
         await createVideoGrid(processedFiles, outputPath, gridDimensions, async (progress) => {
           await statusMessage.edit(`Creating grid (${Math.round(progress * 100)}%)... ⏳`);
-        });
+        }, { mediaDelay, mediaSpeed });
       }
       
       // Ensure the result is under Discord file size limit
@@ -377,10 +409,13 @@ async function createVideoGrid(
   inputFiles: string[], 
   outputPath: string, 
   grid: { rows: number; cols: number },
-  progressCallback?: (progress: number) => Promise<void>
+  progressCallback?: (progress: number) => Promise<void>,
+  options?: { mediaDelay?: number; mediaSpeed?: number }
 ): Promise<string> {
   return new Promise((resolve, reject) => {
     const { rows, cols } = grid;
+    const mediaDelay = options?.mediaDelay || 0;
+    const mediaSpeed = options?.mediaSpeed || 1.0;
     
     // Check if we have enough files for a grid
     const fileCount = Math.min(inputFiles.length, rows * cols);
@@ -396,15 +431,15 @@ async function createVideoGrid(
       return;
     }
     
-    // For 2 files, use our specialized side-by-side function
+    // For 2 files, use specialized function with options
     if (fileCount === 2) {
-      createSideBySideVideo(inputFiles, outputPath, progressCallback)
+      createSideBySideVideo(inputFiles, outputPath, progressCallback, options)
         .then(resolve)
         .catch(reject);
       return;
     }
     
-    // For larger grids (3+), build more reliable command
+    // For larger grids (3+), build more reliable command with timing options
     const ffmpegBin = 'ffmpeg';
     
     // Build input arguments
@@ -425,12 +460,23 @@ async function createVideoGrid(
       useCols = 3;
     }
     
-    // Build the filter_complex
+    // Build the filter_complex with delay and speed options
     let filterComplex = '';
     
-    // Scale all inputs
+    // Scale all inputs with progressive delay and speed adjustments
     for (let i = 0; i < fileCount; i++) {
-      filterComplex += `[${i}:v]scale=640:360:force_original_aspect_ratio=decrease,pad=640:360:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=25[v${i}];`;
+      // Calculate progressive speed for this video
+      const speedFactor = mediaSpeed !== 1.0 ? Math.pow(mediaSpeed, i) : 1.0;
+      
+      // Calculate delay for this video in milliseconds
+      const delayMs = i * mediaDelay;
+      const delayFilter = delayMs > 0 ? `,tpad=start_duration=${delayMs/1000}` : '';
+      
+      // Apply speed adjustment if needed
+      const speedFilter = speedFactor !== 1.0 ? `,setpts=PTS/${speedFactor},atempo=${Math.min(2.0, speedFactor)}` : '';
+      
+      // Complete filter for this video
+      filterComplex += `[${i}:v]scale=640:360:force_original_aspect_ratio=decrease,pad=640:360:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=25${speedFilter}${delayFilter}[v${i}];`;
     }
     
     // Add black frames for empty spots if needed
@@ -469,9 +515,20 @@ async function createVideoGrid(
       filterComplex += `${rowRefs[0]}copy[vout];`;
     }
     
-    // Handle audio
+    // Handle audio with timing adjustments for each audio track
     for (let i = 0; i < fileCount; i++) {
-      filterComplex += `[${i}:a]aresample=44100:async=1000,aformat=sample_fmts=fltp:channel_layouts=stereo[a${i}];`;
+      // Calculate progressive speed for this audio
+      const speedFactor = mediaSpeed !== 1.0 ? Math.pow(mediaSpeed, i) : 1.0;
+      
+      // Calculate delay for this audio in milliseconds
+      const delayMs = i * mediaDelay;
+      const delayFilter = delayMs > 0 ? `,adelay=${delayMs}|${delayMs}` : '';
+      
+      // Apply speed adjustment if needed
+      const speedFilter = speedFactor !== 1.0 ? `,atempo=${Math.min(2.0, speedFactor)}` : '';
+      
+      // Complete filter for this audio
+      filterComplex += `[${i}:a]aresample=44100:async=1000,aformat=sample_fmts=fltp:channel_layouts=stereo${speedFilter}${delayFilter}[a${i}];`;
     }
     
     const audioInputs = [];
@@ -605,13 +662,17 @@ async function createVideoGridNoAudio(
 async function createSideBySideVideo(
   inputFiles: string[],
   outputPath: string,
-  progressCallback?: (progress: number) => Promise<void>
+  progressCallback?: (progress: number) => Promise<void>,
+  options?: { mediaDelay?: number; mediaSpeed?: number }
 ): Promise<string> {
   return new Promise((resolve, reject) => {
     if (inputFiles.length !== 2) {
       reject(new Error("Side-by-side requires exactly 2 videos"));
       return;
     }
+    
+    const mediaDelay = options?.mediaDelay || 0;
+    const mediaSpeed = options?.mediaSpeed || 1.0;
     
     // Use the shell command approach which is more reliable
     const ffmpegBin = 'ffmpeg';
