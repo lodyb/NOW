@@ -171,6 +171,8 @@ export const handleMultiMediaPlayback = async (
     // Parse advanced options from filterString
     let mediaDelay = 0; // Default: no delay between videos (in ms)
     let mediaSpeed = 1.0; // Default: all videos play at normal speed
+    let msyncEnabled = false; // Default: don't sync media durations
+    let msyncDuration: number | null = null; // Optional fixed duration in seconds for all media
     
     if (filterString) {
       // Extract mdelay option
@@ -194,12 +196,28 @@ export const handleMultiMediaPlayback = async (
           filterString = filterString.slice(0, -1);
         }
       }
+      
+      // Extract msync option
+      const msyncMatch = filterString.match(/msync(=(\d+))?/);
+      if (msyncMatch) {
+        msyncEnabled = true;
+        // If a specific duration is provided, use it
+        if (msyncMatch[2]) {
+          msyncDuration = Math.min(300, Math.max(1, parseInt(msyncMatch[2], 10))); // Limit to 1-300 seconds
+        }
+        // Remove the processed option
+        filterString = filterString.replace(/msync(=\d+)?,?/g, '');
+        if (filterString.endsWith(',')) {
+          filterString = filterString.slice(0, -1);
+        }
+      }
     }
     
     // Send initial status message with advanced options if specified
     let statusText = `Processing multi-media request (${multi} items)`;
     if (mediaDelay > 0) statusText += `, delay=${mediaDelay}ms`;
     if (mediaSpeed !== 1.0) statusText += `, speed progression=${mediaSpeed.toFixed(2)}x`;
+    if (msyncEnabled) statusText += msyncDuration ? `, synced to ${msyncDuration}s` : `, synced to longest`;
     
     const statusMessage = await message.reply(`${statusText}... ⏳`);
     
@@ -244,6 +262,50 @@ export const handleMultiMediaPlayback = async (
     const processedFiles: string[] = [];
     let allFilesAreVideo = true;
     
+    // If msync is enabled, we need to get duration information first
+    let mediaDurations: number[] = [];
+    let targetDuration = 0;
+    
+    if (msyncEnabled) {
+      await statusMessage.edit(`Getting media durations for sync... ⏳`);
+      
+      // First, get all the normalized file paths
+      const normalizedPaths = mediaItems.map(media => {
+        if (media.normalizedPath) {
+          const filename = path.basename(media.normalizedPath);
+          const normalizedFilename = filename.startsWith('norm_') ? filename : `norm_${filename}`;
+          return path.join(process.cwd(), 'normalized', normalizedFilename);
+        }
+        return media.filePath;
+      });
+      
+      // Get duration for each file
+      for (let i = 0; i < normalizedPaths.length; i++) {
+        try {
+          const { duration } = await getMediaInfo(normalizedPaths[i]);
+          if (duration) {
+            mediaDurations.push(duration);
+          } else {
+            // If we can't get duration, use a default value
+            mediaDurations.push(30); // Default to 30 seconds
+          }
+        } catch (err) {
+          console.error(`Error getting duration for ${normalizedPaths[i]}:`, err);
+          mediaDurations.push(30); // Default to 30 seconds on error
+        }
+      }
+      
+      // Determine target duration - either specified by user or the longest media
+      if (msyncDuration !== null) {
+        targetDuration = msyncDuration;
+      } else {
+        // Use the longest duration from all media files
+        targetDuration = Math.max(...mediaDurations, 1);
+      }
+      
+      await statusMessage.edit(`Syncing ${multi} media files to ${targetDuration.toFixed(1)}s duration... ⏳`);
+    }
+    
     // Process each media file sequentially
     for (let i = 0; i < mediaItems.length; i++) {
       const media = mediaItems[i];
@@ -268,17 +330,75 @@ export const handleMultiMediaPlayback = async (
       await statusMessage.edit(`Processing media ${i+1}/${multi}... ⏳`);
       
       // Apply filters/clip options if needed
-      if (filterString || (clipOptions && Object.keys(clipOptions).length > 0)) {
+      if (filterString || (clipOptions && Object.keys(clipOptions).length > 0) || msyncEnabled) {
         try {
           const outputFilename = `temp_grid_${randomId}_${i}_${path.basename(filePath)}`;
           const options: ProcessOptions = {};
           
+          // Apply base filters first
           if (filterString) {
             options.filters = parseFilterString(filterString);
+          } else {
+            options.filters = {}; // Ensure we have a filters object to work with
           }
           
+          // Apply clip options
           if (clipOptions) {
             options.clip = clipOptions;
+          }
+          
+          // If msync is enabled, calculate and apply speed adjustment for this file
+          if (msyncEnabled && targetDuration > 0 && mediaDurations[i] > 0) {
+            // Calculate speed factor: if file is shorter than target, slow it down; if longer, speed it up
+            const speedFactor = mediaDurations[i] / targetDuration;
+            
+            if (speedFactor !== 1.0) {
+              // Apply video speed adjustment
+              if (isVideo) {
+                // setpts filter: smaller value = faster playback
+                // PTS = presentation time stamp
+                options.filters.setpts = `${1.0/speedFactor}*PTS`;
+              }
+              
+              // Apply audio speed adjustment using atempo
+              // atempo is limited to 0.5-2.0 range, so we need to chain it for extreme values
+              if (speedFactor >= 0.5 && speedFactor <= 2.0) {
+                options.filters.atempo = speedFactor.toFixed(2);
+              } else if (speedFactor < 0.5) {
+                // For extreme slowdown, chain multiple atempo filters
+                const atempoValues = [];
+                let remainingFactor = speedFactor;
+                
+                while (remainingFactor < 0.5) {
+                  atempoValues.push(0.5);
+                  remainingFactor /= 0.5;
+                }
+                
+                if (remainingFactor < 1.0) {
+                  atempoValues.push(remainingFactor);
+                }
+                
+                options.filters.atempo = atempoValues.join(',');
+              } else {
+                // For extreme speedup, chain multiple atempo filters
+                const atempoValues = [];
+                let remainingFactor = speedFactor;
+                
+                while (remainingFactor > 2.0) {
+                  atempoValues.push(2.0);
+                  remainingFactor /= 2.0;
+                }
+                
+                if (remainingFactor > 1.0) {
+                  atempoValues.push(remainingFactor);
+                }
+                
+                options.filters.atempo = atempoValues.join(',');
+              }
+              
+              // Log the sync adjustment
+              console.log(`Media sync: File ${i+1} duration=${mediaDurations[i]}s, target=${targetDuration}s, speed=${speedFactor.toFixed(2)}`);
+            }
           }
           
           // No need to enforce Discord limit for individual files, only the final output

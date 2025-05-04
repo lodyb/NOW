@@ -1997,3 +1997,33 @@ const applyCustomEffect = (command: ffmpeg.FfmpegCommand, effectName: string, va
   
   return false; // Effect not found or not applicable
 };
+
+/**
+ * Get media information (duration, dimensions) using ffmpeg
+ */
+export async function getMediaInfo(filePath: string): Promise<{ duration?: number; width?: number; height?: number }> {
+  return new Promise((resolve, reject) => {
+    ffmpeg.ffprobe(filePath, (err, metadata) => {
+      if (err) {
+        reject(err);
+        return;
+      }
+      
+      // Extract duration and dimensions
+      const info: { duration?: number; width?: number; height?: number } = {};
+      
+      if (metadata.format && metadata.format.duration) {
+        info.duration = metadata.format.duration;
+      }
+      
+      // Find video stream if exists
+      const videoStream = metadata.streams?.find(stream => stream.codec_type === 'video');
+      if (videoStream) {
+        info.width = videoStream.width;
+        info.height = videoStream.height;
+      }
+      
+      resolve(info);
+    });
+  });
+}
