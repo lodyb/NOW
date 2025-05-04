@@ -1858,6 +1858,15 @@ const videoEffects: VideoEffects = {
   
   'vmirror': () => 'vflip', // Simple vertical mirror
   
+  // Mirror effects
+  'haah': () => 'split[a][b];[a]crop=iw/2:ih:0:0[left];[left]hflip[right];[b][right]overlay=W/2:0', // Mirror left side to right
+  
+  'waaw': () => 'split[a][b];[a]crop=iw/2:ih:iw/2:0[right];[right]hflip[left];[b][left]overlay=0:0', // Mirror right side to left
+  
+  'hooh': () => 'split[a][b];[a]crop=iw:ih/2:0:0[top];[top]vflip[bottom];[b][bottom]overlay=0:H/2', // Mirror top to bottom
+
+  'woow': () => 'split[a][b];[a]crop=iw:ih/2:0:ih/2[bottom];[bottom]vflip[top];[b][top]overlay=0:0', // Mirror bottom to top
+  
   'vhs': () => 
     'noise=alls=15:allf=t,curves=r=0.2:g=0.1:b=0.2,hue=h=5,colorbalance=rs=0.1:bs=-0.1,format=yuv420p,drawgrid=w=iw/24:h=2*ih:t=1:c=white@0.2', // VHS look
   
