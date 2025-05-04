@@ -333,7 +333,7 @@ export const getRandomMedia = (limit: number = 1, requireVideo?: boolean): Promi
       SELECT m.*, GROUP_CONCAT(ma.answer) as answers
       FROM media m
       LEFT JOIN media_answers ma ON ma.mediaId = m.id
-      WHERE m.isDeleted = 0
+      WHERE m.isDeleted = 0 OR m.isDeleted IS NULL
     `;
     
     // Add video filter if required
