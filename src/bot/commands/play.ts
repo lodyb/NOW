@@ -374,7 +374,6 @@ async function createVideoGrid(
     }
     
     // Create grid layout
-    let gridFilter = '';
     let rowOutputs: string[] = [];
     
     // Create each row
@@ -402,29 +401,57 @@ async function createVideoGrid(
     // Stack rows vertically
     filterComplex += `${rowOutputs.join('')}vstack=inputs=${rows}[vout]`;
     
-    // Merge all audio tracks
-    let audioMix = '';
-    if (fileCount > 1) {
-      const audioInputs = Array.from({ length: fileCount }, (_, i) => `[${i}:a]`).join('');
-      audioMix = `;${audioInputs}amix=inputs=${fileCount}:normalize=0[aout]`;
-      filterComplex += audioMix;
-    } else if (fileCount === 1) {
-      filterComplex += `;[0:a]anull[aout]`;
+    // Handle audio more carefully - check for audio streams first
+    // and create a safer audio mix
+    let hasAudioStreams = false;
+    
+    // First check if input files have audio streams
+    if (fileCount > 0) {
+      // Create audio outputs for each file that has audio
+      const audioFilters: string[] = [];
+      
+      for (let i = 0; i < fileCount; i++) {
+        // Add a safe audio extraction that works even if stream doesn't exist
+        audioFilters.push(`[${i}:a]aresample=44100,aformat=sample_fmts=fltp:channel_layouts=stereo[a${i}]`);
+      }
+      
+      if (audioFilters.length > 0) {
+        hasAudioStreams = true;
+        filterComplex += `;${audioFilters.join(';')}`;
+        
+        // Create the audio mix with valid audio streams
+        if (fileCount > 1) {
+          const audioInputs = Array.from({ length: fileCount }, (_, i) => `[a${i}]`).join('');
+          filterComplex += `;${audioInputs}amix=inputs=${fileCount}:duration=longest[aout]`;
+        } else {
+          filterComplex += `;[a0]anull[aout]`;
+        }
+      }
     }
     
     // Apply the complex filter
-    command.complexFilter(filterComplex, fileCount > 0 ? ['vout', 'aout'] : ['vout']);
+    command.complexFilter(filterComplex, hasAudioStreams ? ['vout', 'aout'] : ['vout']);
     
     // Set output options
     command
       .outputOptions('-map [vout]')
-      .outputOptions(fileCount > 0 ? '-map [aout]' : '-an') // Only map audio if we have audio tracks
+      .outputOptions(hasAudioStreams ? '-map [aout]' : '-an') // Only map audio if we have audio tracks
       .outputOptions('-c:v libx264')
       .outputOptions('-preset medium')
-      .outputOptions('-crf 23')
-      .outputOptions('-c:a aac')
-      .outputOptions('-b:a 128k')
-      .outputOptions('-shortest'); // End when shortest input ends
+      .outputOptions('-crf 23');
+      
+    if (hasAudioStreams) {
+      command
+        .outputOptions('-c:a aac')
+        .outputOptions('-b:a 128k');
+    }
+    
+    command.outputOptions('-shortest'); // End when shortest input ends
+    
+    // Add error event handler with detailed logging
+    command.on('stderr', (stderrLine) => {
+      console.log('FFmpeg stderr:', stderrLine);
+    });
     
     // Add progress tracking
     if (progressCallback) {
