@@ -354,7 +354,7 @@ async function createVideoGrid(
   return new Promise((resolve, reject) => {
     const { rows, cols } = grid;
     
-    // Check if we have enough files to fill the grid
+    // Check if we have enough files for a grid
     const fileCount = Math.min(inputFiles.length, rows * cols);
     
     // Handle special case - if we only have 1 file, just copy it
@@ -368,135 +368,36 @@ async function createVideoGrid(
       return;
     }
     
-    // Adjust grid dimensions if needed based on actual file count
-    let adjustedRows = rows;
-    let adjustedCols = cols;
-    
-    // Ensure we don't try to create a grid with empty rows
-    if (fileCount <= cols) {
-      // If we have fewer files than columns, use a single row
-      adjustedRows = 1;
-      adjustedCols = fileCount;
-    } else {
-      // Calculate how many complete rows we can fill
-      adjustedRows = Math.ceil(fileCount / cols);
-    }
-    
-    // Prepare input arguments
-    const command = ffmpeg();
-    
-    // Add all input files
-    inputFiles.slice(0, fileCount).forEach(file => {
-      command.input(file);
-    });
-    
-    // Build complex filtergraph for grid layout
-    let filterComplex = '';
-    
-    // Scale each video to fit in the grid
-    for (let i = 0; i < fileCount; i++) {
-      filterComplex += `[${i}:v]scale=640:360,setsar=1[v${i}];`;
-    }
-    
-    // Create grid layout
-    let rowOutputs: string[] = [];
-    
-    // Create each row
-    for (let r = 0; r < adjustedRows; r++) {
-      let rowInputs: string[] = [];
-      const startIdx = r * adjustedCols;
-      const endIdx = Math.min(startIdx + adjustedCols, fileCount);
+    // For 2 files, do a simple side-by-side layout
+    if (fileCount === 2) {
+      const command = ffmpeg();
       
-      // Skip if this row would be empty
-      if (startIdx >= fileCount) continue;
+      // Add inputs
+      inputFiles.slice(0, 2).forEach(file => {
+        command.input(file);
+      });
       
-      // Check if this row has at least 2 elements for hstack
-      if (endIdx - startIdx >= 2) {
-        // Add videos for this row
-        for (let i = startIdx; i < endIdx; i++) {
-          rowInputs.push(`[v${i}]`);
-        }
-        
-        // Pad with black frames if we don't have enough videos for this row
-        // but only if we're not in the last row
-        if (r < adjustedRows - 1) {
-          for (let i = endIdx; i < startIdx + adjustedCols; i++) {
-            filterComplex += `color=black:640x360[black${i}];`;
-            rowInputs.push(`[black${i}]`);
-          }
-        }
-        
-        // Create row using hstack
-        filterComplex += `${rowInputs.join('')}hstack=inputs=${rowInputs.length}[row${r}];`;
-        rowOutputs.push(`[row${r}]`);
-      } else {
-        // If this row has only one element, pass it through
-        rowOutputs.push(`[v${startIdx}]`);
-      }
-    }
-    
-    // Handle final composition
-    if (rowOutputs.length >= 2) {
-      // Stack rows vertically
-      filterComplex += `${rowOutputs.join('')}vstack=inputs=${rowOutputs.length}[vout]`;
-    } else {
-      // Just one row, rename to vout
-      filterComplex = filterComplex.replace(/\[row0\];$/, '[vout];');
-      // If no rows were created (because we only had one video), just use that
-      if (!filterComplex.includes('[vout]')) {
-        filterComplex += `${rowOutputs[0]}copy[vout]`;
-      }
-    }
-    
-    // Handle audio more carefully - check for audio streams first
-    // and create a safer audio mix
-    let hasAudioStreams = false;
-    
-    // Create audio outputs for each file that has audio
-    const audioFilters: string[] = [];
-    
-    for (let i = 0; i < fileCount; i++) {
-      // Add a safe audio extraction with aevalsrc fallback
-      audioFilters.push(`[${i}:a]aresample=44100,aformat=sample_fmts=fltp:channel_layouts=stereo[a${i}]`);
-    }
-    
-    if (audioFilters.length > 0) {
-      hasAudioStreams = true;
-      filterComplex += `;${audioFilters.join(';')}`;
+      // Simple 2-video layout without complex chaining
+      const filterComplex = `
+        [0:v]scale=640:360,setsar=1[v0];
+        [1:v]scale=640:360,setsar=1[v1];
+        [v0][v1]hstack=inputs=2[vout];
+        [0:a][1:a]amix=inputs=2:duration=longest[aout]
+      `;
       
-      // Create the audio mix with valid audio streams
-      if (fileCount > 1) {
-        const audioInputs = Array.from({ length: fileCount }, (_, i) => `[a${i}]`).join('');
-        filterComplex += `;${audioInputs}amix=inputs=${fileCount}:duration=longest[aout]`;
-      } else {
-        filterComplex += `;[a0]anull[aout]`;
-      }
-    }
-    
-    // Add error event handler with detailed logging
-    command.on('stderr', (stderrLine) => {
-      console.log('FFmpeg stderr:', stderrLine);
-    });
-    
-    try {
-      // Apply the complex filter
-      command.complexFilter(filterComplex, hasAudioStreams ? ['vout', 'aout'] : ['vout']);
+      // Apply the filter
+      command.complexFilter(filterComplex.trim(), ['vout', 'aout']);
       
       // Set output options
       command
         .outputOptions('-map [vout]')
-        .outputOptions(hasAudioStreams ? '-map [aout]' : '-an') // Only map audio if we have audio tracks
+        .outputOptions('-map [aout]')
         .outputOptions('-c:v libx264')
         .outputOptions('-preset medium')
-        .outputOptions('-crf 23');
-        
-      if (hasAudioStreams) {
-        command
-          .outputOptions('-c:a aac')
-          .outputOptions('-b:a 128k');
-      }
-      
-      command.outputOptions('-shortest'); // End when shortest input ends
+        .outputOptions('-crf 23')
+        .outputOptions('-c:a aac')
+        .outputOptions('-b:a 128k')
+        .outputOptions('-shortest');
       
       // Add progress tracking
       if (progressCallback) {
@@ -507,6 +408,11 @@ async function createVideoGrid(
         });
       }
       
+      // Add error logging
+      command.on('stderr', (stderrLine) => {
+        console.log('FFmpeg stderr:', stderrLine);
+      });
+      
       // Execute the command
       command.save(outputPath)
         .on('end', () => {
@@ -516,10 +422,133 @@ async function createVideoGrid(
           console.error('Error creating video grid:', err);
           reject(err);
         });
-    } catch (error) {
-      console.error('Error setting up FFmpeg command:', error);
-      reject(error);
+        
+      return;
     }
+    
+    // For more than 2 files, use the grid approach
+    // Prepare input arguments
+    const command = ffmpeg();
+    
+    // Add all input files
+    inputFiles.slice(0, fileCount).forEach(file => {
+      command.input(file);
+    });
+
+    // Calculate grid dimensions that work with the actual number of videos
+    let useRows = rows;
+    let useCols = cols;
+    
+    // Ensure grid works with the actual file count
+    if (fileCount < rows * cols) {
+      // Recalculate for a more balanced grid
+      if (fileCount <= 4) {
+        useRows = 2;
+        useCols = 2;
+      } else if (fileCount <= 6) {
+        useRows = 2;
+        useCols = 3;
+      } else {
+        useRows = 3;
+        useCols = 3;
+      }
+    }
+    
+    // Build the filter graph
+    let filterComplex = '';
+    
+    // Scale each video
+    for (let i = 0; i < fileCount; i++) {
+      filterComplex += `[${i}:v]scale=640:360,setsar=1[v${i}];`;
+    }
+    
+    // Create black padding for empty slots if needed
+    const totalSlots = useRows * useCols;
+    for (let i = fileCount; i < totalSlots; i++) {
+      filterComplex += `color=c=black:s=640x360[v${i}];`;
+    }
+    
+    // Create each row
+    for (let r = 0; r < useRows; r++) {
+      const rowInputs = [];
+      for (let c = 0; c < useCols; c++) {
+        const idx = r * useCols + c;
+        if (idx < totalSlots) {
+          rowInputs.push(`[v${idx}]`);
+        }
+      }
+      
+      if (rowInputs.length > 0) {
+        filterComplex += `${rowInputs.join('')}hstack=inputs=${rowInputs.length}[row${r}];`;
+      }
+    }
+    
+    // Stack all rows
+    const rowOutputs = [];
+    for (let r = 0; r < useRows; r++) {
+      rowOutputs.push(`[row${r}]`);
+    }
+    
+    filterComplex += `${rowOutputs.join('')}vstack=inputs=${useRows}[vout];`;
+    
+    // Handle audio mixing - only mix the available audio streams
+    const audioInputs = [];
+    for (let i = 0; i < fileCount; i++) {
+      filterComplex += `[${i}:a]aresample=44100:async=1000,aformat=sample_fmts=fltp:channel_layouts=stereo[a${i}];`;
+      audioInputs.push(`[a${i}]`);
+    }
+    
+    if (audioInputs.length > 1) {
+      filterComplex += `${audioInputs.join('')}amix=inputs=${audioInputs.length}:dropout_transition=0[aout]`;
+    } else if (audioInputs.length === 1) {
+      filterComplex += `${audioInputs[0]}acopy[aout]`;
+    }
+    
+    // Debug the filter
+    console.log('Using filter complex:', filterComplex);
+    
+    // Apply the filter
+    command.complexFilter(filterComplex, audioInputs.length > 0 ? ['vout', 'aout'] : ['vout']);
+    
+    // Set output options
+    command
+      .outputOptions('-map [vout]')
+      .outputOptions(audioInputs.length > 0 ? '-map [aout]' : '-an')
+      .outputOptions('-c:v libx264')
+      .outputOptions('-preset medium')
+      .outputOptions('-crf 23');
+      
+    if (audioInputs.length > 0) {
+      command
+        .outputOptions('-c:a aac')
+        .outputOptions('-b:a 128k');
+    }
+    
+    command.outputOptions('-shortest');
+    
+    // Add error event handler
+    command.on('stderr', (stderrLine) => {
+      console.log('FFmpeg stderr:', stderrLine);
+    });
+    
+    // Add progress tracking
+    if (progressCallback) {
+      command.on('progress', (progress) => {
+        if (progress.percent) {
+          progressCallback(progress.percent / 100);
+        }
+      });
+    }
+    
+    // Execute the command
+    command.save(outputPath)
+      .on('end', () => {
+        resolve(outputPath);
+      })
+      .on('error', (err) => {
+        console.error('Error creating video grid:', err);
+        reject(err);
+      });
   });
 }
 
