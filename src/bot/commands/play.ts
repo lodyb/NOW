@@ -350,54 +350,45 @@ export const handleMultiMediaPlayback = async (
           // If msync is enabled, calculate and apply speed adjustment for this file
           if (msyncEnabled && targetDuration > 0 && mediaDurations[i] > 0) {
             // Calculate speed factor: if file is shorter than target, slow it down; if longer, speed it up
-            const speedFactor = mediaDurations[i] / targetDuration;
+            let speedFactor = mediaDurations[i] / targetDuration;
+            
+            // Limit speed factor to reasonable ranges to avoid FFmpeg errors
+            // Too slow causes artifacts and too fast makes content unrecognizable
+            const MIN_SPEED = 0.33; // Don't go slower than 1/3 speed
+            const MAX_SPEED = 3.0;  // Don't go faster than 3x speed
+            
+            if (speedFactor < MIN_SPEED) {
+              console.log(`Warning: Speed factor ${speedFactor.toFixed(2)} too low, limiting to ${MIN_SPEED}`);
+              speedFactor = MIN_SPEED;
+            } else if (speedFactor > MAX_SPEED) {
+              console.log(`Warning: Speed factor ${speedFactor.toFixed(2)} too high, limiting to ${MAX_SPEED}`);
+              speedFactor = MAX_SPEED;
+            }
             
             if (speedFactor !== 1.0) {
               // Apply video speed adjustment
               if (isVideo) {
-                // setpts filter: smaller value = faster playback
-                // PTS = presentation time stamp
+                // setpts filter: 1/speed for speedFactor
                 options.filters.setpts = `${1.0/speedFactor}*PTS`;
               }
               
               // Apply audio speed adjustment using atempo
-              // atempo is limited to 0.5-2.0 range, so we need to chain it for extreme values
+              // atempo is limited to 0.5-2.0 range, chain for values outside this range
               if (speedFactor >= 0.5 && speedFactor <= 2.0) {
-                options.filters.atempo = speedFactor.toFixed(2);
+                options.filters.atempo = speedFactor.toString();
               } else if (speedFactor < 0.5) {
-                // For extreme slowdown, chain multiple atempo filters
-                const atempoValues = [];
-                let remainingFactor = speedFactor;
-                
-                while (remainingFactor < 0.5) {
-                  atempoValues.push(0.5);
-                  remainingFactor /= 0.5;
-                }
-                
-                if (remainingFactor < 1.0) {
-                  atempoValues.push(remainingFactor);
-                }
-                
-                options.filters.atempo = atempoValues.join(',');
+                // For slowdown (0.33-0.5), use single atempo
+                options.filters.atempo = speedFactor.toString();
               } else {
-                // For extreme speedup, chain multiple atempo filters
-                const atempoValues = [];
-                let remainingFactor = speedFactor;
-                
-                while (remainingFactor > 2.0) {
-                  atempoValues.push(2.0);
-                  remainingFactor /= 2.0;
-                }
-                
-                if (remainingFactor > 1.0) {
-                  atempoValues.push(remainingFactor);
-                }
-                
-                options.filters.atempo = atempoValues.join(',');
+                // For extreme speedup (2.0-3.0), use two atempo filters
+                // Split into two steps: first step always 1.5, second step is remainder
+                const firstStep = 1.5;
+                const secondStep = speedFactor / firstStep;
+                options.filters.atempo = `${firstStep},${secondStep.toFixed(2)}`;
               }
               
               // Log the sync adjustment
-              console.log(`Media sync: File ${i+1} duration=${mediaDurations[i]}s, target=${targetDuration}s, speed=${speedFactor.toFixed(2)}`);
+              console.log(`Media sync: File ${i+1} duration=${mediaDurations[i].toFixed(2)}s, target=${targetDuration.toFixed(2)}s, speed=${speedFactor.toFixed(2)}`);
             }
           }
           
