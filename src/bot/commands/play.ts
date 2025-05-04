@@ -18,6 +18,13 @@ export const handlePlayCommand = async (
   multi?: number
 ) => {
   try {
+    // Special case for stereo split command - when using {} notation
+    if (filterString && filterString.startsWith('{') && filterString.endsWith('}') && !filterString.includes('=')) {
+      // Trigger stereo split with random media (ignore content inside braces)
+      await handleStereoSplitPlayback(message, searchTerm, undefined, clipOptions);
+      return;
+    }
+    
     // Special case for concat command
     if (searchTerm === 'concat') {
       await handleConcatPlayback(message, filterString, clipOptions);
@@ -171,22 +178,27 @@ export const handleMultiMediaPlayback = async (
     if (!searchTerm) {
       // Get random media when no search term provided
       mediaItems = await getRandomMedia(multi, requireVideo);
-      if (mediaItems.length === 0) {
-        await statusMessage.edit('No video files found in the database');
-        return;
-      }
     } else {
+      // Try to find matches for the search term
       mediaItems = await findMediaBySearch(searchTerm, requireVideo, multi);
-      if (mediaItems.length === 0) {
-        await statusMessage.edit(`No video files found for "${searchTerm}"`);
-        return;
-      }
     }
     
-    // If we didn't get enough items, we use what we have but adjust expectations
+    if (mediaItems.length === 0) {
+      await statusMessage.edit(`No video files found ${searchTerm ? `for "${searchTerm}"` : 'in the database'}`);
+      return;
+    }
+    
+    // If we didn't get enough items, duplicate existing items to fill the grid
     if (mediaItems.length < multi) {
-      multi = mediaItems.length;
-      await statusMessage.edit(`Found only ${multi} video items... processing... ⏳`);
+      // Create duplicates of existing items
+      const originalCount = mediaItems.length;
+      while (mediaItems.length < multi) {
+        // Cycle through the original items
+        const itemToDuplicate = mediaItems[mediaItems.length % originalCount];
+        mediaItems.push(itemToDuplicate);
+      }
+      
+      await statusMessage.edit(`Found ${originalCount} video item(s), duplicating to fill ${multi} slots... ⏳`);
     }
     
     // Generate temp dir for processing
@@ -392,93 +404,93 @@ async function createVideoGrid(
       return;
     }
     
-    // For more than 2 files, use native exec for more reliable results
+    // For larger grids (3+), build more reliable command
     const ffmpegBin = 'ffmpeg';
+    
+    // Build input arguments
+    const inputArgs = inputFiles.slice(0, fileCount).map(file => `-i "${file}"`).join(' ');
+    
+    // Calculate actual grid dimensions based on file count
+    let useRows = rows;
+    let useCols = cols;
+    
+    if (fileCount <= 4) {
+      useRows = 2;
+      useCols = 2;
+    } else if (fileCount <= 6) {
+      useRows = 2;
+      useCols = 3;
+    } else {
+      useRows = 3;
+      useCols = 3;
+    }
+    
+    // Build the filter_complex
     let filterComplex = '';
-    let inputArgs = '';
     
-    // Add input arguments
-    inputFiles.slice(0, fileCount).forEach((file, i) => {
-      inputArgs += ` -i "${file}"`;
-    });
-    
-    // Add video scaling for each input with fps normalization
+    // Scale all inputs
     for (let i = 0; i < fileCount; i++) {
       filterComplex += `[${i}:v]scale=640:360:force_original_aspect_ratio=decrease,pad=640:360:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=25[v${i}];`;
     }
     
-    // Calculate grid dimensions that work with the actual number of videos
-    let useRows = rows;
-    let useCols = cols;
-    
-    // Ensure grid works with the actual file count
-    if (fileCount < rows * cols) {
-      if (fileCount <= 4) {
-        useRows = 2;
-        useCols = 2;
-      } else if (fileCount <= 6) {
-        useRows = 2;
-        useCols = 3;
-      } else {
-        useRows = 3;
-        useCols = 3;
-      }
+    // Add black frames for empty spots if needed
+    for (let i = fileCount; i < useRows * useCols; i++) {
+      filterComplex += `color=c=black:s=640x360:r=25[v${i}];`;
     }
     
-    // Create rows first
+    // Create the rows using hstack
     for (let r = 0; r < useRows; r++) {
+      // Start and end indices for this row
+      const startIdx = r * useCols;
+      const endIdx = Math.min(startIdx + useCols, useRows * useCols);
+      
+      // Calculate inputs for this row
       const rowInputs = [];
-      const rowSize = Math.min(useCols, fileCount - r * useCols);
-      
-      // Skip empty rows
-      if (rowSize <= 0) continue;
-      
-      for (let c = 0; c < rowSize; c++) {
-        const idx = r * useCols + c;
-        if (idx < fileCount) {
-          rowInputs.push(`[v${idx}]`);
-        }
+      for (let i = startIdx; i < endIdx; i++) {
+        rowInputs.push(`[v${i}]`);
       }
       
+      // Create this row
       if (rowInputs.length > 0) {
         filterComplex += `${rowInputs.join('')}hstack=inputs=${rowInputs.length}[row${r}];`;
       }
     }
     
-    // Stack all rows
-    const rowOutputs = [];
+    // Stack the rows vertically
+    const rowRefs = [];
     for (let r = 0; r < useRows; r++) {
-      // Only include rows that we created
-      if (r * useCols < fileCount) {
-        rowOutputs.push(`[row${r}]`);
-      }
+      rowRefs.push(`[row${r}]`);
     }
     
-    if (rowOutputs.length > 1) {
-      filterComplex += `${rowOutputs.join('')}vstack=inputs=${rowOutputs.length}[vout];`;
-    } else if (rowOutputs.length === 1) {
-      filterComplex += `${rowOutputs[0]}copy[vout];`;
+    // Complete the video
+    if (rowRefs.length > 1) {
+      filterComplex += `${rowRefs.join('')}vstack=inputs=${rowRefs.length}[vout];`;
+    } else {
+      filterComplex += `${rowRefs[0]}copy[vout];`;
     }
     
-    // Handle audio mixing
+    // Handle audio
     for (let i = 0; i < fileCount; i++) {
       filterComplex += `[${i}:a]aresample=44100:async=1000,aformat=sample_fmts=fltp:channel_layouts=stereo[a${i}];`;
     }
     
-    if (fileCount > 1) {
-      const audioInputs = Array.from({ length: fileCount }, (_, i) => `[a${i}]`).join('');
-      filterComplex += `${audioInputs}amix=inputs=${fileCount}:dropout_transition=0[aout]`;
-    } else {
-      filterComplex += `[a0]acopy[aout]`;
+    const audioInputs = [];
+    for (let i = 0; i < fileCount; i++) {
+      audioInputs.push(`[a${i}]`);
     }
     
-    // Build the command with vsync=vfr to prevent frame duplication
-    const command = `${ffmpegBin}${inputArgs} -filter_complex "${filterComplex}" -map "[vout]" -map "[aout]" -c:v libx264 -preset medium -crf 23 -vsync vfr -c:a aac -b:a 128k -shortest "${outputPath}"`;
+    if (audioInputs.length > 1) {
+      filterComplex += `${audioInputs.join('')}amix=inputs=${audioInputs.length}:dropout_transition=0[aout]`;
+    } else if (audioInputs.length === 1) {
+      filterComplex += `${audioInputs[0]}acopy[aout]`;
+    }
     
-    console.log('Running ffmpeg grid command:', command);
+    // Execute the command
+    const fullCommand = `${ffmpegBin} ${inputArgs} -filter_complex "${filterComplex}" -map "[vout]" ${audioInputs.length > 0 ? '-map "[aout]"' : '-an'} -c:v libx264 -preset medium -crf 23 -vsync vfr ${audioInputs.length > 0 ? '-c:a aac -b:a 128k' : ''} -shortest "${outputPath}"`;
     
-    // Execute command
-    const childProcess = exec(command);
+    console.log('Running grid command:', fullCommand);
+    
+    const childProcess = exec(fullCommand);
     let stderrData = '';
     
     if (childProcess.stderr) {
@@ -511,7 +523,7 @@ async function createVideoGrid(
         console.error(`FFmpeg grid process exited with code ${code}`);
         console.error('stderr:', stderrData);
         
-        // Try the fallback without audio
+        // Try with simpler approach if failed
         createVideoGridNoAudio(inputFiles, outputPath, grid, progressCallback)
           .then(resolve)
           .catch(reject);
