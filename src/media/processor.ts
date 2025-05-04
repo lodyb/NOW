@@ -1835,7 +1835,7 @@ const audioEffects: AudioEffects = {
     `aevalsrc=0:d=${rate}:sample_rate=44100[silence];[0][silence]acrossfade=d=${rate}:c1=exp:c2=exp,atempo=1/${1-rate}`, // Stutter effect
     
   'phaser': (rate = 1) => 
-    `aphaser=type=t:speed=${Math.max(0.1, rate * 0.7)}:decay=0.5`, // Phaser effect
+    `aphaser=type=t:speed=${Math.max(0.1, rate * 0.7)}:decay=0.5:depth=${Math.min(70, rate * 50)}`, // Enhanced phaser effect with depth control
     
   'flanger': (depth = 0.5) => 
     `flanger=delay=${Math.max(1, depth * 10)}:depth=${Math.max(1, depth * 10)}`, // Flanger effect
@@ -1851,6 +1851,61 @@ const audioEffects: AudioEffects = {
 
   'bass': (gain = 10) => 
     `bass=g=${Math.min(30, gain)}`, // Bass boost effect with gain limit
+    
+  // New audio filters
+  'underwater': () => 
+    'lowpass=f=800,highpass=f=80,atempo=0.9,aecho=0.6:0.6:1000:0.5', // Underwater effect
+    
+  'alien': (intensity = 1) => 
+    `vibrato=f=${Math.max(5, intensity * 8)}:d=1,asetrate=44100*${Math.max(0.5, 0.7 + intensity * 0.3)},aresample=44100`, // Alien voice effect
+    
+  'chipmunk': (pitch = 1.5) => 
+    `asetrate=44100*${Math.min(3, Math.max(1.1, pitch))},aresample=44100`, // Chipmunk effect (higher pitch)
+    
+  'demon': (pitch = 0.7) => 
+    `asetrate=44100*${Math.max(0.3, Math.min(0.9, pitch))},aresample=44100`, // Demon voice effect (lower pitch)
+    
+  'destroy': (intensity = 1) => 
+    `acrusher=bits=${Math.max(1, 8 - intensity * 6)}:mode=lin:samples=1:samplesInc=0,areverse`, // Audio destruction/corruption
+    
+  'bitcrush': (bits = 4) => 
+    `acrusher=bits=${Math.max(1, Math.min(16, bits))}:mode=log:aa=1`, // Bitcrusher effect
+    
+  'metallic': () => 
+    'afftfilt=real=\'hypot(re,im)*sin(0)\':imag=\'hypot(re,im)*cos(0)\':win_size=1024:overlap=0.75', // Metallic resonance effect
+    
+  'radio': () => 
+    'bandpass=f=1500:width_type=q:width=0.6,highpass=f=500,lowpass=f=5000,compand=0.3:0.8:2:4:-1:0:0.2', // AM Radio effect
+    
+  'drunk': (intensity = 1) => 
+    `vibrato=f=${Math.max(0.5, intensity * 3)}:d=${Math.min(1, intensity * 0.3)},atempo=${Math.max(0.5, 1 - intensity * 0.2)}`, // Drunk voice effect
+    
+  'autotune': (strength = 0.5) => 
+    `asetrate=44100,rubberband=pitch-ms=crisp:tempo=1:pitch-octaves=${strength * 0.1}`, // Simple autotune-like effect
+    
+  'distortion': (gain = 5) => 
+    `compand=${Math.min(10, gain)},0.3:1,0:0:-80:-80:-80:-80:0:0:0,highpass=f=1000,lowpass=f=5000`, // Audio distortion
+    
+  'haunted': () => 
+    'atempo=0.9,aecho=0.8:0.8:1000|1800|500:0.7|0.5|0.3,areverse,aecho=0.8:0.8:500|1000:0.5|0.3,areverse', // Haunted/ghost effect
+    
+  'corrupt': (level = 1) => 
+    `afftfilt=real='hypot(re,im)*sin((random(0)*${Math.min(4, level)})*3.14)':imag='hypot(re,im)*cos((random(1)*${Math.min(4, level)})*3.14)':win_size=256:overlap=0.6`, // Audio corruption
+    
+  'glitch': (rate = 0.5) => 
+    `acrusher=level_in=10:level_out=1:bits=8:mode=log:aa=0,atempo=1,asetrate=44100*${1 + rate/10},areverse,atempo=${Math.max(0.5, 1 - rate/10)},areverse`, // Glitchy effect with crackling
+    
+  'static': (amount = 0.2) => 
+    `afftfilt=real='re*0.9':imag='im*0.9',highpass=f=200,asendcmd=a,aeval=val(0)*(1-${Math.min(0.8, amount)})+${Math.min(0.8, amount)}*random(0)`, // Static noise overlay
+    
+  'backwards': () => 
+    'areverse', // Simple backwards audio
+    
+  'wobble': (intensity = 0.5) => 
+    `vibrato=f=${Math.max(0.1, intensity * 5)}:d=1,tremolo=f=${Math.max(0.1, intensity * 2)}:d=0.8`, // Wobble effect
+    
+  'hall': () => 
+    'aecho=0.8:0.9:1000|1800|2500:0.7|0.5|0.3', // Hall reverb simulation
 };
 
 const videoEffects: VideoEffects = {
@@ -2025,5 +2080,95 @@ export async function getMediaInfo(filePath: string): Promise<{ duration?: numbe
       
       resolve(info);
     });
+  });
+}
+
+/**
+ * Creates a video placeholder for audio files
+ * This allows audio files to be used in grid layouts
+ */
+export const createAudioPlaceholderVideo = async (
+  audioPath: string,
+  outputPath: string,
+  progressCallback?: (progress: number) => Promise<void>
+): Promise<string> => {
+  return new Promise((resolve, reject) => {
+    if (!fs.existsSync(audioPath)) {
+      reject(new Error(`Audio file not found: ${audioPath}`));
+      return;
+    }
+    
+    // Get waveform image if it exists
+    const baseFilename = path.basename(audioPath, path.extname(audioPath));
+    const waveformPath = path.join(THUMBNAILS_DIR, `${baseFilename}_waveform.png`);
+    const spectrogramPath = path.join(THUMBNAILS_DIR, `${baseFilename}_spectrogram.png`);
+    
+    // Choose a background image - waveform, spectrogram, or generate a blank one
+    let backgroundImage: string;
+    
+    if (fs.existsSync(waveformPath)) {
+      backgroundImage = waveformPath;
+    } else if (fs.existsSync(spectrogramPath)) {
+      backgroundImage = spectrogramPath;
+    } else {
+      // Generate a blank image with audio name
+      const blankImagePath = path.join(TEMP_DIR, `blank_${baseFilename}.png`);
+      
+      // Use ffmpeg to create a blank image with text
+      const command = `ffmpeg -f lavfi -i color=c=black:s=640x360 -vf "drawtext=fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf:text='Audio: ${path.basename(audioPath, path.extname(audioPath))}':fontcolor=white:fontsize=24:x=(w-text_w)/2:y=(h-text_h)/2" -frames:v 1 "${blankImagePath}"`;
+      
+      try {
+        execSync(command);
+        backgroundImage = blankImagePath;
+      } catch (error) {
+        console.error('Error creating blank image:', error);
+        reject(new Error(`Failed to create placeholder image for audio: ${error}`));
+        return;
+      }
+    }
+    
+    // Now create a video with the audio
+    const ffmpegCommand = ffmpeg();
+    
+    // Add inputs
+    ffmpegCommand.input(backgroundImage);
+    ffmpegCommand.input(audioPath);
+    
+    // Set output options
+    ffmpegCommand
+      .outputOptions([
+        '-c:v libx264',         // Video codec
+        '-preset:v fast',        // Fast encoding preset
+        '-crf 23',              // Quality level
+        '-c:a aac',             // Audio codec
+        '-b:a 192k',            // Audio bitrate
+        '-shortest',            // End when audio ends
+        '-pix_fmt yuv420p'      // Compatible pixel format
+      ]);
+    
+    // Progress tracking
+    ffmpegCommand.on('progress', (progress) => {
+      if (progressCallback && progress.percent !== undefined) {
+        progressCallback(progress.percent / 100).catch(err => {
+          console.error('Error updating progress:', err);
+        });
+      }
+    });
+    
+    // Error handling
+    ffmpegCommand.on('error', (err) => {
+      console.error('Error creating audio placeholder video:', err);
+      reject(err);
+    });
+    
+    // Set output path and start processing
+    ffmpegCommand.save(outputPath)
+      .on('end', () => {
+        if (fs.existsSync(outputPath)) {
+          resolve(outputPath);
+        } else {
+          reject(new Error('Failed to create audio placeholder video'));
+        }
+      });
   });
 }

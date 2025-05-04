@@ -8,7 +8,7 @@ import fs from 'fs';
 import crypto from 'crypto';
 import ffmpeg from 'fluent-ffmpeg';
 import { promisify } from 'util';
-import { exec } from 'child_process';
+import { exec, execSync } from 'child_process';
 
 export const handlePlayCommand = async (
   message: Message, 
@@ -233,21 +233,18 @@ export const handleMultiMediaPlayback = async (
     
     const statusMessage = await message.reply(`${statusText}... ⏳`);
     
-    // Determine if we need to find video files (based on the grid layout)
-    const requireVideo = true; // Grid layout requires video
-    
     // Get media files to use
     let mediaItems;
     if (!searchTerm) {
       // Get random media when no search term provided
-      mediaItems = await getRandomMedia(multi, requireVideo);
+      mediaItems = await getRandomMedia(multi);
     } else {
       // Try to find matches for the search term
-      mediaItems = await findMediaBySearch(searchTerm, requireVideo, multi);
+      mediaItems = await findMediaBySearch(searchTerm, false, multi);
     }
     
     if (mediaItems.length === 0) {
-      await statusMessage.edit(`No video files found ${searchTerm ? `for "${searchTerm}"` : 'in the database'}`);
+      await statusMessage.edit(`No media files found ${searchTerm ? `for "${searchTerm}"` : 'in the database'}`);
       return;
     }
     
@@ -261,7 +258,7 @@ export const handleMultiMediaPlayback = async (
         mediaItems.push(itemToDuplicate);
       }
       
-      await statusMessage.edit(`Found ${originalCount} video item(s), duplicating to fill ${multi} slots... ⏳`);
+      await statusMessage.edit(`Found ${originalCount} media item(s), duplicating to fill ${multi} slots... ⏳`);
     }
     
     // Generate temp dir for processing
@@ -272,7 +269,7 @@ export const handleMultiMediaPlayback = async (
     await statusMessage.edit(`Processing ${multi} media files for grid layout... ⏳`);
     
     const processedFiles: string[] = [];
-    let allFilesAreVideo = true;
+    const fileTypes: { isVideo: boolean }[] = [];
     
     // If msync is enabled, we need to get duration information first
     let mediaDurations: number[] = [];
@@ -334,12 +331,28 @@ export const handleMultiMediaPlayback = async (
       
       // Check if this is a video file
       const isVideo = await isVideoFile(filePath);
-      if (!isVideo) {
-        allFilesAreVideo = false;
-      }
+      fileTypes.push({ isVideo });
       
       // Update status for this media item
       await statusMessage.edit(`Processing media ${i+1}/${multi}... ⏳`);
+      
+      // For audio files, we need to create a video with a placeholder image
+      if (!isVideo) {
+        try {
+          const audioToVideoFilename = `temp_audio_video_${randomId}_${i}.mp4`;
+          const audioToVideoPath = path.join(TEMP_DIR, audioToVideoFilename);
+          
+          // Create a blank video with audio
+          await createAudioPlaceholderVideo(filePath, audioToVideoPath, async (progress) => {
+            await statusMessage.edit(`Converting audio to video ${i+1}/${multi} (${Math.round(progress * 100)}%)... ⏳`);
+          });
+          
+          filePath = audioToVideoPath;
+        } catch (error) {
+          console.error(`Error converting audio to video for item ${i+1}:`, error);
+          // Continue with original file as fallback
+        }
+      }
       
       // Apply filters/clip options if needed
       if (filterString || (clipOptions && Object.keys(clipOptions).length > 0) || msyncEnabled) {
@@ -422,11 +435,6 @@ export const handleMultiMediaPlayback = async (
     // Check if we can continue
     if (processedFiles.length === 0) {
       await statusMessage.edit('Failed to process any media files ❌');
-      return;
-    }
-    
-    if (!allFilesAreVideo) {
-      await statusMessage.edit('Cannot create a grid with audio-only files. All files must be videos. ❌');
       return;
     }
     
@@ -1619,3 +1627,93 @@ async function createStereoSplitVideo(
     });
   });
 }
+
+/**
+ * Creates a video placeholder for audio files
+ * This allows audio files to be used in grid layouts
+ */
+const createAudioPlaceholderVideo = async (
+  audioPath: string,
+  outputPath: string,
+  progressCallback?: (progress: number) => Promise<void>
+): Promise<string> => {
+  return new Promise((resolve, reject) => {
+    if (!fs.existsSync(audioPath)) {
+      reject(new Error(`Audio file not found: ${audioPath}`));
+      return;
+    }
+    
+    // Get waveform image if it exists
+    const baseFilename = path.basename(audioPath, path.extname(audioPath));
+    const waveformPath = path.join(process.cwd(), 'thumbnails', `${baseFilename}_waveform.png`);
+    const spectrogramPath = path.join(process.cwd(), 'thumbnails', `${baseFilename}_spectrogram.png`);
+    
+    // Choose a background image - waveform, spectrogram, or generate a blank one
+    let backgroundImage: string;
+    
+    if (fs.existsSync(waveformPath)) {
+      backgroundImage = waveformPath;
+    } else if (fs.existsSync(spectrogramPath)) {
+      backgroundImage = spectrogramPath;
+    } else {
+      // Generate a blank image with audio name
+      const blankImagePath = path.join(process.cwd(), 'temp', `blank_${baseFilename}.png`);
+      
+      // Use ffmpeg to create a blank image with text
+      const command = `ffmpeg -f lavfi -i color=c=black:s=640x360 -vf "drawtext=fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf:text='Audio: ${path.basename(audioPath, path.extname(audioPath))}':fontcolor=white:fontsize=24:x=(w-text_w)/2:y=(h-text_h)/2" -frames:v 1 "${blankImagePath}"`;
+      
+      try {
+        execSync(command);
+        backgroundImage = blankImagePath;
+      } catch (error) {
+        console.error('Error creating blank image:', error);
+        reject(new Error(`Failed to create placeholder image for audio: ${error}`));
+        return;
+      }
+    }
+    
+    // Now create a video with the audio
+    const ffmpegCommand = ffmpeg();
+    
+    // Add inputs
+    ffmpegCommand.input(backgroundImage);
+    ffmpegCommand.input(audioPath);
+    
+    // Set output options
+    ffmpegCommand
+      .outputOptions([
+        '-c:v libx264',         // Video codec
+        '-preset:v fast',        // Fast encoding preset
+        '-crf 23',              // Quality level
+        '-c:a aac',             // Audio codec
+        '-b:a 192k',            // Audio bitrate
+        '-shortest',            // End when audio ends
+        '-pix_fmt yuv420p'      // Compatible pixel format
+      ]);
+    
+    // Progress tracking
+    ffmpegCommand.on('progress', (progress) => {
+      if (progressCallback && progress.percent !== undefined) {
+        progressCallback(progress.percent / 100).catch(err => {
+          console.error('Error updating progress:', err);
+        });
+      }
+    });
+    
+    // Error handling
+    ffmpegCommand.on('error', (err) => {
+      console.error('Error creating audio placeholder video:', err);
+      reject(err);
+    });
+    
+    // Set output path and start processing
+    ffmpegCommand.save(outputPath)
+      .on('end', () => {
+        if (fs.existsSync(outputPath)) {
+          resolve(outputPath);
+        } else {
+          reject(new Error('Failed to create audio placeholder video'));
+        }
+      });
+  });
+};
