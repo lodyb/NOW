@@ -924,20 +924,20 @@ export const parseFilterString = (filterString: string): MediaFilter => {
   const filters: MediaFilter = {};
   
   // Check if this is a raw complex filter string (no key=value format)
-  if (!content.includes('=') || content.includes(';')) {
-    // This appears to be a raw complex filter string
+  if (!content.includes('=') && !content.includes('+')) {
+    // This appears to be a raw complex filter string without any key=value pairs
     filters.__raw_complex_filter = content;
     return filters;
   }
   
   // Handle stacked filters using '+' notation (e.g., {destroy8bit+chipmunk})
-  if (content.includes('+')) {
+  if (content.includes('+') && !content.includes(',') && !content.includes('=')) {
     const stackedFilters = content.split('+');
     filters.__stacked_filters = stackedFilters.map(f => f.trim());
     return filters;
   }
   
-  // Handle complex filters with nested parameters more intelligently
+  // Handle complex filters with nested parameters
   let segmentStart = 0;
   let currentKey = '';
   let inQuote = false;
@@ -2380,3 +2380,39 @@ const syncAudioVideoSpeed = (
   
   logFFmpegCommand(`Applied audio/video sync with total speed factor: ${totalSpeedFactor}`);
 }
+
+/**
+ * Apply filters from a stacked filter string like 'clippedbass+destroy8bit'
+ */
+const applyStackedFilters = (command: ffmpeg.FfmpegCommand, filterNames: string[], isVideo: boolean): boolean => {
+  try {
+    logFFmpegCommand(`Applying stacked filters: ${filterNames.join('+')}`);
+    
+    // Process each filter individually
+    for (const filterName of filterNames) {
+      const [name, valueStr] = filterName.split('=');
+      const value = valueStr ? parseFloat(valueStr) : 1;
+      
+      // For audio effects
+      if (audioEffects[name]) {
+        const filterStr = audioEffects[name](value);
+        command.audioFilters(filterStr);
+        logFFmpegCommand(`Applied stacked audio effect: ${name}=${value} (${filterStr})`);
+      } 
+      // For video effects (only if this is a video)
+      else if (isVideo && videoEffects[name]) {
+        const filterStr = videoEffects[name](value);
+        command.videoFilters(filterStr);
+        logFFmpegCommand(`Applied stacked video effect: ${name}=${value} (${filterStr})`);
+      }
+      else {
+        logFFmpegCommand(`Unknown effect in stack: ${name}`);
+      }
+    }
+    
+    return true;
+  } catch (error) {
+    console.error(`Error applying stacked filters: ${error}`);
+    return false;
+  }
+};
