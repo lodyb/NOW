@@ -211,6 +211,18 @@ export const handleMultiMediaPlayback = async (
           filterString = filterString.slice(0, -1);
         }
       }
+      
+      // Remove the multi parameter from the filter string to avoid passing it to FFmpeg
+      if (filterString) {
+        filterString = filterString.replace(/multi=\d+,?/g, '');
+        if (filterString.endsWith(',')) {
+          filterString = filterString.slice(0, -1);
+        }
+        // If we emptied the filter string, set it to undefined or keep the braces format
+        if (filterString === '{' || filterString === '{}') {
+          filterString = undefined;
+        }
+      }
     }
     
     // Send initial status message with advanced options if specified
@@ -354,8 +366,8 @@ export const handleMultiMediaPlayback = async (
             
             // Limit speed factor to reasonable ranges to avoid FFmpeg errors
             // Too slow causes artifacts and too fast makes content unrecognizable
-            const MIN_SPEED = 0.33; // Don't go slower than 1/3 speed
-            const MAX_SPEED = 3.0;  // Don't go faster than 3x speed
+            const MIN_SPEED = 0.5; // Safer minimum speed - don't go slower than 1/2 speed
+            const MAX_SPEED = 2.0; // Safer maximum speed - don't go faster than 2x speed
             
             if (speedFactor < MIN_SPEED) {
               console.log(`Warning: Speed factor ${speedFactor.toFixed(2)} too low, limiting to ${MIN_SPEED}`);
@@ -373,19 +385,8 @@ export const handleMultiMediaPlayback = async (
               }
               
               // Apply audio speed adjustment using atempo
-              // atempo is limited to 0.5-2.0 range, chain for values outside this range
-              if (speedFactor >= 0.5 && speedFactor <= 2.0) {
-                options.filters.atempo = speedFactor.toString();
-              } else if (speedFactor < 0.5) {
-                // For slowdown (0.33-0.5), use single atempo
-                options.filters.atempo = speedFactor.toString();
-              } else {
-                // For extreme speedup (2.0-3.0), use two atempo filters
-                // Split into two steps: first step always 1.5, second step is remainder
-                const firstStep = 1.5;
-                const secondStep = speedFactor / firstStep;
-                options.filters.atempo = `${firstStep},${secondStep.toFixed(2)}`;
-              }
+              // atempo is limited to 0.5-2.0 range in ffmpeg
+              options.filters.atempo = speedFactor.toString();
               
               // Log the sync adjustment
               console.log(`Media sync: File ${i+1} duration=${mediaDurations[i].toFixed(2)}s, target=${targetDuration.toFixed(2)}s, speed=${speedFactor.toFixed(2)}`);
