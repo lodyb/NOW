@@ -384,112 +384,35 @@ async function createVideoGrid(
       return;
     }
     
-    // For 2 files, do a simple side-by-side layout
+    // For 2 files, use our specialized side-by-side function
     if (fileCount === 2) {
-      const command = ffmpeg();
-      
-      // Add inputs
-      inputFiles.slice(0, 2).forEach(file => {
-        command.input(file);
-      });
-      
-      // Simple 2-video layout with proper termination
-      const filterComplex = [
-        "[0:v]scale=640:360,setsar=1[v0]",
-        "[1:v]scale=640:360,setsar=1[v1]",
-        "[v0][v1]hstack=inputs=2[vout]"
-      ].join(';');
-      
-      // Handle audio separately to avoid issues
-      let audioFilter = "";
-      try {
-        audioFilter = "[0:a][1:a]amix=inputs=2:duration=longest[aout]";
-        command.complexFilter(`${filterComplex};${audioFilter}`, ['vout', 'aout']);
-      } catch (err) {
-        // If audio mixing fails, try without audio
-        console.log('Audio mixing failed, trying without audio mix:', err);
-        command.complexFilter(filterComplex, ['vout']);
-      }
-      
-      // Set output options
-      command
-        .outputOptions('-map [vout]');
-      
-      // Only map audio if we have an audio filter
-      if (audioFilter) {
-        command.outputOptions('-map [aout]');
-      } else {
-        command.outputOptions('-an');
-      }
-      
-      command
-        .outputOptions('-c:v libx264')
-        .outputOptions('-preset medium')
-        .outputOptions('-crf 23');
-        
-      if (audioFilter) {
-        command
-          .outputOptions('-c:a aac')
-          .outputOptions('-b:a 128k');
-      }
-      
-      command.outputOptions('-shortest');
-      
-      // Debug the filter
-      console.log('Using simplified filter complex for 2 videos:', filterComplex);
-      
-      // Add error logging
-      command.on('stderr', (stderrLine) => {
-        console.log('FFmpeg stderr:', stderrLine);
-      });
-      
-      // Add progress tracking
-      if (progressCallback) {
-        command.on('progress', (progress) => {
-          if (progress.percent) {
-            progressCallback(progress.percent / 100);
-          }
-        });
-      }
-      
-      // Execute the command
-      command.save(outputPath)
-        .on('end', () => {
-          resolve(outputPath);
-        })
-        .on('error', (err) => {
-          // If the error is related to audio, try again without audio
-          if (audioFilter && err.message && err.message.includes('aout')) {
-            console.log('Error with audio mixing, retrying without audio');
-            // Call the function again without audio
-            createVideoGridNoAudio(inputFiles, outputPath, grid, progressCallback)
-              .then(resolve)
-              .catch(reject);
-          } else {
-            console.error('Error creating video grid:', err);
-            reject(err);
-          }
-        });
-        
+      createSideBySideVideo(inputFiles, outputPath, progressCallback)
+        .then(resolve)
+        .catch(reject);
       return;
     }
     
-    // For more than 2 files, use the grid approach
-    // Prepare input arguments
-    const command = ffmpeg();
+    // For more than 2 files, use native exec for more reliable results
+    const ffmpegBin = 'ffmpeg';
+    let filterComplex = '';
+    let inputArgs = '';
     
-    // Add all input files
-    inputFiles.slice(0, fileCount).forEach(file => {
-      command.input(file);
+    // Add input arguments
+    inputFiles.slice(0, fileCount).forEach((file, i) => {
+      inputArgs += ` -i "${file}"`;
     });
-
+    
+    // Add video scaling for each input with fps normalization
+    for (let i = 0; i < fileCount; i++) {
+      filterComplex += `[${i}:v]scale=640:360:force_original_aspect_ratio=decrease,pad=640:360:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=25[v${i}];`;
+    }
+    
     // Calculate grid dimensions that work with the actual number of videos
     let useRows = rows;
     let useCols = cols;
     
     // Ensure grid works with the actual file count
     if (fileCount < rows * cols) {
-      // Recalculate for a more balanced grid
       if (fileCount <= 4) {
         useRows = 2;
         useCols = 2;
@@ -502,26 +425,17 @@ async function createVideoGrid(
       }
     }
     
-    // Build the filter graph
-    let filterComplex = '';
-    
-    // Scale each video
-    for (let i = 0; i < fileCount; i++) {
-      filterComplex += `[${i}:v]scale=640:360,setsar=1[v${i}];`;
-    }
-    
-    // Create black padding for empty slots if needed
-    const totalSlots = useRows * useCols;
-    for (let i = fileCount; i < totalSlots; i++) {
-      filterComplex += `color=c=black:s=640x360[v${i}];`;
-    }
-    
-    // Create each row
+    // Create rows first
     for (let r = 0; r < useRows; r++) {
       const rowInputs = [];
-      for (let c = 0; c < useCols; c++) {
+      const rowSize = Math.min(useCols, fileCount - r * useCols);
+      
+      // Skip empty rows
+      if (rowSize <= 0) continue;
+      
+      for (let c = 0; c < rowSize; c++) {
         const idx = r * useCols + c;
-        if (idx < totalSlots) {
+        if (idx < fileCount) {
           rowInputs.push(`[v${idx}]`);
         }
       }
@@ -534,69 +448,75 @@ async function createVideoGrid(
     // Stack all rows
     const rowOutputs = [];
     for (let r = 0; r < useRows; r++) {
-      rowOutputs.push(`[row${r}]`);
+      // Only include rows that we created
+      if (r * useCols < fileCount) {
+        rowOutputs.push(`[row${r}]`);
+      }
     }
     
-    filterComplex += `${rowOutputs.join('')}vstack=inputs=${useRows}[vout];`;
+    if (rowOutputs.length > 1) {
+      filterComplex += `${rowOutputs.join('')}vstack=inputs=${rowOutputs.length}[vout];`;
+    } else if (rowOutputs.length === 1) {
+      filterComplex += `${rowOutputs[0]}copy[vout];`;
+    }
     
-    // Handle audio mixing - only mix the available audio streams
-    const audioInputs = [];
+    // Handle audio mixing
     for (let i = 0; i < fileCount; i++) {
       filterComplex += `[${i}:a]aresample=44100:async=1000,aformat=sample_fmts=fltp:channel_layouts=stereo[a${i}];`;
-      audioInputs.push(`[a${i}]`);
     }
     
-    if (audioInputs.length > 1) {
-      filterComplex += `${audioInputs.join('')}amix=inputs=${audioInputs.length}:dropout_transition=0[aout]`;
-    } else if (audioInputs.length === 1) {
-      filterComplex += `${audioInputs[0]}acopy[aout]`;
+    if (fileCount > 1) {
+      const audioInputs = Array.from({ length: fileCount }, (_, i) => `[a${i}]`).join('');
+      filterComplex += `${audioInputs}amix=inputs=${fileCount}:dropout_transition=0[aout]`;
+    } else {
+      filterComplex += `[a0]acopy[aout]`;
     }
     
-    // Debug the filter
-    console.log('Using filter complex:', filterComplex);
+    // Build the command with vsync=vfr to prevent frame duplication
+    const command = `${ffmpegBin}${inputArgs} -filter_complex "${filterComplex}" -map "[vout]" -map "[aout]" -c:v libx264 -preset medium -crf 23 -vsync vfr -c:a aac -b:a 128k -shortest "${outputPath}"`;
     
-    // Apply the filter
-    command.complexFilter(filterComplex, audioInputs.length > 0 ? ['vout', 'aout'] : ['vout']);
+    console.log('Running ffmpeg grid command:', command);
     
-    // Set output options
-    command
-      .outputOptions('-map [vout]')
-      .outputOptions(audioInputs.length > 0 ? '-map [aout]' : '-an')
-      .outputOptions('-c:v libx264')
-      .outputOptions('-preset medium')
-      .outputOptions('-crf 23');
-      
-    if (audioInputs.length > 0) {
-      command
-        .outputOptions('-c:a aac')
-        .outputOptions('-b:a 128k');
-    }
+    // Execute command
+    const childProcess = exec(command);
+    let stderrData = '';
     
-    command.outputOptions('-shortest');
-    
-    // Add error event handler
-    command.on('stderr', (stderrLine) => {
-      console.log('FFmpeg stderr:', stderrLine);
-    });
-    
-    // Add progress tracking
-    if (progressCallback) {
-      command.on('progress', (progress) => {
-        if (progress.percent) {
-          progressCallback(progress.percent / 100);
+    if (childProcess.stderr) {
+      childProcess.stderr.on('data', (data) => {
+        stderrData += data.toString();
+        console.log('FFmpeg stderr (grid):', data.toString());
+        
+        // Parse progress
+        const match = data.toString().match(/time=(\d+:\d+:\d+\.\d+)/);
+        if (match && match[1] && progressCallback) {
+          const timeStr = match[1];
+          const [hours, minutes, seconds] = timeStr.split(':').map(parseFloat);
+          const totalSeconds = hours * 3600 + minutes * 60 + seconds;
+          
+          // Estimate progress based on a 2-minute video
+          const estimatedDuration = 120;
+          const progress = Math.min(totalSeconds / estimatedDuration, 0.99);
+          
+          progressCallback(progress).catch(err => {
+            console.error('Error updating progress:', err);
+          });
         }
       });
     }
     
-    // Execute the command
-    command.save(outputPath)
-      .on('end', () => {
+    childProcess.on('close', (code) => {
+      if (code === 0) {
         resolve(outputPath);
-      })
-      .on('error', (err) => {
-        console.error('Error creating video grid:', err);
-        reject(err);
-      });
+      } else {
+        console.error(`FFmpeg grid process exited with code ${code}`);
+        console.error('stderr:', stderrData);
+        
+        // Try the fallback without audio
+        createVideoGridNoAudio(inputFiles, outputPath, grid, progressCallback)
+          .then(resolve)
+          .catch(reject);
+      }
+    });
   });
 }
 
@@ -1098,9 +1018,9 @@ async function createConcatenatedMedia(
       const streams: string[] = [];
       let filterComplex = '';
       
-      // Create scaled video streams
+      // Create scaled video streams with fps standardization to prevent frame duplication
       for (let i = 0; i < inputFiles.length; i++) {
-        filterComplex += `[${i}:v]scale=640:360:force_original_aspect_ratio=decrease,pad=640:360:(ow-iw)/2:(oh-ih)/2,setsar=1[v${i}];`;
+        filterComplex += `[${i}:v]scale=640:360:force_original_aspect_ratio=decrease,pad=640:360:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=25[v${i}];`;
       }
       
       // Concat video streams
@@ -1117,8 +1037,8 @@ async function createConcatenatedMedia(
       const audioInputs = Array.from({ length: inputFiles.length }, (_, i) => `[a${i}]`).join('');
       filterComplex += `${audioInputs}concat=n=${inputFiles.length}:v=0:a=1[aout]`;
       
-      // Build the full command
-      const command = `ffmpeg ${inputArgs} -filter_complex "${filterComplex}" -map "[vout]" -map "[aout]" -c:v libx264 -preset medium -crf 23 -c:a aac -b:a 128k "${outputPath}"`;
+      // Build the full command with vsync=vfr to prevent frame duplication
+      const command = `ffmpeg ${inputArgs} -filter_complex "${filterComplex}" -map "[vout]" -map "[aout]" -c:v libx264 -preset medium -crf 23 -vsync vfr -c:a aac -b:a 128k "${outputPath}"`;
       
       console.log('Running ffmpeg concat command (video):', command);
       
@@ -1257,5 +1177,229 @@ async function createConcatDemuxer(
     } catch (error) {
       reject(error);
     }
+  });
+}
+
+/**
+ * Handle stereo split playback (left/right channels for different media)
+ */
+export const handleStereoSplitPlayback = async (
+  message: Message,
+  searchTerm?: string,
+  filterString?: string,
+  clipOptions?: { duration?: string; start?: string }
+) => {
+  try {
+    // Send initial status message
+    const statusMessage = await message.reply(`Processing stereo split request... ⏳`);
+    
+    // We need exactly 2 media items
+    const requireVideo = false; // Allow any media type
+    const mediaCount = 2;
+    
+    // Get media files to use
+    let mediaItems;
+    if (!searchTerm) {
+      // Get random media when no search term provided
+      mediaItems = await getRandomMedia(mediaCount);
+    } else {
+      mediaItems = await findMediaBySearch(searchTerm, requireVideo, mediaCount);
+    }
+    
+    if (mediaItems.length < 2) {
+      await statusMessage.edit(`Not enough media found for "${searchTerm || 'random'}" (need 2)`);
+      return;
+    }
+    
+    // Generate temp dir for processing
+    const TEMP_DIR = path.join(process.cwd(), 'temp');
+    const randomId = crypto.randomBytes(4).toString('hex');
+    
+    // Process each media file
+    await statusMessage.edit(`Processing 2 media files for stereo split... ⏳`);
+    
+    const processedFiles: string[] = [];
+    
+    // Process each media file sequentially
+    for (let i = 0; i < 2; i++) {
+      const media = mediaItems[i];
+      
+      // Determine the file path
+      let filePath;
+      if (media.normalizedPath) {
+        const filename = path.basename(media.normalizedPath);
+        const normalizedFilename = filename.startsWith('norm_') ? filename : `norm_${filename}`;
+        filePath = path.join(process.cwd(), 'normalized', normalizedFilename);
+      } else {
+        filePath = media.filePath;
+      }
+      
+      // Update status for this media item
+      await statusMessage.edit(`Processing media ${i+1}/2... ⏳`);
+      
+      // Apply filters/clip options if needed
+      if (filterString || (clipOptions && Object.keys(clipOptions).length > 0)) {
+        try {
+          const outputFilename = `temp_stereo_${randomId}_${i}_${path.basename(filePath)}`;
+          const options: ProcessOptions = {};
+          
+          if (filterString) {
+            options.filters = parseFilterString(filterString);
+          }
+          
+          if (clipOptions) {
+            options.clip = clipOptions;
+          }
+          
+          options.enforceDiscordLimit = false;
+          
+          // Add progress callback
+          options.progressCallback = async (stage, progress) => {
+            try {
+              await statusMessage.edit(`Processing media ${i+1}/2: ${stage} (${Math.round(progress * 100)}%)... ⏳`);
+            } catch (err) {
+              console.error('Error updating status message:', err);
+            }
+          };
+          
+          // Process the media file
+          const processedPath = await processMedia(filePath, outputFilename, options);
+          processedFiles.push(processedPath);
+        } catch (error) {
+          console.error(`Error processing media item ${i+1}:`, error);
+          await statusMessage.edit(`Error processing media item ${i+1}: ${(error as Error).message} ❌`);
+          return;
+        }
+      } else {
+        // No processing needed, use the file directly
+        processedFiles.push(filePath);
+      }
+    }
+    
+    if (processedFiles.length !== 2) {
+      await statusMessage.edit('Failed to process both media files ❌');
+      return;
+    }
+    
+    // Create the stereo split output using ffmpeg
+    await statusMessage.edit(`Creating stereo split video... ⏳`);
+    
+    const outputFilename = `stereo_${randomId}.mp4`;
+    const outputPath = path.join(TEMP_DIR, outputFilename);
+    
+    try {
+      // Create stereo split (left/right) audio with side-by-side video
+      await createStereoSplitVideo(processedFiles, outputPath, async (progress) => {
+        await statusMessage.edit(`Creating video (${Math.round(progress * 100)}%)... ⏳`);
+      });
+      
+      // Ensure the result is under Discord file size limit
+      await statusMessage.edit(`Optimizing for Discord... ⏳`);
+      
+      const finalOutputFilename = `final_stereo_${randomId}.mp4`;
+      const finalOutputPath = path.join(TEMP_DIR, finalOutputFilename);
+      
+      const options: ProcessOptions = {
+        enforceDiscordLimit: true,
+        progressCallback: async (stage, progress) => {
+          try {
+            await statusMessage.edit(`${stage} (${Math.round(progress * 100)}%)... ⏳`);
+          } catch (err) {
+            console.error('Error updating status message:', err);
+          }
+        }
+      };
+      
+      const finalPath = await processMedia(outputPath, finalOutputFilename, options);
+      
+      if (!fs.existsSync(finalPath)) {
+        throw new Error('Failed to create final stereo split video');
+      }
+      
+      // Upload the final result
+      await statusMessage.edit(`Stereo split created! Uploading... 📤`);
+      
+      const attachment = new AttachmentBuilder(finalPath);
+      await safeReply(message, { files: [attachment] });
+      
+      // Clean up the status message
+      await statusMessage.delete().catch(err => console.error('Failed to delete status message:', err));
+      
+      // Clean up temporary files
+      cleanupTempFiles(processedFiles, outputPath);
+    } catch (error) {
+      console.error('Error creating stereo split video:', error);
+      await statusMessage.edit(`Error creating stereo split: ${(error as Error).message} ❌`);
+    }
+  } catch (error) {
+    console.error('Error handling stereo split playback:', error);
+    await safeReply(message, `An error occurred: ${(error as Error).message}`);
+  }
+};
+
+/**
+ * Create a stereo split video with left media in left channel and right media in right channel
+ */
+async function createStereoSplitVideo(
+  inputFiles: string[],
+  outputPath: string,
+  progressCallback?: (progress: number) => Promise<void>
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    if (inputFiles.length !== 2) {
+      reject(new Error("Stereo split requires exactly 2 media files"));
+      return;
+    }
+    
+    // Use the shell command approach for reliability
+    const ffmpegBin = 'ffmpeg';
+    
+    // Build a complex filter that:
+    // 1. Scales both videos to the same size
+    // 2. Puts the first video in the left audio channel only
+    // 3. Puts the second video in the right audio channel only
+    // 4. Displays videos side by side
+    // Also handle framerate differences with fps=25 and vsync=vfr
+    const command = `${ffmpegBin} -i "${inputFiles[0]}" -i "${inputFiles[1]}" -filter_complex "[0:v]scale=640:360:force_original_aspect_ratio=decrease,pad=640:360:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=25[left_v];[1:v]scale=640:360:force_original_aspect_ratio=decrease,pad=640:360:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=25[right_v];[left_v][right_v]hstack=inputs=2[v];[0:a]aresample=44100:async=1000,aformat=sample_fmts=fltp:channel_layouts=stereo,pan=stereo|c0=c0|c1=0[a_left];[1:a]aresample=44100:async=1000,aformat=sample_fmts=fltp:channel_layouts=stereo,pan=stereo|c0=0|c1=c1[a_right];[a_left][a_right]amix=inputs=2:duration=longest[a]" -map "[v]" -map "[a]" -c:v libx264 -preset medium -crf 23 -vsync vfr -c:a aac -b:a 128k -shortest "${outputPath}"`;
+    
+    console.log('Running ffmpeg stereo split command:', command);
+    
+    // Execute command
+    const childProcess = exec(command);
+    let stderrData = '';
+    
+    if (childProcess.stderr) {
+      childProcess.stderr.on('data', (data) => {
+        stderrData += data.toString();
+        console.log('FFmpeg stderr (stereo):', data.toString());
+        
+        // Parse progress
+        const match = data.toString().match(/time=(\d+:\d+:\d+\.\d+)/);
+        if (match && match[1] && progressCallback) {
+          const timeStr = match[1];
+          const [hours, minutes, seconds] = timeStr.split(':').map(parseFloat);
+          const totalSeconds = hours * 3600 + minutes * 60 + seconds;
+          
+          // Estimate total duration as 2 minutes for progress calculation
+          const estimatedDuration = 120; 
+          const progress = Math.min(totalSeconds / estimatedDuration, 0.99);
+          
+          progressCallback(progress).catch(err => {
+            console.error('Error updating progress:', err);
+          });
+        }
+      });
+    }
+    
+    // Handle completion
+    childProcess.on('close', (code) => {
+      if (code === 0) {
+        resolve(outputPath);
+      } else {
+        console.error(`FFmpeg stereo split exited with code ${code}`);
+        console.error('stderr:', stderrData);
+        reject(new Error(`FFmpeg stereo split failed with code ${code}`));
+      }
+    });
   });
 }
