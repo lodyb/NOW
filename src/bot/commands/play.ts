@@ -18,9 +18,10 @@ export const handlePlayCommand = async (
   multi?: number
 ) => {
   try {
-    // Special case for stereo split command - when using {} notation
-    if (filterString && filterString.startsWith('{') && filterString.endsWith('}') && !filterString.includes('=')) {
-      // Trigger stereo split with random media (ignore content inside braces)
+    // Special case for stereo split command - when using 'stereo' keyword explicitly
+    if (filterString && filterString.startsWith('{') && filterString.endsWith('}') && 
+        (filterString.toLowerCase().includes('stereo') || filterString.toLowerCase() === '{split}')) {
+      // Trigger stereo split with random media
       await handleStereoSplitPlayback(message, searchTerm, undefined, clipOptions);
       return;
     }
@@ -403,7 +404,7 @@ function calculateGridDimensions(count: number): { rows: number; cols: number } 
 }
 
 /**
- * Create a video grid using ffmpeg complex filter
+ * Create a video grid using ffmpeg complex filter with optimized mapping
  */
 async function createVideoGrid(
   inputFiles: string[], 
@@ -427,7 +428,6 @@ async function createVideoGrid(
         .save(outputPath)
         .on('end', () => resolve(outputPath))
         .on('error', (err) => reject(err));
-      
       return;
     }
     
@@ -438,12 +438,6 @@ async function createVideoGrid(
         .catch(reject);
       return;
     }
-    
-    // For larger grids (3+), build more reliable command with timing options
-    const ffmpegBin = 'ffmpeg';
-    
-    // Build input arguments
-    const inputArgs = inputFiles.slice(0, fileCount).map(file => `-i "${file}"`).join(' ');
     
     // Calculate actual grid dimensions based on file count
     let useRows = rows;
@@ -460,10 +454,18 @@ async function createVideoGrid(
       useCols = 3;
     }
     
-    // Build the filter_complex with delay and speed options
+    // Build command using direct ffmpeg command with mapping
+    const ffmpegBin = 'ffmpeg';
+    let inputArgs = '';
     let filterComplex = '';
+    let mapArgs = '';
     
-    // Scale all inputs with progressive delay and speed adjustments
+    // Add input files
+    for (let i = 0; i < fileCount; i++) {
+      inputArgs += ` -i "${inputFiles[i]}"`;
+    }
+    
+    // Create processing blocks for each video
     for (let i = 0; i < fileCount; i++) {
       // Calculate progressive speed for this video
       const speedFactor = mediaSpeed !== 1.0 ? Math.pow(mediaSpeed, i) : 1.0;
@@ -473,9 +475,9 @@ async function createVideoGrid(
       const delayFilter = delayMs > 0 ? `,tpad=start_duration=${delayMs/1000}` : '';
       
       // Apply speed adjustment if needed
-      const speedFilter = speedFactor !== 1.0 ? `,setpts=PTS/${speedFactor},atempo=${Math.min(2.0, speedFactor)}` : '';
+      const speedFilter = speedFactor !== 1.0 ? `,setpts=PTS/${speedFactor}` : '';
       
-      // Complete filter for this video
+      // Filter for video
       filterComplex += `[${i}:v]scale=640:360:force_original_aspect_ratio=decrease,pad=640:360:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=25${speedFilter}${delayFilter}[v${i}];`;
     }
     
@@ -484,19 +486,17 @@ async function createVideoGrid(
       filterComplex += `color=c=black:s=640x360:r=25[v${i}];`;
     }
     
+    // Create grid layout
     // Create the rows using hstack
     for (let r = 0; r < useRows; r++) {
-      // Start and end indices for this row
-      const startIdx = r * useCols;
-      const endIdx = Math.min(startIdx + useCols, useRows * useCols);
-      
-      // Calculate inputs for this row
       const rowInputs = [];
-      for (let i = startIdx; i < endIdx; i++) {
-        rowInputs.push(`[v${i}]`);
+      for (let c = 0; c < useCols; c++) {
+        const index = r * useCols + c;
+        if (index < useRows * useCols) {
+          rowInputs.push(`[v${index}]`);
+        }
       }
       
-      // Create this row
       if (rowInputs.length > 0) {
         filterComplex += `${rowInputs.join('')}hstack=inputs=${rowInputs.length}[row${r}];`;
       }
@@ -508,14 +508,13 @@ async function createVideoGrid(
       rowRefs.push(`[row${r}]`);
     }
     
-    // Complete the video
     if (rowRefs.length > 1) {
       filterComplex += `${rowRefs.join('')}vstack=inputs=${rowRefs.length}[vout];`;
     } else {
       filterComplex += `${rowRefs[0]}copy[vout];`;
     }
     
-    // Handle audio with timing adjustments for each audio track
+    // Handle audio streams with mapping
     for (let i = 0; i < fileCount; i++) {
       // Calculate progressive speed for this audio
       const speedFactor = mediaSpeed !== 1.0 ? Math.pow(mediaSpeed, i) : 1.0;
@@ -524,30 +523,62 @@ async function createVideoGrid(
       const delayMs = i * mediaDelay;
       const delayFilter = delayMs > 0 ? `,adelay=${delayMs}|${delayMs}` : '';
       
-      // Apply speed adjustment if needed
-      const speedFilter = speedFactor !== 1.0 ? `,atempo=${Math.min(2.0, speedFactor)}` : '';
+      // Apply appropriate audio speed filter
+      let audioSpeedFilter = '';
+      if (speedFactor !== 1.0) {
+        if (speedFactor >= 0.5 && speedFactor <= 2.0) {
+          audioSpeedFilter = `,atempo=${speedFactor}`;
+        } else if (speedFactor < 0.5) {
+          const filterValues = [];
+          let remainingSpeed = speedFactor;
+          
+          while (remainingSpeed < 0.5) {
+            filterValues.push('atempo=0.5');
+            remainingSpeed /= 0.5;
+          }
+          
+          if (remainingSpeed < 1.0) {
+            filterValues.push(`atempo=${remainingSpeed}`);
+          }
+          
+          audioSpeedFilter = `,${filterValues.join(',')}`;
+        } else {
+          const filterValues = [];
+          let remainingSpeed = speedFactor;
+          
+          while (remainingSpeed > 2.0) {
+            filterValues.push('atempo=2.0');
+            remainingSpeed /= 2.0;
+          }
+          
+          if (remainingSpeed > 1.0) {
+            filterValues.push(`atempo=${remainingSpeed}`);
+          }
+          
+          audioSpeedFilter = `,${filterValues.join(',')}`;
+        }
+      }
       
-      // Complete filter for this audio
-      filterComplex += `[${i}:a]aresample=44100:async=1000,aformat=sample_fmts=fltp:channel_layouts=stereo${speedFilter}${delayFilter}[a${i}];`;
+      // Add audio processing
+      filterComplex += `[${i}:a]aresample=44100:async=1000,aformat=sample_fmts=fltp:channel_layouts=stereo${audioSpeedFilter}${delayFilter}[a${i}];`;
     }
     
-    const audioInputs = [];
-    for (let i = 0; i < fileCount; i++) {
-      audioInputs.push(`[a${i}]`);
+    // Mix all audio streams
+    if (fileCount > 0) {
+      const audioInputs = Array.from({ length: fileCount }, (_, i) => `[a${i}]`).join('');
+      if (fileCount > 1) {
+        filterComplex += `${audioInputs}amix=inputs=${fileCount}:dropout_transition=0[aout]`;
+      } else {
+        filterComplex += `${audioInputs}acopy[aout]`;
+      }
     }
     
-    if (audioInputs.length > 1) {
-      filterComplex += `${audioInputs.join('')}amix=inputs=${audioInputs.length}:dropout_transition=0[aout]`;
-    } else if (audioInputs.length === 1) {
-      filterComplex += `${audioInputs[0]}acopy[aout]`;
-    }
+    // Build the full command with mapping
+    const command = `${ffmpegBin}${inputArgs} -filter_complex "${filterComplex}" -map "[vout]" -map "[aout]" -c:v libx264 -preset medium -crf 23 -vsync vfr -c:a aac -b:a 128k -shortest "${outputPath}"`;
     
-    // Execute the command
-    const fullCommand = `${ffmpegBin} ${inputArgs} -filter_complex "${filterComplex}" -map "[vout]" ${audioInputs.length > 0 ? '-map "[aout]"' : '-an'} -c:v libx264 -preset medium -crf 23 -vsync vfr ${audioInputs.length > 0 ? '-c:a aac -b:a 128k' : ''} -shortest "${outputPath}"`;
+    console.log('Running optimized grid command:', command);
     
-    console.log('Running grid command:', fullCommand);
-    
-    const childProcess = exec(fullCommand);
+    const childProcess = exec(command);
     let stderrData = '';
     
     if (childProcess.stderr) {

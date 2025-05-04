@@ -1859,9 +1859,9 @@ const videoEffects: VideoEffects = {
   'vmirror': () => 'vflip', // Simple vertical mirror
   
   // Mirror effects
-  'haah': () => 'split[a][b];[a]crop=iw/2:ih:0:0[left];[left]hflip[right];[b][right]overlay=W/2:0', // Mirror left side to right
+  'haah': () => 'split[a][b];[a]crop=iw/2:ih:0:0,hflip[a1];[b]crop=iw/2:ih:iw/2:0,vflip[b1];[a1][b1]hstack[top];[top][top]vstack', // Mirror left side to right
   
-  'waaw': () => 'split[a][b];[a]crop=iw/2:ih:iw/2:0[right];[right]hflip[left];[b][left]overlay=0:0', // Mirror right side to left
+  'waaw': () => 'split[a][b];[a]crop=iw/2:ih:iw/2:0,hflip[left];[b][left]overlay=0:0', // Mirror right side to left
   
   'hooh': () => 'split[a][b];[a]crop=iw:ih/2:0:0[top];[top]vflip[bottom];[b][bottom]overlay=0:H/2', // Mirror top to bottom
 
@@ -1950,6 +1950,28 @@ const videoOnlyEffects = new Set([
 const applyCustomEffect = (command: ffmpeg.FfmpegCommand, effectName: string, value: string | number, isVideo: boolean): boolean => {
   effectName = effectName.toLowerCase();
   const numValue = typeof value === 'string' ? parseFloat(value) : value;
+  
+  // Handle trampoline effect (play forward then reverse)
+  if (effectName === 'trampoline') {
+    if (isVideo) {
+      // For video, we need to duplicate the input, reverse the second copy, and concat them
+      command.complexFilter(
+        '[0:v]split[v1][v2];[v1]setpts=PTS[vfwd];[v2]reverse,setpts=PTS[vrev];[vfwd][vrev]concat=n=2:v=1:a=0[vout];' +
+        '[0:a]asplit[a1][a2];[a1]asetpts=PTS[afwd];[a2]areverse,asetpts=PTS[arev];[afwd][arev]concat=n=2:v=0:a=1[aout]',
+        ['vout', 'aout']
+      );
+      logFFmpegCommand('Applied trampoline effect to video (forward + reverse)');
+      return true;
+    } else {
+      // For audio, we duplicate the input, reverse the second copy, and concat them
+      command.complexFilter(
+        '[0:a]asplit[a1][a2];[a1]asetpts=PTS[afwd];[a2]areverse,asetpts=PTS[arev];[afwd][arev]concat=n=2:v=0:a=1[aout]',
+        ['aout']
+      );
+      logFFmpegCommand('Applied trampoline effect to audio (forward + reverse)');
+      return true;
+    }
+  }
   
   // Handle special audio effects - only apply to audio stream
   if (audioOnlyEffects.has(effectName) || audioEffects[effectName as keyof typeof audioEffects]) {
