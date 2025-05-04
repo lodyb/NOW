@@ -276,9 +276,19 @@ export const handleMultiMediaPlayback = async (
     const outputPath = path.join(TEMP_DIR, outputFilename);
     
     try {
-      await createVideoGrid(processedFiles, outputPath, gridDimensions, async (progress) => {
-        await statusMessage.edit(`Creating grid (${Math.round(progress * 100)}%)... ⏳`);
-      });
+      // Special case for 2 videos - use our more reliable side-by-side function
+      if (processedFiles.length === 2) {
+        await statusMessage.edit(`Creating side-by-side video... ⏳`);
+        await createSideBySideVideo(processedFiles, outputPath, async (progress) => {
+          await statusMessage.edit(`Creating video (${Math.round(progress * 100)}%)... ⏳`);
+        });
+      } else {
+        // For 3+ videos, use the grid layout
+        await statusMessage.edit(`Creating ${multi}-item grid layout... ⏳`);
+        await createVideoGrid(processedFiles, outputPath, gridDimensions, async (progress) => {
+          await statusMessage.edit(`Creating grid (${Math.round(progress * 100)}%)... ⏳`);
+        });
+      }
       
       // Ensure the result is under Discord file size limit
       await statusMessage.edit(`Optimizing for Discord... ⏳`);
@@ -377,27 +387,55 @@ async function createVideoGrid(
         command.input(file);
       });
       
-      // Simple 2-video layout without complex chaining
-      const filterComplex = `
-        [0:v]scale=640:360,setsar=1[v0];
-        [1:v]scale=640:360,setsar=1[v1];
-        [v0][v1]hstack=inputs=2[vout];
-        [0:a][1:a]amix=inputs=2:duration=longest[aout]
-      `;
+      // Simple 2-video layout with proper termination
+      const filterComplex = [
+        "[0:v]scale=640:360,setsar=1[v0]",
+        "[1:v]scale=640:360,setsar=1[v1]",
+        "[v0][v1]hstack=inputs=2[vout]"
+      ].join(';');
       
-      // Apply the filter
-      command.complexFilter(filterComplex.trim(), ['vout', 'aout']);
+      // Handle audio separately to avoid issues
+      let audioFilter = "";
+      try {
+        audioFilter = "[0:a][1:a]amix=inputs=2:duration=longest[aout]";
+        command.complexFilter(`${filterComplex};${audioFilter}`, ['vout', 'aout']);
+      } catch (err) {
+        // If audio mixing fails, try without audio
+        console.log('Audio mixing failed, trying without audio mix:', err);
+        command.complexFilter(filterComplex, ['vout']);
+      }
       
       // Set output options
       command
-        .outputOptions('-map [vout]')
-        .outputOptions('-map [aout]')
+        .outputOptions('-map [vout]');
+      
+      // Only map audio if we have an audio filter
+      if (audioFilter) {
+        command.outputOptions('-map [aout]');
+      } else {
+        command.outputOptions('-an');
+      }
+      
+      command
         .outputOptions('-c:v libx264')
         .outputOptions('-preset medium')
-        .outputOptions('-crf 23')
-        .outputOptions('-c:a aac')
-        .outputOptions('-b:a 128k')
-        .outputOptions('-shortest');
+        .outputOptions('-crf 23');
+        
+      if (audioFilter) {
+        command
+          .outputOptions('-c:a aac')
+          .outputOptions('-b:a 128k');
+      }
+      
+      command.outputOptions('-shortest');
+      
+      // Debug the filter
+      console.log('Using simplified filter complex for 2 videos:', filterComplex);
+      
+      // Add error logging
+      command.on('stderr', (stderrLine) => {
+        console.log('FFmpeg stderr:', stderrLine);
+      });
       
       // Add progress tracking
       if (progressCallback) {
@@ -408,19 +446,23 @@ async function createVideoGrid(
         });
       }
       
-      // Add error logging
-      command.on('stderr', (stderrLine) => {
-        console.log('FFmpeg stderr:', stderrLine);
-      });
-      
       // Execute the command
       command.save(outputPath)
         .on('end', () => {
           resolve(outputPath);
         })
         .on('error', (err) => {
-          console.error('Error creating video grid:', err);
-          reject(err);
+          // If the error is related to audio, try again without audio
+          if (audioFilter && err.message && err.message.includes('aout')) {
+            console.log('Error with audio mixing, retrying without audio');
+            // Call the function again without audio
+            createVideoGridNoAudio(inputFiles, outputPath, grid, progressCallback)
+              .then(resolve)
+              .catch(reject);
+          } else {
+            console.error('Error creating video grid:', err);
+            reject(err);
+          }
         });
         
       return;
@@ -549,6 +591,217 @@ async function createVideoGrid(
         console.error('Error creating video grid:', err);
         reject(err);
       });
+  });
+}
+
+/**
+ * Fallback function for creating a video grid without audio
+ * Used when audio mixing fails
+ */
+async function createVideoGridNoAudio(
+  inputFiles: string[], 
+  outputPath: string, 
+  grid: { rows: number; cols: number },
+  progressCallback?: (progress: number) => Promise<void>
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    if (inputFiles.length < 2) {
+      reject(new Error("Need at least 2 videos for grid"));
+      return;
+    }
+    
+    const command = ffmpeg();
+    
+    // Add only the first 2 inputs to keep it simple
+    inputFiles.slice(0, 2).forEach(file => {
+      command.input(file);
+    });
+    
+    // Create a simple side-by-side layout without audio
+    const filterComplex = [
+      "[0:v]scale=640:360,setsar=1[v0]",
+      "[1:v]scale=640:360,setsar=1[v1]",
+      "[v0][v1]hstack=inputs=2[vout]"
+    ].join(';');
+    
+    // Apply the filter
+    command.complexFilter(filterComplex, ['vout']);
+    
+    // Set output options - no audio
+    command
+      .outputOptions('-map [vout]')
+      .outputOptions('-an')
+      .outputOptions('-c:v libx264')
+      .outputOptions('-preset medium')
+      .outputOptions('-crf 23');
+    
+    // Add error logging
+    command.on('stderr', (stderrLine) => {
+      console.log('FFmpeg stderr (noAudio):', stderrLine);
+    });
+    
+    // Add progress tracking
+    if (progressCallback) {
+      command.on('progress', (progress) => {
+        if (progress.percent) {
+          progressCallback(progress.percent / 100);
+        }
+      });
+    }
+    
+    // Execute the command
+    command.save(outputPath)
+      .on('end', () => {
+        resolve(outputPath);
+      })
+      .on('error', (err) => {
+        console.error('Error creating video grid (noAudio):', err);
+        reject(err);
+      });
+  });
+}
+
+/**
+ * Create a simple side-by-side video (special case for exactly 2 videos)
+ */
+async function createSideBySideVideo(
+  inputFiles: string[],
+  outputPath: string,
+  progressCallback?: (progress: number) => Promise<void>
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    if (inputFiles.length !== 2) {
+      reject(new Error("Side-by-side requires exactly 2 videos"));
+      return;
+    }
+    
+    // Use the shell command approach which is more reliable
+    const ffmpegBin = 'ffmpeg';
+    const command = `${ffmpegBin} -i "${inputFiles[0]}" -i "${inputFiles[1]}" -filter_complex "[0:v]scale=640:360:force_original_aspect_ratio=decrease,pad=640:360:(ow-iw)/2:(oh-ih)/2,setsar=1[left];[1:v]scale=640:360:force_original_aspect_ratio=decrease,pad=640:360:(ow-iw)/2:(oh-ih)/2,setsar=1[right];[left][right]hstack=inputs=2[v];[0:a][1:a]amix=inputs=2:duration=longest[a]" -map "[v]" -map "[a]" -c:v libx264 -preset medium -crf 23 -c:a aac -b:a 128k -shortest "${outputPath}"`;
+    
+    console.log('Running ffmpeg command:', command);
+    
+    // Use native exec instead of fluent-ffmpeg
+    const childProcess = exec(command);
+    
+    // Track progress and errors
+    let stdoutData = '';
+    let stderrData = '';
+    
+    if (childProcess.stdout) {
+      childProcess.stdout.on('data', (data) => {
+        stdoutData += data.toString();
+        console.log('FFmpeg stdout:', data.toString());
+      });
+    }
+    
+    if (childProcess.stderr) {
+      childProcess.stderr.on('data', (data) => {
+        stderrData += data.toString();
+        console.log('FFmpeg stderr:', data.toString());
+        
+        // Try to parse progress
+        const match = data.toString().match(/time=(\d+:\d+:\d+\.\d+)/);
+        if (match && match[1] && progressCallback) {
+          const timeStr = match[1];
+          const [hours, minutes, seconds] = timeStr.split(':').map(parseFloat);
+          const totalSeconds = hours * 3600 + minutes * 60 + seconds;
+          
+          // Estimate total duration as 2 minutes for progress calculation
+          const estimatedDuration = 120; 
+          const progress = Math.min(totalSeconds / estimatedDuration, 0.99);
+          
+          progressCallback(progress).catch(err => {
+            console.error('Error updating progress:', err);
+          });
+        }
+      });
+    }
+    
+    // Handle completion
+    childProcess.on('close', (code) => {
+      if (code === 0) {
+        resolve(outputPath);
+      } else {
+        console.error(`FFmpeg exited with code ${code}`);
+        console.error('stderr:', stderrData);
+        
+        // Try without audio if it failed
+        createSideBySideVideoNoAudio(inputFiles, outputPath, progressCallback)
+          .then(resolve)
+          .catch(reject);
+      }
+    });
+  });
+}
+
+/**
+ * Create a side-by-side video with no audio (fallback)
+ */
+async function createSideBySideVideoNoAudio(
+  inputFiles: string[],
+  outputPath: string,
+  progressCallback?: (progress: number) => Promise<void>
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    if (inputFiles.length !== 2) {
+      reject(new Error("Side-by-side requires exactly 2 videos"));
+      return;
+    }
+    
+    // Direct command without audio mixing
+    const ffmpegBin = 'ffmpeg';
+    const command = `${ffmpegBin} -i "${inputFiles[0]}" -i "${inputFiles[1]}" -filter_complex "[0:v]scale=640:360:force_original_aspect_ratio=decrease,pad=640:360:(ow-iw)/2:(oh-ih)/2,setsar=1[left];[1:v]scale=640:360:force_original_aspect_ratio=decrease,pad=640:360:(ow-iw)/2:(oh-ih)/2,setsar=1[right];[left][right]hstack=inputs=2[v]" -map "[v]" -an -c:v libx264 -preset medium -crf 23 -shortest "${outputPath}"`;
+    
+    console.log('Running ffmpeg command (no audio):', command);
+    
+    // Use native exec instead of fluent-ffmpeg
+    const childProcess = exec(command);
+    
+    // Track progress and errors
+    let stdoutData = '';
+    let stderrData = '';
+    
+    if (childProcess.stdout) {
+      childProcess.stdout.on('data', (data) => {
+        stdoutData += data.toString();
+        console.log('FFmpeg stdout (noAudio):', data.toString());
+      });
+    }
+    
+    if (childProcess.stderr) {
+      childProcess.stderr.on('data', (data) => {
+        stderrData += data.toString();
+        console.log('FFmpeg stderr (noAudio):', data.toString());
+        
+        // Try to parse progress
+        const match = data.toString().match(/time=(\d+:\d+:\d+\.\d+)/);
+        if (match && match[1] && progressCallback) {
+          const timeStr = match[1];
+          const [hours, minutes, seconds] = timeStr.split(':').map(parseFloat);
+          const totalSeconds = hours * 3600 + minutes * 60 + seconds;
+          
+          // Estimate total duration as 2 minutes for progress calculation
+          const estimatedDuration = 120; 
+          const progress = Math.min(totalSeconds / estimatedDuration, 0.99);
+          
+          progressCallback(progress).catch(err => {
+            console.error('Error updating progress:', err);
+          });
+        }
+      });
+    }
+    
+    // Handle completion
+    childProcess.on('close', (code) => {
+      if (code === 0) {
+        resolve(outputPath);
+      } else {
+        console.error(`FFmpeg exited with code ${code} (noAudio)`);
+        console.error('stderr:', stderrData);
+        reject(new Error(`FFmpeg failed with code ${code}: ${stderrData}`));
+      }
+    });
   });
 }
 
