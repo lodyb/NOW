@@ -1909,51 +1909,51 @@ const audioEffects: AudioEffects = {
 
   // Bass boost variations
   'bassboosted': (intensity = 1) => 
-    `bass=g=${Math.min(20, intensity * 15)}:f=110:width_type=h,treble=g=-${Math.min(5, intensity * 3)}`,
+    `bass=g=${Math.min(20, intensity * 15)}:f=110:width_type=h`,
   
   'extremebass': (intensity = 1) => 
-    `bass=g=${Math.min(30, intensity * 20)}:f=60:width_type=h,treble=g=-${Math.min(8, intensity * 5)},volume=${Math.min(10, intensity * 6)}dB`,
+    `bass=g=${Math.min(30, intensity * 20)}:f=60:width_type=h,volume=${Math.min(6, intensity * 3)}dB`,
   
   'distortbass': (intensity = 1) => 
-    `bass=g=${Math.min(25, intensity * 18)}:f=80:width_type=h,compand=${Math.min(10, intensity * 6)},0.3:1,0:0:-40:-40:0:0:0.1,volume=${Math.min(8, intensity * 4)}dB`,
+    `bass=g=${Math.min(25, intensity * 18)}:f=80:width_type=h,volume=${Math.min(5, intensity * 3)}dB`,
   
   'earrape': (intensity = 1) => 
-    `bass=g=${Math.min(30, intensity * 20)}:f=60:width_type=h,treble=g=${Math.min(15, intensity * 10)},compand=0|0:1|1:-inf|-inf|-50|-10|0|0:0.2:0:0.2,volume=${Math.min(12, intensity * 8)}dB`,
+    `bass=g=${Math.min(20, intensity * 15)}:f=60:width_type=h,treble=g=${Math.min(10, intensity * 5)},volume=${Math.min(8, intensity * 4)}dB`,
   
   'clippedbass': (intensity = 1) => 
-    `bass=g=${Math.min(25, intensity * 18)}:f=80:width_type=h,acrusher=level_in=${Math.min(10, intensity * 5)}:level_out=1.5:bits=8:mode=log:aa=0,volume=${Math.min(6, intensity * 4)}dB`,
+    `bass=g=${Math.min(25, intensity * 18)}:f=80:width_type=h,volume=${Math.min(4, intensity * 2.5)}dB`,
   
   // Audio destruction effects
   'saturate': (intensity = 1) => 
-    `compand=${Math.min(20, intensity * 15)},1:0.5:1:-90/-${Math.min(60, intensity * 40)}/-30/-10,volume=${Math.min(8, intensity * 5)}dB`,
+    `compand=0.3:0.8:${Math.min(6, intensity * 3)}:0:-90:-${Math.min(30, intensity * 20)}:0:0.2,volume=${Math.min(6, intensity * 3)}dB`,
   
   'crunch': (intensity = 1) => 
-    `acrusher=level_in=${Math.min(10, intensity * 6)}:level_out=1.5:bits=${Math.max(2, 8 - intensity * 4)}:mode=hard:aa=0,treble=g=${Math.min(10, intensity * 6)}`,
+    `acrusher=level_in=${Math.min(8, intensity * 4)}:level_out=1.5:bits=${Math.max(2, 8 - intensity * 4)}:mode=log:aa=0`,
   
   'lofi': (intensity = 1) => 
-    `aresample=${Math.max(4000, 16000 - intensity * 10000)}:filter_type=cubic,aresample=44100:filter_type=cubic,volume=${Math.min(6, intensity * 3)}dB`,
+    `aresample=${Math.max(4000, 16000 - intensity * 10000)}:filter_type=cubic,aresample=44100:filter_type=cubic`,
   
   'hardclip': (intensity = 1) => 
-    `compand=0|0:1|1:-inf|-inf|-${Math.min(40, intensity * 20)}|-${Math.min(10, intensity * 4)}|0|0:0.1:0.1,bass=g=${Math.min(15, intensity * 10)}`,
+    `compand=0.3:0.8:1:0:-90:-${Math.min(30, intensity * 15)}:0:0.1,bass=g=${Math.min(10, intensity * 7)}`,
   
   'crushcrush': (intensity = 1) => 
-    `acrusher=level_in=${Math.min(10, intensity * 5)}:level_out=1.8:bits=${Math.max(1, 6 - intensity * 4)}:mode=log:mix=${Math.min(0.9, intensity * 0.6)},bass=g=${Math.min(10, intensity * 7)}:f=100:width_type=h`,
+    `acrusher=level_in=${Math.min(8, intensity * 4)}:level_out=1.5:bits=${Math.max(2, 6 - intensity * 3)}:mode=log:mix=${Math.min(0.7, intensity * 0.4)}`,
   
   'deepfried': (intensity = 1) => 
-    `bass=g=${Math.min(15, intensity * 10)}:f=100:width_type=h,acrusher=level_in=${Math.min(10, intensity * 5)}:level_out=1.5:bits=${Math.max(2, 5 - intensity * 3)}:mode=hard:mix=1,treble=g=${Math.min(15, intensity * 10)}:f=10000:width_type=h,volume=${Math.min(8, intensity * 5)}dB`,
+    `bass=g=${Math.min(12, intensity * 8)}:f=100:width_type=h,acrusher=level_in=${Math.min(8, intensity * 4)}:level_out=1.5:bits=${Math.max(2, 5 - intensity * 2)}:mode=log:mix=1`,
   
   'destroy8bit': (intensity = 1) => 
-    `aresample=8000:filter_type=cubic,acrusher=level_in=${Math.min(10, intensity * 4)}:level_out=1.5:bits=${Math.max(1, 4 - intensity * 2)}:mode=log:aa=0,aresample=44100`,
+    `aresample=8000:filter_type=cubic,acrusher=level_in=${Math.min(8, intensity * 4)}:level_out=1.5:bits=${Math.max(1, 4 - intensity * 2)}:mode=log:aa=0,aresample=44100`,
     
   // Meme-worthy audio effects
   'nuked': (intensity = 1) => 
-    `bass=g=${Math.min(30, intensity * 20)}:f=60:width_type=h,treble=g=${Math.min(20, intensity * 15)},acrusher=level_in=${Math.min(12, intensity * 6)}:level_out=1.8:bits=${Math.max(1, 4 - intensity * 2)}:mode=hard:aa=0,volume=${Math.min(15, intensity * 10)}dB`,
+    `bass=g=${Math.min(20, intensity * 15)}:f=60:width_type=h,acrusher=level_in=${Math.min(8, intensity * 4)}:level_out=1.5:bits=${Math.max(2, 4 - intensity)}:mode=log:aa=0,volume=${Math.min(10, intensity * 6)}dB`,
   
   'phonk': (intensity = 1) => 
-    `bass=g=${Math.min(20, intensity * 15)}:f=70:width_type=h,atempo=0.85,asetrate=44100*${Math.max(0.8, 1 - intensity * 0.15)},aresample=44100`,
+    `bass=g=${Math.min(15, intensity * 10)}:f=70:width_type=h,atempo=0.85,asetrate=44100*${Math.max(0.85, 1 - intensity * 0.1)},aresample=44100`,
   
   'vaporwave': (intensity = 1) => 
-    `asetrate=44100*${Math.max(0.6, 0.9 - intensity * 0.15)},aresample=44100,bass=g=${Math.min(8, intensity * 5)}:f=150:width_type=h,treble=g=-${Math.min(6, intensity * 3)}`,
+    `asetrate=44100*${Math.max(0.7, 0.9 - intensity * 0.1)},aresample=44100,bass=g=${Math.min(8, intensity * 5)}:f=150:width_type=h`,
 };
 
 const videoEffects: VideoEffects = {
@@ -2220,3 +2220,73 @@ export const createAudioPlaceholderVideo = async (
       });
   });
 }
+
+/**
+ * Apply speed changes to video and audio streams, ensuring they stay in sync
+ * @param command The ffmpeg command to modify
+ * @param speedValue The speed factor (1.0 = normal, 0.5 = half speed, 2.0 = double speed)
+ * @param isVideo Whether this is a video file (if false, apply only to audio)
+ */
+const applySpeedTransformation = (
+  command: ffmpeg.FfmpegCommand, 
+  speedValue: number,
+  isVideo: boolean
+): void => {
+  if (speedValue === 1.0) return; // No change needed
+  
+  if (isNaN(speedValue) || speedValue <= 0) {
+    throw new Error('Speed value must be positive');
+  }
+  
+  // For video files, use complex filter to keep audio and video in sync
+  if (isVideo) {
+    const videoFilter = `setpts=${1/speedValue}*PTS`;
+    
+    // Construct audio portion of filter
+    let audioFilter = '';
+    
+    // Handle atempo limitations (0.5-2.0 range)
+    if (speedValue >= 0.5 && speedValue <= 2.0) {
+      audioFilter = `atempo=${speedValue}`;
+    } else if (speedValue < 0.5) {
+      // For slower speeds, chain multiple atempo filters
+      // Example: 0.25x speed = atempo=0.5,atempo=0.5
+      const filterValues = [];
+      let remainingSpeed = speedValue;
+      
+      while (remainingSpeed < 0.5) {
+        filterValues.push('atempo=0.5');
+        remainingSpeed /= 0.5;
+      }
+      
+      if (remainingSpeed < 1.0) {
+        filterValues.push(`atempo=${remainingSpeed}`);
+      }
+      
+      audioFilter = filterValues.join(',');
+    } else {
+      // For faster speeds, chain multiple atempo filters
+      // Example: 4x speed = atempo=2.0,atempo=2.0
+      const filterValues = [];
+      let remainingSpeed = speedValue;
+      
+      while (remainingSpeed > 2.0) {
+        filterValues.push('atempo=2.0');
+        remainingSpeed /= 2.0;
+      }
+      
+      if (remainingSpeed > 1.0) {
+        filterValues.push(`atempo=${remainingSpeed}`);
+      }
+      
+      audioFilter = filterValues.join(',');
+    }
+    
+    // Apply complex filter to maintain sync
+    command.complexFilter(`[0:v]${videoFilter}[v];[0:a]${audioFilter}[a]`, ['v', 'a']);
+    logFFmpegCommand(`Applied synchronized speed transformation: video=${videoFilter}, audio=${audioFilter}`);
+  } else {
+    // Audio-only, use standard audio filter chain
+    applyAudioSpeedFilter(command, speedValue);
+  }
+};
