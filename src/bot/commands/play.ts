@@ -18,6 +18,12 @@ export const handlePlayCommand = async (
   multi?: number
 ) => {
   try {
+    // Special case for concat command
+    if (searchTerm === 'concat') {
+      await handleConcatPlayback(message, filterString, clipOptions);
+      return;
+    }
+    
     // Handle multi-media playback if multi parameter is provided
     if (multi && multi > 1) {
       await handleMultiMediaPlayback(message, searchTerm, multi, filterString, clipOptions);
@@ -831,4 +837,424 @@ function cleanupTempFiles(processedFiles: string[], gridFile: string): void {
   } catch (error) {
     console.error(`Error deleting grid file ${gridFile}:`, error);
   }
+}
+
+/**
+ * Handle concatenation of random media clips
+ * Creates a montage of short random segments from different media files
+ */
+export const handleConcatPlayback = async (
+  message: Message,
+  filterString?: string,
+  clipOptions?: { duration?: string; start?: string }
+) => {
+  try {
+    // Send initial status message
+    const statusMessage = await message.reply(`Processing concat request... ⏳`);
+    
+    // Determine number of clips to concat (default 3-5)
+    let clipCount = 4;
+    if (filterString) {
+      const countMatch = filterString.match(/count=(\d+)/);
+      if (countMatch && countMatch[1]) {
+        clipCount = Math.min(Math.max(2, parseInt(countMatch[1], 10)), 10); // Between 2 and 10 clips
+      }
+    }
+    
+    // Default clip duration if not specified (3-8 seconds)
+    const defaultClipDuration = clipOptions?.duration || '5';
+    
+    await statusMessage.edit(`Finding ${clipCount} random media clips... ⏳`);
+    
+    // Get random media files, preferring videos
+    const mediaItems = await getRandomMedia(clipCount * 2, true); // Get more than needed in case some fail
+    
+    if (mediaItems.length === 0) {
+      await statusMessage.edit('No suitable media found in the database');
+      return;
+    }
+    
+    // Prepare temp directory
+    const TEMP_DIR = path.join(process.cwd(), 'temp');
+    const randomId = crypto.randomBytes(4).toString('hex');
+    
+    // Process each clip
+    const processedClips: {
+      filePath: string;
+      duration: number;
+      start?: string;
+      isVideo: boolean;
+    }[] = [];
+    
+    for (let i = 0; i < Math.min(clipCount, mediaItems.length); i++) {
+      const media = mediaItems[i];
+      
+      // Generate clip parameters
+      const clipDuration = clipOptions?.duration || `${Math.floor(Math.random() * 6) + 3}`; // 3-8 seconds if not specified
+      let clipStart: string | undefined = clipOptions?.start;
+      
+      // If start not specified, pick a random position
+      if (!clipStart) {
+        // Get file duration to determine valid start position
+        const filePath = media.normalizedPath 
+          ? path.join(process.cwd(), 'normalized', path.basename(media.normalizedPath))
+          : media.filePath;
+        
+        try {
+          const { duration } = await getMediaInfo(filePath);
+          if (duration) {
+            // Pick a random start point, but not too close to the end
+            const maxStart = Math.max(0, duration - parseInt(clipDuration, 10));
+            if (maxStart > 0) {
+              const randomStart = Math.floor(Math.random() * maxStart);
+              clipStart = `${randomStart}`;
+            }
+          }
+        } catch (err) {
+          console.error(`Error getting media duration for ${filePath}:`, err);
+          // Continue without a specified start time
+        }
+      }
+      
+      await statusMessage.edit(`Processing clip ${i+1}/${clipCount}... ⏳`);
+      
+      try {
+        // Process the clip
+        const clipFilename = `temp_concat_${randomId}_${i}_${path.basename(media.normalizedPath || media.filePath)}`;
+        const clipOptions: { start?: string; duration?: string } = {
+          duration: clipDuration
+        };
+        if (clipStart) {
+          clipOptions.start = clipStart;
+        }
+        
+        const filePath = media.normalizedPath 
+          ? path.join(process.cwd(), 'normalized', path.basename(media.normalizedPath))
+          : media.filePath;
+        
+        // Process with optional filters
+        const options: ProcessOptions = {
+          clip: clipOptions,
+          enforceDiscordLimit: false, // We'll enforce limits on the final output
+        };
+        
+        // Add filters if provided (except count which we handled already)
+        if (filterString) {
+          const parsedFilters = parseFilterString(filterString.replace(/count=\d+,?/g, ''));
+          if (Object.keys(parsedFilters).length > 0) {
+            options.filters = parsedFilters;
+          }
+        }
+        
+        const processedPath = await processMedia(filePath, clipFilename, options);
+        const isVideo = await isVideoFile(processedPath);
+        
+        // Get actual duration to ensure accurate concatenation
+        const { duration } = await getMediaInfo(processedPath);
+        
+        // Only use if processing succeeded
+        if (fs.existsSync(processedPath)) {
+          processedClips.push({
+            filePath: processedPath,
+            duration: duration || parseInt(clipDuration, 10),
+            start: clipStart,
+            isVideo
+          });
+        }
+      } catch (error) {
+        console.error(`Error processing clip ${i+1}:`, error);
+        // Continue with other clips
+      }
+    }
+    
+    if (processedClips.length === 0) {
+      await statusMessage.edit('Failed to process any clips ❌');
+      return;
+    }
+    
+    // Concatenate the clips
+    await statusMessage.edit(`Concatenating ${processedClips.length} clips... ⏳`);
+    
+    // Check if we have video clips
+    const hasVideoClips = processedClips.some(clip => clip.isVideo);
+    const outputFilename = `concat_${randomId}.${hasVideoClips ? 'mp4' : 'ogg'}`;
+    const outputPath = path.join(TEMP_DIR, outputFilename);
+    
+    try {
+      // Use direct ffmpeg for more reliable concat
+      const concatPath = await createConcatenatedMedia(
+        processedClips.map(clip => clip.filePath),
+        outputPath,
+        hasVideoClips,
+        async (progress) => {
+          await statusMessage.edit(`Concatenating (${Math.round(progress * 100)}%)... ⏳`);
+        }
+      );
+      
+      // Ensure the result is under Discord file size limit
+      await statusMessage.edit(`Optimizing for Discord... ⏳`);
+      
+      const finalOutputFilename = `final_concat_${randomId}.${hasVideoClips ? 'mp4' : 'ogg'}`;
+      const finalOutputPath = path.join(TEMP_DIR, finalOutputFilename);
+      
+      const options: ProcessOptions = {
+        enforceDiscordLimit: true,
+        progressCallback: async (stage, progress) => {
+          try {
+            await statusMessage.edit(`${stage} (${Math.round(progress * 100)}%)... ⏳`);
+          } catch (err) {
+            console.error('Error updating status message:', err);
+          }
+        }
+      };
+      
+      const finalPath = await processMedia(concatPath, finalOutputFilename, options);
+      
+      if (!fs.existsSync(finalPath)) {
+        throw new Error('Failed to create final concatenated media');
+      }
+      
+      // Upload the final result
+      await statusMessage.edit(`Concatenation complete! Uploading... 📤`);
+      
+      const attachment = new AttachmentBuilder(finalPath);
+      await safeReply(message, { files: [attachment] });
+      
+      // Clean up the status message
+      await statusMessage.delete().catch(err => console.error('Failed to delete status message:', err));
+      
+      // Clean up temporary files
+      cleanupTempFiles(
+        [...processedClips.map(clip => clip.filePath), concatPath],
+        finalPath
+      );
+    } catch (error) {
+      console.error('Error concatenating clips:', error);
+      await statusMessage.edit(`Error concatenating clips: ${(error as Error).message} ❌`);
+    }
+  } catch (error) {
+    console.error('Error handling concat playback:', error);
+    await safeReply(message, `An error occurred: ${(error as Error).message}`);
+  }
+};
+
+/**
+ * Get media information (duration, dimensions) using ffmpeg
+ */
+async function getMediaInfo(filePath: string): Promise<{ duration?: number; width?: number; height?: number }> {
+  return new Promise((resolve, reject) => {
+    ffmpeg.ffprobe(filePath, (err, metadata) => {
+      if (err) {
+        reject(err);
+        return;
+      }
+      
+      // Extract duration and dimensions
+      const info: { duration?: number; width?: number; height?: number } = {};
+      
+      if (metadata.format && metadata.format.duration) {
+        info.duration = metadata.format.duration;
+      }
+      
+      // Find video stream if exists
+      const videoStream = metadata.streams?.find(stream => stream.codec_type === 'video');
+      if (videoStream) {
+        info.width = videoStream.width;
+        info.height = videoStream.height;
+      }
+      
+      resolve(info);
+    });
+  });
+}
+
+/**
+ * Create concatenated media from multiple input files using FFmpeg
+ */
+async function createConcatenatedMedia(
+  inputFiles: string[],
+  outputPath: string,
+  hasVideo: boolean,
+  progressCallback?: (progress: number) => Promise<void>
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    if (inputFiles.length === 0) {
+      reject(new Error("No input files provided for concatenation"));
+      return;
+    }
+    
+    const TEMP_DIR = path.join(process.cwd(), 'temp');
+    const randomId = crypto.randomBytes(4).toString('hex');
+    
+    // For video files, use filter_complex approach
+    // For audio-only files, use concat demuxer approach (more reliable for audio)
+    if (hasVideo) {
+      // Create a complex filter for video+audio concatenation
+      // Generate input args
+      const inputArgs = inputFiles.map(file => `-i "${file}"`).join(' ');
+      
+      // Create video and audio stream maps
+      const streams: string[] = [];
+      let filterComplex = '';
+      
+      // Create scaled video streams
+      for (let i = 0; i < inputFiles.length; i++) {
+        filterComplex += `[${i}:v]scale=640:360:force_original_aspect_ratio=decrease,pad=640:360:(ow-iw)/2:(oh-ih)/2,setsar=1[v${i}];`;
+      }
+      
+      // Concat video streams
+      const videoInputs = Array.from({ length: inputFiles.length }, (_, i) => `[v${i}]`).join('');
+      filterComplex += `${videoInputs}concat=n=${inputFiles.length}:v=1:a=0[vout];`;
+      
+      // Concat audio streams with fallback for missing audio
+      // First create normalized audio streams
+      for (let i = 0; i < inputFiles.length; i++) {
+        filterComplex += `[${i}:a]aresample=44100:async=1000,aformat=sample_fmts=fltp:channel_layouts=stereo[a${i}];`;
+      }
+      
+      // Then concat them
+      const audioInputs = Array.from({ length: inputFiles.length }, (_, i) => `[a${i}]`).join('');
+      filterComplex += `${audioInputs}concat=n=${inputFiles.length}:v=0:a=1[aout]`;
+      
+      // Build the full command
+      const command = `ffmpeg ${inputArgs} -filter_complex "${filterComplex}" -map "[vout]" -map "[aout]" -c:v libx264 -preset medium -crf 23 -c:a aac -b:a 128k "${outputPath}"`;
+      
+      console.log('Running ffmpeg concat command (video):', command);
+      
+      // Execute the command
+      const childProcess = exec(command);
+      let stderrData = '';
+      
+      if (childProcess.stderr) {
+        childProcess.stderr.on('data', (data) => {
+          stderrData += data.toString();
+          console.log('FFmpeg stderr (concat):', data.toString());
+          
+          // Parse progress
+          const match = data.toString().match(/time=(\d+:\d+:\d+\.\d+)/);
+          if (match && match[1] && progressCallback) {
+            const timeStr = match[1];
+            const [hours, minutes, seconds] = timeStr.split(':').map(parseFloat);
+            const totalSeconds = hours * 3600 + minutes * 60 + seconds;
+            
+            // Estimate total duration based on 10 seconds per clip
+            const estimatedDuration = inputFiles.length * 10;
+            const progress = Math.min(totalSeconds / estimatedDuration, 0.99);
+            
+            progressCallback(progress).catch(err => {
+              console.error('Error updating progress:', err);
+            });
+          }
+        });
+      }
+      
+      childProcess.on('close', (code) => {
+        if (code === 0) {
+          resolve(outputPath);
+        } else {
+          console.error(`FFmpeg concat process exited with code ${code}`);
+          console.error('stderr:', stderrData);
+          
+          // Try using the fallback method with concat demuxer
+          createConcatDemuxer(inputFiles, outputPath, progressCallback)
+            .then(resolve)
+            .catch(reject);
+        }
+      });
+    } else {
+      // For audio-only, use the concat demuxer which is more reliable
+      createConcatDemuxer(inputFiles, outputPath, progressCallback)
+        .then(resolve)
+        .catch(reject);
+    }
+  });
+}
+
+/**
+ * Create concatenated media using FFmpeg's concat demuxer
+ * This is a fallback method that works better for audio-only content
+ */
+async function createConcatDemuxer(
+  inputFiles: string[],
+  outputPath: string,
+  progressCallback?: (progress: number) => Promise<void>
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    if (inputFiles.length === 0) {
+      reject(new Error("No input files provided for concatenation"));
+      return;
+    }
+    
+    const TEMP_DIR = path.join(process.cwd(), 'temp');
+    const randomId = crypto.randomBytes(4).toString('hex');
+    const concatListPath = path.join(TEMP_DIR, `concat_${randomId}.txt`);
+    
+    // Create a concat list file
+    const concatContent = inputFiles
+      .map(file => `file '${file.replace(/'/g, "'\\''")}'`)
+      .join('\n');
+    
+    try {
+      fs.writeFileSync(concatListPath, concatContent);
+      
+      // Determine if we're concatenating video or audio
+      const isVideo = outputPath.endsWith('.mp4');
+      const outputOptions = isVideo 
+        ? '-c:v libx264 -preset medium -crf 23 -c:a aac -b:a 128k'
+        : '-c:a libopus -b:a 128k';
+      
+      // Build the command
+      const command = `ffmpeg -f concat -safe 0 -i "${concatListPath}" ${outputOptions} "${outputPath}"`;
+      
+      console.log('Running ffmpeg concat demuxer command:', command);
+      
+      // Execute the command
+      const childProcess = exec(command);
+      let stderrData = '';
+      
+      if (childProcess.stderr) {
+        childProcess.stderr.on('data', (data) => {
+          stderrData += data.toString();
+          console.log('FFmpeg stderr (concat demuxer):', data.toString());
+          
+          // Parse progress
+          const match = data.toString().match(/time=(\d+:\d+:\d+\.\d+)/);
+          if (match && match[1] && progressCallback) {
+            const timeStr = match[1];
+            const [hours, minutes, seconds] = timeStr.split(':').map(parseFloat);
+            const totalSeconds = hours * 3600 + minutes * 60 + seconds;
+            
+            // Estimate total duration based on 10 seconds per clip
+            const estimatedDuration = inputFiles.length * 10;
+            const progress = Math.min(totalSeconds / estimatedDuration, 0.99);
+            
+            progressCallback(progress).catch(err => {
+              console.error('Error updating progress:', err);
+            });
+          }
+        });
+      }
+      
+      childProcess.on('close', (code) => {
+        // Always clean up the temp concat list file
+        try {
+          if (fs.existsSync(concatListPath)) {
+            fs.unlinkSync(concatListPath);
+          }
+        } catch (e) {
+          console.error('Error cleaning up concat list file:', e);
+        }
+        
+        if (code === 0) {
+          resolve(outputPath);
+        } else {
+          console.error(`FFmpeg concat demuxer process exited with code ${code}`);
+          console.error('stderr:', stderrData);
+          reject(new Error(`FFmpeg concat failed with code ${code}`));
+        }
+      });
+    } catch (error) {
+      reject(error);
+    }
+  });
 }

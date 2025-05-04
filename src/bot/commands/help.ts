@@ -61,6 +61,10 @@ const helpContent: HelpContent = {
     commands: [
       { name: 'NOW play [search term]', description: 'Play media matching search term' },
       { name: 'NOW play', description: 'Play a random media file' },
+      { name: 'NOW play {multi=3}', description: 'Create a 3-video grid layout' },
+      { name: 'NOW play star wars {multi=4}', description: 'Create a grid with 4 matching videos' },
+      { name: 'NOW play concat', description: 'Create a montage of random clips' },
+      { name: 'NOW play concat {count=5}', description: 'Concat 5 random short clips' },
       { name: 'NOW play [search] {filter=value}', description: 'Play with filters applied' },
       { name: 'NOW clip=5s [search]', description: 'Play only the first 5 seconds' },
       { name: 'NOW start=10s [search]', description: 'Start playing from 10 seconds in' },
@@ -69,7 +73,7 @@ const helpContent: HelpContent = {
       { name: 'NOW waveform [search]', description: 'Show audio waveform visualization' },
       { name: 'NOW spectrogram [search]', description: 'Show audio frequency visualization' }
     ],
-    footer: 'Use precise search terms for better results. Clips and filters can be combined.'
+    footer: 'Use precise search terms for better results. You can combine the multi parameter with filters or clip options.'
   },
   
   quiz: {
