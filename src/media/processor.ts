@@ -27,8 +27,9 @@ export const MAX_PROCESSING_TIME_MS = 80000;
 });
 
 export interface MediaFilter {
-  [key: string]: string | number | undefined;
+  [key: string]: string | number | string[] | undefined;
   __raw_complex_filter?: string; // Special property for raw complex filter strings
+  __stacked_filters?: string[]; // Array of stacked filter names
 }
 
 export interface ClipOptions {
@@ -929,6 +930,13 @@ export const parseFilterString = (filterString: string): MediaFilter => {
     return filters;
   }
   
+  // Handle stacked filters using '+' notation (e.g., {destroy8bit+chipmunk})
+  if (content.includes('+')) {
+    const stackedFilters = content.split('+');
+    filters.__stacked_filters = stackedFilters.map(f => f.trim());
+    return filters;
+  }
+  
   // Handle complex filters with nested parameters more intelligently
   let segmentStart = 0;
   let currentKey = '';
@@ -1272,6 +1280,43 @@ const applyFilters = (command: ffmpeg.FfmpegCommand, filters: MediaFilter, isVid
     // Log filter application attempt
     logFFmpegCommand(`Applying filters to ${isVideo ? 'video' : 'audio'} file: ${JSON.stringify(filters)}`);
     
+    // Track speed changes for sync
+    let speedChanges: { type: string; value: number }[] = [];
+    
+    // Handle stacked filters
+    if (filters.__stacked_filters && Array.isArray(filters.__stacked_filters)) {
+      logFFmpegCommand(`Applying stacked filters: ${filters.__stacked_filters.join('+')}`);
+      
+      for (const filterName of filters.__stacked_filters) {
+        const [name, valueStr] = filterName.split('=');
+        const value = valueStr ? parseFloat(valueStr) : 1;
+        
+        if (isVideo) {
+          // Track speed-affecting filters for later sync
+          if (name === 'chipmunk') {
+            speedChanges.push({ type: 'pitch', value: value });
+          } else if (name === 'demon') {
+            speedChanges.push({ type: 'pitch', value: value });
+          } else if (name === 'vaporwave') {
+            speedChanges.push({ type: 'asetrate', value: Math.max(0.7, 0.9 - value * 0.1) });
+          } else if (name === 'phonk') {
+            speedChanges.push({ type: 'atempo', value: 0.85 });
+            speedChanges.push({ type: 'asetrate', value: Math.max(0.85, 1 - value * 0.1) });
+          }
+        }
+        
+        // Apply this individual filter
+        applyCustomEffect(command, name, value, isVideo);
+      }
+      
+      // Apply final sync if video has speed changes
+      if (isVideo && speedChanges.length > 0) {
+        syncAudioVideoSpeed(command, speedChanges);
+      }
+      
+      return; // Exit after processing stacked filters
+    }
+    
     // Handle filter aliases (map user-friendly names to actual filter names)
     Object.keys(filters).forEach(key => {
       if (key in filterAliases) {
@@ -1568,7 +1613,11 @@ const applyFilters = (command: ffmpeg.FfmpegCommand, filters: MediaFilter, isVid
     );
 
     if (customEffectKeys.some(key => {
-      return applyCustomEffect(command, key, filters[key] || 0, isVideo);
+      // Make sure we pass a string or number to applyCustomEffect, not an array
+      const value = filters[key];
+      // Handle case where value is an array by using the first element or a default
+      const effectValue = Array.isArray(value) ? (value[0] || 1) : (value || 0);
+      return applyCustomEffect(command, key, effectValue, isVideo);
     })) {
       // If any custom effects were applied, remove them from filters object
       customEffectKeys.forEach(key => {
@@ -2290,3 +2339,44 @@ const applySpeedTransformation = (
     applyAudioSpeedFilter(command, speedValue);
   }
 };
+
+/**
+ * Synchronize audio and video streams when multiple speed-changing filters are applied
+ * @param command The ffmpeg command to modify
+ * @param speedChanges Array of speed changes to apply
+ */
+const syncAudioVideoSpeed = (
+  command: ffmpeg.FfmpegCommand,
+  speedChanges: Array<{ type: string; value: number }>
+): void => {
+  if (speedChanges.length === 0) return;
+  
+  // Calculate total speed factor
+  let totalSpeedFactor = 1.0;
+  
+  for (const change of speedChanges) {
+    switch (change.type) {
+      case 'atempo':
+        totalSpeedFactor *= change.value;
+        break;
+      case 'pitch':
+      case 'asetrate':
+        // For pitch/rate changes, we need to adjust video timing to match
+        totalSpeedFactor *= change.value;
+        break;
+      default:
+        console.warn(`Unknown speed change type: ${change.type}`);
+    }
+  }
+  
+  // Skip if no effective change
+  if (totalSpeedFactor === 1.0) return;
+  
+  // Apply video timing adjustment to match audio speed
+  const videoFilter = `setpts=${1/totalSpeedFactor}*PTS`;
+  
+  // Apply as complex filter to ensure sync between streams
+  command.complexFilter(`[0:v]${videoFilter}[v];[0:a]acopy[a]`, ['v', 'a']);
+  
+  logFFmpegCommand(`Applied audio/video sync with total speed factor: ${totalSpeedFactor}`);
+}
