@@ -239,7 +239,7 @@ export const findAllMediaPaginated = (
   });
 };
 
-export const findMediaBySearch = (searchTerm: string, requireVideo?: boolean): Promise<Media[]> => {
+export const findMediaBySearch = (searchTerm: string, requireVideo?: boolean, limit: number = 1): Promise<Media[]> => {
   return new Promise((resolve, reject) => {
     const trimmedSearch = searchTerm.trim();
     
@@ -272,8 +272,8 @@ export const findMediaBySearch = (searchTerm: string, requireVideo?: boolean): P
           metadata: row.metadata ? JSON.parse(String(row.metadata)) : {}
         }));
         
-        // Shuffle exact results
-        const shuffledExact = [...exactResults].sort(() => Math.random() - 0.5);
+        // Shuffle exact results and limit them
+        const shuffledExact = [...exactResults].sort(() => Math.random() - 0.5).slice(0, limit);
         resolve(shuffledExact);
         return;
       }
@@ -302,7 +302,10 @@ export const findMediaBySearch = (searchTerm: string, requireVideo?: boolean): P
       fuzzyQuery += `
         GROUP BY m.id
         ORDER BY RANDOM()
+        LIMIT ?
       `;
+      
+      params.push(limit);
       
       db.all(fuzzyQuery, params, (fuzzyErr, fuzzyRows: MediaRow[]) => {
         if (fuzzyErr) {
@@ -324,12 +327,21 @@ export const findMediaBySearch = (searchTerm: string, requireVideo?: boolean): P
   });
 };
 
-export const getRandomMedia = (limit: number = 1): Promise<Media[]> => {
+export const getRandomMedia = (limit: number = 1, requireVideo?: boolean): Promise<Media[]> => {
   return new Promise((resolve, reject) => {
-    const query = `
+    let query = `
       SELECT m.*, GROUP_CONCAT(ma.answer) as answers
       FROM media m
       LEFT JOIN media_answers ma ON ma.mediaId = m.id
+      WHERE m.isDeleted = 0
+    `;
+    
+    // Add video filter if required
+    if (requireVideo) {
+      query += ` AND (m.normalizedPath LIKE '%.mp4')`;
+    }
+    
+    query += `
       GROUP BY m.id
       ORDER BY RANDOM()
       LIMIT ?

@@ -8,6 +8,7 @@ export interface CommandArgs {
     duration?: string;
     start?: string;
   };
+  multi?: number;
 }
 
 export const parseCommand = (message: Message): CommandArgs | null => {
@@ -28,6 +29,19 @@ export const parseCommand = (message: Message): CommandArgs | null => {
     content = content.replace(filterString, '').trim();
   }
   
+  // Extract multi parameter from filter string
+  let multi: number | undefined;
+  if (filterString) {
+    const multiMatch = filterString.match(/multi=(\d+)/);
+    if (multiMatch && multiMatch[1]) {
+      multi = parseInt(multiMatch[1], 10);
+      // Remove multi parameter from filter string if it's the only parameter
+      if (filterString === `{multi=${multi}}`) {
+        filterString = undefined;
+      }
+    }
+  }
+  
   const parts = content.split(' ').filter(p => p.trim() !== '');
   if (parts.length === 0) {
     // Default to play command if only filter specified
@@ -41,6 +55,9 @@ export const parseCommand = (message: Message): CommandArgs | null => {
     const result: CommandArgs = { command };
     if (filterString) {
       result.filterString = filterString;
+    }
+    if (multi !== undefined) {
+      result.multi = multi;
     }
     return result;
   }
@@ -76,6 +93,11 @@ export const parseCommand = (message: Message): CommandArgs | null => {
   // Add search term if exists
   if (searchTermParts.length > 1) {
     result.searchTerm = searchTermParts.slice(1).join(' ');
+  }
+  
+  // Add multi if exists
+  if (multi !== undefined) {
+    result.multi = multi;
   }
   
   return result;

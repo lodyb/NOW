@@ -104,7 +104,8 @@ client.on(Events.MessageCreate, async (message) => {
             message, 
             commandArgs.searchTerm, 
             commandArgs.filterString, 
-            commandArgs.clipOptions
+            commandArgs.clipOptions,
+            commandArgs.multi
           );
           break;
           
