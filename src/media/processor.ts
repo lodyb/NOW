@@ -1906,6 +1906,54 @@ const audioEffects: AudioEffects = {
     
   'hall': () => 
     'aecho=0.8:0.9:1000|1800|2500:0.7|0.5|0.3', // Hall reverb simulation
+
+  // Bass boost variations
+  'bassboosted': (intensity = 1) => 
+    `bass=g=${Math.min(20, intensity * 15)}:f=110:width_type=h,treble=g=-${Math.min(5, intensity * 3)}`,
+  
+  'extremebass': (intensity = 1) => 
+    `bass=g=${Math.min(30, intensity * 20)}:f=60:width_type=h,treble=g=-${Math.min(8, intensity * 5)},volume=${Math.min(10, intensity * 6)}dB`,
+  
+  'distortbass': (intensity = 1) => 
+    `bass=g=${Math.min(25, intensity * 18)}:f=80:width_type=h,compand=${Math.min(10, intensity * 6)},0.3:1,0:0:-40:-40:0:0:0.1,volume=${Math.min(8, intensity * 4)}dB`,
+  
+  'earrape': (intensity = 1) => 
+    `bass=g=${Math.min(30, intensity * 20)}:f=60:width_type=h,treble=g=${Math.min(15, intensity * 10)},compand=0|0:1|1:-inf|-inf|-50|-10|0|0:0.2:0:0.2,volume=${Math.min(12, intensity * 8)}dB`,
+  
+  'clippedbass': (intensity = 1) => 
+    `bass=g=${Math.min(25, intensity * 18)}:f=80:width_type=h,acrusher=level_in=${Math.min(10, intensity * 5)}:level_out=1.5:bits=8:mode=log:aa=0,volume=${Math.min(6, intensity * 4)}dB`,
+  
+  // Audio destruction effects
+  'saturate': (intensity = 1) => 
+    `compand=${Math.min(20, intensity * 15)},1:0.5:1:-90/-${Math.min(60, intensity * 40)}/-30/-10,volume=${Math.min(8, intensity * 5)}dB`,
+  
+  'crunch': (intensity = 1) => 
+    `acrusher=level_in=${Math.min(10, intensity * 6)}:level_out=1.5:bits=${Math.max(2, 8 - intensity * 4)}:mode=hard:aa=0,treble=g=${Math.min(10, intensity * 6)}`,
+  
+  'lofi': (intensity = 1) => 
+    `aresample=${Math.max(4000, 16000 - intensity * 10000)}:filter_type=cubic,aresample=44100:filter_type=cubic,volume=${Math.min(6, intensity * 3)}dB`,
+  
+  'hardclip': (intensity = 1) => 
+    `compand=0|0:1|1:-inf|-inf|-${Math.min(40, intensity * 20)}|-${Math.min(10, intensity * 4)}|0|0:0.1:0.1,bass=g=${Math.min(15, intensity * 10)}`,
+  
+  'crushcrush': (intensity = 1) => 
+    `acrusher=level_in=${Math.min(10, intensity * 5)}:level_out=1.8:bits=${Math.max(1, 6 - intensity * 4)}:mode=log:mix=${Math.min(0.9, intensity * 0.6)},bass=g=${Math.min(10, intensity * 7)}:f=100:width_type=h`,
+  
+  'deepfried': (intensity = 1) => 
+    `bass=g=${Math.min(15, intensity * 10)}:f=100:width_type=h,acrusher=level_in=${Math.min(10, intensity * 5)}:level_out=1.5:bits=${Math.max(2, 5 - intensity * 3)}:mode=hard:mix=1,treble=g=${Math.min(15, intensity * 10)}:f=10000:width_type=h,volume=${Math.min(8, intensity * 5)}dB`,
+  
+  'destroy8bit': (intensity = 1) => 
+    `aresample=8000:filter_type=cubic,acrusher=level_in=${Math.min(10, intensity * 4)}:level_out=1.5:bits=${Math.max(1, 4 - intensity * 2)}:mode=log:aa=0,aresample=44100`,
+    
+  // Meme-worthy audio effects
+  'nuked': (intensity = 1) => 
+    `bass=g=${Math.min(30, intensity * 20)}:f=60:width_type=h,treble=g=${Math.min(20, intensity * 15)},acrusher=level_in=${Math.min(12, intensity * 6)}:level_out=1.8:bits=${Math.max(1, 4 - intensity * 2)}:mode=hard:aa=0,volume=${Math.min(15, intensity * 10)}dB`,
+  
+  'phonk': (intensity = 1) => 
+    `bass=g=${Math.min(20, intensity * 15)}:f=70:width_type=h,atempo=0.85,asetrate=44100*${Math.max(0.8, 1 - intensity * 0.15)},aresample=44100`,
+  
+  'vaporwave': (intensity = 1) => 
+    `asetrate=44100*${Math.max(0.6, 0.9 - intensity * 0.15)},aresample=44100,bass=g=${Math.min(8, intensity * 5)}:f=150:width_type=h,treble=g=-${Math.min(6, intensity * 3)}`,
 };
 
 const videoEffects: VideoEffects = {
