@@ -1956,8 +1956,8 @@ const applyCustomEffect = (command: ffmpeg.FfmpegCommand, effectName: string, va
     if (isVideo) {
       // For video, we need to duplicate the input, reverse the second copy, and concat them
       command.complexFilter(
-        '[0:v]split[v1][v2];[v1]setpts=PTS[vfwd];[v2]reverse,setpts=PTS[vrev];[vfwd][vrev]concat=n=2:v=1:a=0[vout];' +
-        '[0:a]asplit[a1][a2];[a1]asetpts=PTS[afwd];[a2]areverse,asetpts=PTS[arev];[afwd][arev]concat=n=2:v=0:a=1[aout]',
+        '[0:v]split=2[v1][v2];[v2]reverse[vrev];[v1][vrev]concat=n=2:v=1:a=0[vout];' +
+        '[0:a]asplit=2[a1][a2];[a2]areverse[arev];[a1][arev]concat=n=2:v=0:a=1[aout]',
         ['vout', 'aout']
       );
       logFFmpegCommand('Applied trampoline effect to video (forward + reverse)');
@@ -1965,7 +1965,7 @@ const applyCustomEffect = (command: ffmpeg.FfmpegCommand, effectName: string, va
     } else {
       // For audio, we duplicate the input, reverse the second copy, and concat them
       command.complexFilter(
-        '[0:a]asplit[a1][a2];[a1]asetpts=PTS[afwd];[a2]areverse,asetpts=PTS[arev];[afwd][arev]concat=n=2:v=0:a=1[aout]',
+        '[0:a]asplit=2[a1][a2];[a2]areverse[arev];[a1][arev]concat=n=2:v=0:a=1[aout]',
         ['aout']
       );
       logFFmpegCommand('Applied trampoline effect to audio (forward + reverse)');
