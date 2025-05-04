@@ -164,7 +164,7 @@ export const handleMultiMediaPlayback = async (
 ) => {
   try {
     // Cap the multi value to a reasonable maximum (3x3 grid = 9 videos)
-    const maxMulti = 9;
+    const maxMulti = 64
     multi = Math.min(Math.max(2, multi), maxMulti);
     
     // Send initial status message
