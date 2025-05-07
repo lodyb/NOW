@@ -1,6 +1,9 @@
-import { Message } from 'discord.js';
+import { Message, TextChannel } from 'discord.js';
 import { runInference, formatResponseForDiscord, isLLMServiceReady } from './llamaService';
 import { safeReply } from '../bot/utils/helpers';
+
+// AI channel configuration
+const AI_CHANNEL_ID = '1369649491573215262';
 
 // Extract the query from a message mentioning the bot
 const extractQuery = (message: Message): string => {
@@ -27,12 +30,30 @@ export const handleMention = async (message: Message): Promise<void> => {
       return;
     }
     
+    // Check if message is in the AI channel
+    const isInAIChannel = message.channelId === AI_CHANNEL_ID;
+    
+    // Get the AI channel for redirected responses
+    const aiChannel = message.client.channels.cache.get(AI_CHANNEL_ID) as TextChannel;
+    if (!aiChannel) {
+      console.error(`AI channel with ID ${AI_CHANNEL_ID} not found`);
+      await safeReply(message, "Sorry, I can't find the designated AI channel.");
+      return;
+    }
+    
     // Extract query from message
     const query = extractQuery(message);
     
     // Don't process empty queries
     if (!query.trim()) {
-      await safeReply(message, 'How can I help you? (Please include a question or prompt after mentioning me)');
+      const response = 'How can I help you? (Please include a question or prompt after mentioning me)';
+      
+      if (isInAIChannel) {
+        await safeReply(message, response);
+      } else {
+        await aiChannel.send(`<@${message.author.id}> asked me something in <#${message.channelId}> but didn't provide a question.\n\n${response}`);
+        await safeReply(message, `I've responded in <#${AI_CHANNEL_ID}>`);
+      }
       return;
     }
     
@@ -47,8 +68,16 @@ export const handleMention = async (message: Message): Promise<void> => {
     // Format response for Discord
     const formattedResponse = formatResponseForDiscord(response);
     
-    // Send the response
-    await safeReply(message, formattedResponse);
+    // Send the response to the appropriate channel
+    if (isInAIChannel) {
+      // Reply directly in the AI channel
+      await safeReply(message, formattedResponse);
+    } else {
+      // Send to AI channel with context about the original message
+      await aiChannel.send(`<@${message.author.id}> asked me in <#${message.channelId}>:\n> ${query}\n\n${formattedResponse}`);
+      // Notify the user where the response was sent
+      await safeReply(message, `I've responded in <#${AI_CHANNEL_ID}>`);
+    }
   } catch (error) {
     console.error('Error handling LLM mention:', error);
     await safeReply(message, `Sorry, I encountered an error: ${(error as Error).message}`);
