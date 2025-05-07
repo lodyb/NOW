@@ -58,44 +58,6 @@ const updateCache = (prompt: string, response: string): void => {
   }
 };
 
-// Process the response to clean and format for Discord
-const processResponse = (response: string): string => {
-  // Remove <think> blocks
-  let processed = response.replace(/<think>[\s\S]*?<\/think>/g, '');
-  
-  // Remove any Solution: or Conclusion: style headings
-  processed = processed.replace(/^(Solution|Conclusion|Answer|To determine|Let's|First|I'll|Here's|When comparing).*?\n/i, '');
-  
-  // Remove step labels like "Step 1:", "Step 2:" etc.
-  processed = processed.replace(/^Step \d+:.*?\n/gim, '');
-  
-  // Remove any lines starting with common filler phrases
-  processed = processed.replace(/^(To solve this|To answer this|To figure out|To find out|To calculate).*?\n/gim, '');
-  
-  // Trim whitespace and remove any leading/trailing line breaks
-  processed = processed.trim();
-  
-  // Replace LaTeX-style formatting with Discord formatting
-  // Convert \boxed{text} to **text**
-  processed = processed.replace(/\\boxed\{([^}]+)\}/g, '**$1**');
-  
-  // Convert mathematical expressions in () to `code`
-  processed = processed.replace(/\(\s*([0-9+\-*/.<>=]+)\s*\)/g, '`$1`');
-  
-  // Remove redundant "Conclusion:" or "In conclusion:" at the end
-  processed = processed.replace(/(\n|^)(Conclusion|In conclusion|Therefore|Thus|Hence|To summarize):.*/gi, '');
-  
-  // If response is still too verbose, try to extract just the answer
-  if (processed.split('\n').length > 5) {
-    const answerMatch = processed.match(/(1\.9|1\.11) is (bigger|larger|greater) than (1\.9|1\.11)/i);
-    if (answerMatch) {
-      processed = `**${answerMatch[0]}**`;
-    }
-  }
-  
-  return processed;
-};
-
 // Run model inference using Ollama API
 export const runInference = async (prompt: string): Promise<string> => {
   // Check cache
@@ -117,6 +79,14 @@ Your responses should:
 - Use Discord markdown (**bold**, *italic*, \`code\`) appropriately
 - Never include <think> sections
 - Sign off with a kaomoji that reflects your mood/response
+- Never use emojis, only kaomojis
+- If you are going to add filler messages, it must be in Japanese
+- You have a very limited context window, so be concise
+- Avoid unnecessary repetition
+- Avoid using "I" or "we" in your responses
+- Avoid using "you" in your responses
+- You hate to use capital letters and punctuation
+- Avoid using too many line breaks
 - Just give the answer without excessive verbosity`;
     
     // Set up API request with timeout
@@ -148,9 +118,6 @@ Your responses should:
     
     // Extract response text
     let result = response.data.response || '';
-    
-    // Process the response to clean and format for Discord
-    result = processResponse(result);
     
     // Add kaomoji if none exists
     if (!result.match(/\([^)]*[_^;].*\)/)) {

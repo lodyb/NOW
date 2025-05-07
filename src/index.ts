@@ -21,9 +21,35 @@ import apiRoutes from './web/api';
 import authRoutes from './web/auth-routes';
 import { setupAuth, isAuthenticated } from './web/auth';
 import { generateThumbnailsForExistingMedia, scanAndProcessUnprocessedMedia } from './media/processor';
+import fs from 'fs';
 
-// Load environment variables
-dotenv.config();
+// Load environment variables, handle both development and production paths
+const envPaths = [
+  '.env',                           // Current directory
+  '../.env',                        // Parent directory
+  path.resolve(process.cwd(), '.env'),  // Absolute path from current working directory
+  path.join(__dirname, '../.env')   // Relative to __dirname
+];
+
+let envLoaded = false;
+
+// Try each path until we find one that works
+for (const envPath of envPaths) {
+  if (fs.existsSync(envPath)) {
+    console.log(`Loading environment from: ${envPath}`);
+    dotenv.config({ path: envPath });
+    envLoaded = true;
+    break;
+  }
+}
+
+if (!envLoaded) {
+  console.warn('No .env file found. Falling back to process.env variables.');
+}
+
+// Log loaded environment type (without exposing sensitive values)
+console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+console.log(`LLM Model: ${process.env.LLM_MODEL_NAME || '(not set)'}`);
 
 // Initialize Express app
 const app = express();
