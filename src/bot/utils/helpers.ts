@@ -1,4 +1,4 @@
-import { Message } from 'discord.js';
+import { Message, MessagePayload, MessageCreateOptions } from 'discord.js';
 
 export interface CommandArgs {
   command: string;
