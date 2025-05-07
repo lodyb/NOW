@@ -6,7 +6,7 @@ dotenv.config();
 
 // Ollama configuration
 const OLLAMA_URL = process.env.OLLAMA_URL || 'http://127.0.0.1:11434';
-const MODEL_NAME = process.env.LLM_MODEL_NAME || 'deepseek-r1:1.5b';
+const MODEL_NAME = process.env.LLM_MODEL_NAME || 'gemma3:4b';
 const MAX_TOKENS = parseInt(process.env.LLM_MAX_TOKENS || '2048', 10);
 const TEMPERATURE = parseFloat(process.env.LLM_TEMPERATURE || '0.7');
 const INFERENCE_TIMEOUT = parseInt(process.env.LLM_TIMEOUT || '60000', 10); // 60 seconds
@@ -58,6 +58,16 @@ const updateCache = (prompt: string, response: string): void => {
   }
 };
 
+/**
+ * Sanitize LLM response to remove potentially dangerous mentions
+ */
+const sanitizeResponse = (text: string): string => {
+  // Replace @everyone and @here with safe versions that don't ping
+  return text
+    .replace(/@everyone/gi, '`@everyone`')
+    .replace(/@here/gi, '`@here`');
+};
+
 // Run model inference using Ollama API
 export const runInference = async (prompt: string): Promise<string> => {
   // Check cache
@@ -69,37 +79,37 @@ export const runInference = async (prompt: string): Promise<string> => {
   try {
     console.log(`Running LLM inference with Ollama using ${MODEL_NAME} model`);
     
-    // Create a stronger system prompt that guides the model to be concise
-    const systemPrompt = `You are NOW, a Discord bot assistant that gives extremely concise and direct answers. Your responses should be short and to the point, avoiding unnecessary details. If you don't know the answer, say "I don't know. You just provide a text response with discord formatting if necessary."`;
+    // Create a concise system prompt
+    const systemPrompt = `You are NOW, a Discord bot assistant that gives extremely concise answers. Be brief, direct, and use Discord markdown when appropriate. Sign off with a fun kaomoji.`;
+    
+    // Clean the prompt to prevent any confusion
+    const cleanPrompt = prompt.replace(/<@&\d+>/g, '').trim();
     
     // Set up API request with timeout
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), INFERENCE_TIMEOUT);
     
-    // Make API request to Ollama
+    // Make API request to Ollama with reduced context parameters
     const response = await axios.post(
       `${OLLAMA_URL}/api/generate`, 
       {
         model: MODEL_NAME,
-        prompt: prompt,
+        prompt: cleanPrompt,
         system: systemPrompt,
         stream: false,
         options: {
           temperature: TEMPERATURE,
-          num_predict: MAX_TOKENS,
-          // Force a fresh context for each request
-          num_ctx: 0,      // Reset context window
-          seed: Date.now() // Use unique seed each time
-        },
-        // Use a unique conversation ID to prevent state persistence
-        context: [],       // Empty context array
-        format: "json"     // Ensures clean response formatting
+          num_predict: Math.min(MAX_TOKENS, 2048),
+          context: 0,
+          seed: Date.now()
+        }
       },
       {
         signal: controller.signal,
         headers: {
           'Content-Type': 'application/json'
-        }
+        },
+        timeout: INFERENCE_TIMEOUT
       }
     );
     
@@ -107,6 +117,9 @@ export const runInference = async (prompt: string): Promise<string> => {
     
     // Extract response text
     let result = response.data.response || '';
+    
+    // Sanitize the response to prevent @everyone and @here mentions
+    result = sanitizeResponse(result);
     
     // Add kaomoji if none exists
     if (!result.match(/\([^)]*[_^;].*\)/)) {
@@ -120,12 +133,19 @@ export const runInference = async (prompt: string): Promise<string> => {
     
     return result;
   } catch (error) {
-    if (axios.isAxiosError(error) && error.code === 'ECONNABORTED') {
-      throw new Error('LLM inference timed out');
-    }
-    
     console.error('Ollama API error:', error);
-    throw new Error(`LLM inference failed: ${(error as Error).message}`);
+    
+    // Provide a friendly fallback response
+    const fallbackResponses = [
+      "Sorry, I'm having a bit of trouble with my thinking process right now. Try again in a moment? (･_･;",
+      "Hmm, it seems my brain is taking a short break. I'll be back to normal soon! (¬_¬)",
+      "My AI circuits need a quick reboot. Please try again shortly. (￣▽￣*)ゞ",
+      "I hit a small technical snag. Let me catch my breath and try again later. (・・;)",
+      "Oops! My models are a bit overloaded. I'll be back to full capacity soon! (◕︵◕)"
+    ];
+    
+    const randomResponse = fallbackResponses[Math.floor(Math.random() * fallbackResponses.length)];
+    return randomResponse;
   }
 };
 
@@ -146,10 +166,11 @@ export const isLLMServiceReady = async (): Promise<boolean> => {
     );
     
     if (!modelAvailable) {
-      console.log(`Model ${MODEL_NAME} not found in Ollama models`);
+      console.log(`Model ${MODEL_NAME} not found in Ollama models, will use fallback responses`);
+      return true; // Still return true to allow fallback responses
     }
     
-    return modelAvailable;
+    return true;
   } catch (error) {
     console.error('Error checking Ollama service:', error);
     return false;
