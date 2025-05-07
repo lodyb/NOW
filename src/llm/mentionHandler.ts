@@ -52,7 +52,8 @@ export const handleMention = async (message: Message): Promise<void> => {
         await safeReply(message, response);
       } else {
         await aiChannel.send(`<@${message.author.id}> asked me something in <#${message.channelId}> but didn't provide a question.\n\n${response}`);
-        await safeReply(message, `I've responded in <#${AI_CHANNEL_ID}>`);
+        // Add a checkmark reaction to the original message
+        await message.react('🐸');
       }
       return;
     }
@@ -75,11 +76,20 @@ export const handleMention = async (message: Message): Promise<void> => {
     } else {
       // Send to AI channel with context about the original message
       await aiChannel.send(`<@${message.author.id}> asked me in <#${message.channelId}>:\n> ${query}\n\n${formattedResponse}`);
-      // Notify the user where the response was sent
-      await safeReply(message, `I've responded in <#${AI_CHANNEL_ID}>`);
+      // Add a checkmark reaction to the original message
+      await message.react('✅');
     }
   } catch (error) {
     console.error('Error handling LLM mention:', error);
-    await safeReply(message, `Sorry, I encountered an error: ${(error as Error).message}`);
+    // Add an error reaction to the original message
+    if (message.channelId !== AI_CHANNEL_ID) {
+      try {
+        await message.react('❌');
+      } catch (reactionError) {
+        console.error('Failed to add error reaction:', reactionError);
+      }
+    } else {
+      await safeReply(message, `Sorry, I encountered an error: ${(error as Error).message}`);
+    }
   }
 };
