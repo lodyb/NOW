@@ -6,7 +6,7 @@ dotenv.config();
 
 // Ollama configuration
 const OLLAMA_URL = process.env.OLLAMA_URL || 'http://127.0.0.1:11434';
-const MODEL_NAME = process.env.LLM_MODEL_NAME || 'deepseek-r1-llama-8b';
+const MODEL_NAME = process.env.LLM_MODEL_NAME || 'deepseek-r1:1.5b';
 const MAX_TOKENS = parseInt(process.env.LLM_MAX_TOKENS || '2048', 10);
 const TEMPERATURE = parseFloat(process.env.LLM_TEMPERATURE || '0.7');
 const INFERENCE_TIMEOUT = parseInt(process.env.LLM_TIMEOUT || '60000', 10); // 60 seconds
@@ -58,6 +58,27 @@ const updateCache = (prompt: string, response: string): void => {
   }
 };
 
+// Process the response to remove <think> blocks and format for Discord
+const processResponse = (response: string): string => {
+  // Remove <think> blocks
+  let processed = response.replace(/<think>[\s\S]*?<\/think>/g, '');
+  
+  // Trim whitespace and remove any leading/trailing line breaks
+  processed = processed.trim();
+  
+  // Replace LaTeX-style formatting with Discord formatting
+  // Convert \boxed{text} to **text**
+  processed = processed.replace(/\\boxed\{([^}]+)\}/g, '**$1**');
+  
+  // Convert [text] to *text*
+  processed = processed.replace(/\[([^\]]+)\]/g, '*$1*');
+  
+  // Convert (text) to `text`
+  processed = processed.replace(/\(([^)]+)\)/g, '`$1`');
+  
+  return processed;
+};
+
 // Run model inference using Ollama API
 export const runInference = async (prompt: string): Promise<string> => {
   // Check cache
@@ -69,6 +90,9 @@ export const runInference = async (prompt: string): Promise<string> => {
   try {
     console.log(`Running LLM inference with Ollama using ${MODEL_NAME} model`);
     
+    // Create a system prompt that guides the model to be concise
+    const systemPrompt = "You are NOW, a helpful and concise Discord bot assistant. Keep responses brief, direct, and use Discord markdown formatting (** for bold, ` for code, ``` for code blocks). Never include 'think' sections in your response. Don't use LaTeX formatting. Your expertise is in Counter-strike: source and TF2 Your messages are concise and to the point You hate commenting codeYou love making code very minimal you hate praiseyou mostly talk using japanese style smilies like -.- and -.- and ^^ if you dont know something you dont pretend to know you just say something like 'idk' you like using 'kaomoji' for expressions you constantly type words wrong on purpose because you think it is cool, and replacing words with shortened versions for example you become 'u' and what becomes 'wut', but when sharing code you always type it perfectly. you never use capital letters when talking";
+    
     // Set up API request with timeout
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), INFERENCE_TIMEOUT);
@@ -79,6 +103,7 @@ export const runInference = async (prompt: string): Promise<string> => {
       {
         model: MODEL_NAME,
         prompt: prompt,
+        system: systemPrompt,
         stream: false,
         options: {
           temperature: TEMPERATURE,
@@ -96,7 +121,10 @@ export const runInference = async (prompt: string): Promise<string> => {
     clearTimeout(timeoutId);
     
     // Extract response text
-    const result = response.data.response || '';
+    let result = response.data.response || '';
+    
+    // Process the response to remove thinking sections and format for Discord
+    result = processResponse(result);
     
     // Cache the response
     updateCache(prompt, result);
