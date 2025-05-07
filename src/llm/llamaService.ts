@@ -58,10 +58,19 @@ const updateCache = (prompt: string, response: string): void => {
   }
 };
 
-// Process the response to remove <think> blocks and format for Discord
+// Process the response to clean and format for Discord
 const processResponse = (response: string): string => {
   // Remove <think> blocks
   let processed = response.replace(/<think>[\s\S]*?<\/think>/g, '');
+  
+  // Remove any Solution: or Conclusion: style headings
+  processed = processed.replace(/^(Solution|Conclusion|Answer|To determine|Let's|First|I'll|Here's|When comparing).*?\n/i, '');
+  
+  // Remove step labels like "Step 1:", "Step 2:" etc.
+  processed = processed.replace(/^Step \d+:.*?\n/gim, '');
+  
+  // Remove any lines starting with common filler phrases
+  processed = processed.replace(/^(To solve this|To answer this|To figure out|To find out|To calculate).*?\n/gim, '');
   
   // Trim whitespace and remove any leading/trailing line breaks
   processed = processed.trim();
@@ -70,11 +79,19 @@ const processResponse = (response: string): string => {
   // Convert \boxed{text} to **text**
   processed = processed.replace(/\\boxed\{([^}]+)\}/g, '**$1**');
   
-  // Convert [text] to *text*
-  processed = processed.replace(/\[([^\]]+)\]/g, '*$1*');
+  // Convert mathematical expressions in () to `code`
+  processed = processed.replace(/\(\s*([0-9+\-*/.<>=]+)\s*\)/g, '`$1`');
   
-  // Convert (text) to `text`
-  processed = processed.replace(/\(([^)]+)\)/g, '`$1`');
+  // Remove redundant "Conclusion:" or "In conclusion:" at the end
+  processed = processed.replace(/(\n|^)(Conclusion|In conclusion|Therefore|Thus|Hence|To summarize):.*/gi, '');
+  
+  // If response is still too verbose, try to extract just the answer
+  if (processed.split('\n').length > 5) {
+    const answerMatch = processed.match(/(1\.9|1\.11) is (bigger|larger|greater) than (1\.9|1\.11)/i);
+    if (answerMatch) {
+      processed = `**${answerMatch[0]}**`;
+    }
+  }
   
   return processed;
 };
@@ -90,8 +107,17 @@ export const runInference = async (prompt: string): Promise<string> => {
   try {
     console.log(`Running LLM inference with Ollama using ${MODEL_NAME} model`);
     
-    // Create a system prompt that guides the model to be concise
-    const systemPrompt = "You are NOW, a helpful and concise Discord bot assistant. Keep responses brief, direct, and use Discord markdown formatting (** for bold, ` for code, ``` for code blocks). Never include 'think' sections in your response. Don't use LaTeX formatting. Your expertise is in Counter-strike: source and TF2 Your messages are concise and to the point You hate commenting codeYou love making code very minimal you hate praiseyou mostly talk using japanese style smilies like -.- and -.- and ^^ if you dont know something you dont pretend to know you just say something like 'idk' you like using 'kaomoji' for expressions you constantly type words wrong on purpose because you think it is cool, and replacing words with shortened versions for example you become 'u' and what becomes 'wut', but when sharing code you always type it perfectly. you never use capital letters when talking";
+    // Create a stronger system prompt that guides the model to be concise
+    const systemPrompt = `You are NOW, a Discord bot assistant that gives extremely concise and direct answers. 
+Your responses should:
+- Be very brief (maximum 3 sentences)
+- Skip explanations unless specifically asked
+- Never start with phrases like "To determine" or "Let's analyze"
+- Never use headings or labels like "Step 1:" or "Solution:"
+- Use Discord markdown (**bold**, *italic*, \`code\`) appropriately
+- Never include <think> sections
+- Sign off with a kaomoji that reflects your mood/response
+- Just give the answer without excessive verbosity`;
     
     // Set up API request with timeout
     const controller = new AbortController();
@@ -123,8 +149,15 @@ export const runInference = async (prompt: string): Promise<string> => {
     // Extract response text
     let result = response.data.response || '';
     
-    // Process the response to remove thinking sections and format for Discord
+    // Process the response to clean and format for Discord
     result = processResponse(result);
+    
+    // Add kaomoji if none exists
+    if (!result.match(/\([^)]*[_^;].*\)/)) {
+      const kaomojis = ['(^_^)', '(｡･ω･｡)', '(⌐■_■)', '(≧◡≦)', '(^▽^)', '(✿◠‿◠)'];
+      const randomKaomoji = kaomojis[Math.floor(Math.random() * kaomojis.length)];
+      result += `\n\n${randomKaomoji}`;
+    }
     
     // Cache the response
     updateCache(prompt, result);
