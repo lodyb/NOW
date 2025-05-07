@@ -1,4 +1,4 @@
-import { Client, Events, GatewayIntentBits, Partials } from 'discord.js';
+import { Client, Events, GatewayIntentBits, Partials, Message } from 'discord.js';
 import express from 'express';
 import cors from 'cors';
 import path from 'path';
@@ -112,6 +112,37 @@ client.once(Events.ClientReady, (readyClient) => {
   console.log(`Ready! Logged in as ${readyClient.user.tag}`);
 });
 
+// Helper function to recursively collect context from reply chains
+async function getReplyChainContext(message: Message, maxDepth: number = 5): Promise<string[]> {
+  const contextChain: string[] = [];
+  let currentMessage = message;
+  let depth = 0;
+  
+  // Recursively trace back through the reply chain
+  while (currentMessage.reference && currentMessage.reference.messageId && depth < maxDepth) {
+    try {
+      // Fetch the parent message
+      const parentMessage = await currentMessage.channel.messages.fetch(currentMessage.reference.messageId);
+      
+      // Only include bot messages and user messages (skip other bot messages)
+      if (parentMessage.author.id === currentMessage.client.user!.id || !parentMessage.author.bot) {
+        // Add to the beginning of the array to maintain chronological order
+        const authorPrefix = parentMessage.author.id === currentMessage.client.user!.id ? "Bot" : "User";
+        contextChain.unshift(`${authorPrefix}: ${parentMessage.content}`);
+      }
+      
+      // Move to the next parent message
+      currentMessage = parentMessage;
+      depth++;
+    } catch (error) {
+      console.error('Error fetching parent message:', error);
+      break;
+    }
+  }
+  
+  return contextChain;
+}
+
 // Message handling
 client.on(Events.MessageCreate, async (message) => {
   // Ignore bot messages
@@ -123,13 +154,17 @@ client.on(Events.MessageCreate, async (message) => {
       const repliedMessage = await message.channel.messages.fetch(message.reference.messageId);
       if (repliedMessage.author.id === client.user!.id) {
         // This is a reply to the bot's message
-        const originalContent = repliedMessage.content;
-        const replyContent = message.content;
+        // Get the full context chain from all parent messages
+        const contextChain = await getReplyChainContext(message);
         
-        // Create a prompt that includes both the original message and the follow-up
-        const contextPrompt = `Context from my previous message: "${originalContent}"\n\nFollow-up question: ${replyContent}`;
+        // Add the current message to the context
+        contextChain.push(`User: ${message.content}`);
         
-        // Use the LLM handler with the merged context
+        // Format the conversation history for the model
+        const conversationHistory = contextChain.join('\n');
+        const contextPrompt = `Here's our conversation history:\n${conversationHistory}\n\nPlease respond to my latest message.`;
+        
+        // Use the LLM handler with the full conversation context
         await handleMention(message, contextPrompt);
         return;
       }
