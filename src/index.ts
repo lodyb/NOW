@@ -166,8 +166,11 @@ client.on(Events.MessageCreate, async (message) => {
         const conversationHistory = contextChain.join('\n');
         const contextPrompt = `Here's our conversation history:\n${conversationHistory}\n\nPlease respond to my latest message.`;
         
-        // Use the LLM handler with the full conversation context
-        await handleMention(message, contextPrompt);
+        // Extract just the user's question from their latest message
+        const userQuery = message.content.trim();
+        
+        // Use the LLM handler with the conversation context but tell it to only respond to the query
+        await handleMention(message, contextPrompt, true); // Add isContextOnly flag
         return;
       }
       // Case 2: Reply to someone else's message while mentioning the bot

@@ -113,7 +113,7 @@ const processPromptTemplateCommand = async (content: string): Promise<{ isComman
 };
 
 // Process an @NOW mention message
-export const handleMention = async (message: Message, contextPrompt?: string): Promise<void> => {
+export const handleMention = async (message: Message, contextPrompt?: string, isContextOnly: boolean = false): Promise<void> => {
   try {
     // Check if LLM service is ready
     if (!(await isLLMServiceReady())) {
@@ -132,9 +132,9 @@ export const handleMention = async (message: Message, contextPrompt?: string): P
       return;
     }
     
-    // If contextPrompt is provided (from a reply), use that directly
-    // Otherwise extract query from message
-    const query = contextPrompt || extractQuery(message);
+    // If contextPrompt is provided (from a reply), use that directly for context
+    // but if isContextOnly is true, extract just the user message for display
+    const query = contextPrompt && !isContextOnly ? contextPrompt : extractQuery(message);
     
     // Don't process empty queries
     if (!query.trim() && message.attachments.size === 0) {
