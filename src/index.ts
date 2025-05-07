@@ -152,6 +152,8 @@ client.on(Events.MessageCreate, async (message) => {
   if (message.reference && message.reference.messageId) {
     try {
       const repliedMessage = await message.channel.messages.fetch(message.reference.messageId);
+      
+      // Case 1: Reply to the bot's message - get full conversation context
       if (repliedMessage.author.id === client.user!.id) {
         // This is a reply to the bot's message
         // Get the full context chain from all parent messages
@@ -165,6 +167,15 @@ client.on(Events.MessageCreate, async (message) => {
         const contextPrompt = `Here's our conversation history:\n${conversationHistory}\n\nPlease respond to my latest message.`;
         
         // Use the LLM handler with the full conversation context
+        await handleMention(message, contextPrompt);
+        return;
+      }
+      // Case 2: Reply to someone else's message while mentioning the bot
+      else if (message.mentions.has(client.user!)) {
+        // User is replying to someone else's message and mentioning the bot
+        const contextPrompt = `Source message: "${repliedMessage.content}" from "${repliedMessage.author.displayName}"\n\nMy message: ${message.content.replace(/<@!?\d+>/g, '').trim()}`;
+        
+        // Use the LLM handler with the replied message as context
         await handleMention(message, contextPrompt);
         return;
       }
