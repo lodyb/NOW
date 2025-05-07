@@ -139,7 +139,7 @@ export const generateProgressiveHint = (
  * @param content The content to send in the reply
  * @returns True if successful, false if failed
  */
-export const safeReply = async (message: Message, content: string | { content?: string, files: any[] }): Promise<boolean> => {
+export const safeReply = async (message: Message, content: string | MessagePayload | MessageCreateOptions): Promise<boolean> => {
   try {
     await message.reply(content);
     return true;

@@ -1,4 +1,4 @@
-import { Message, TextChannel } from 'discord.js';
+import { Message, TextChannel, MessagePayload, MessageCreateOptions } from 'discord.js';
 import { runInference, formatResponseForDiscord, isLLMServiceReady, prepareDiscordResponse } from './llamaService';
 import { safeReply } from '../bot/utils/helpers';
 import fs from 'fs';
@@ -71,9 +71,17 @@ export const handleMention = async (message: Message): Promise<void> => {
     
     // Show typing indicator
     if (isInAIChannel) {
-      message.channel.sendTyping().catch(err => console.error('Error showing typing indicator:', err));
+      try {
+        await message.channel.sendTyping();
+      } catch (err) {
+        console.error('Error showing typing indicator:', err);
+      }
     } else {
-      aiChannel.sendTyping().catch(err => console.error('Error showing typing indicator:', err));
+      try {
+        await aiChannel.sendTyping();
+      } catch (err) {
+        console.error('Error showing typing indicator:', err);
+      }
     }
     
     // Run inference - pass the message to handle attachments
