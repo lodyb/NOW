@@ -403,7 +403,7 @@ export const formatResponseForDiscord = (response: string): string => {
 export const prepareDiscordResponse = (
   textResponse: string, 
   imagePaths?: string[]
-): MessagePayload | MessageCreateOptions => {
+): MessageCreateOptions => {
   const response: MessageCreateOptions = {
     content: textResponse
   };
