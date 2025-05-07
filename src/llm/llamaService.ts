@@ -209,10 +209,23 @@ export const runInference = async (prompt: string, message?: Message): Promise<{
         const isImage = ['.jpg', '.jpeg', '.png', '.gif', '.webp'].includes(fileExt);
         
         if (isImage) {
-          // For images, encode as base64
-          const imageData = fs.readFileSync(filePath);
-          const base64Image = imageData.toString('base64');
-          images.push(`data:image/${fileExt.substring(1)};base64,${base64Image}`);
+          try {
+            // For images, encode as base64 with proper formatting for Gemma3
+            const imageData = fs.readFileSync(filePath);
+            const base64Image = imageData.toString('base64');
+            
+            // Different models require different image format strings
+            // For Gemma3:4b, use a simpler format without MIME type
+            if (MODEL_NAME.includes('gemma')) {
+              images.push(base64Image);
+            } else {
+              // For other models that need MIME type
+              const mimeType = fileExt === '.jpg' ? 'jpeg' : fileExt.substring(1);
+              images.push(`data:image/${mimeType};base64,${base64Image}`);
+            }
+          } catch (error) {
+            console.error(`Error encoding image ${filePath}:`, error);
+          }
         } else {
           // For now, we only handle images
           console.log(`Skipping non-image file: ${filePath}`);
