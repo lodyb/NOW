@@ -77,7 +77,7 @@ export const handleMention = async (message: Message): Promise<void> => {
       // Send to AI channel with context about the original message
       await aiChannel.send(`<@${message.author.id}> asked me in <#${message.channelId}>:\n> ${query}\n\n${formattedResponse}`);
       // Add a checkmark reaction to the original message
-      await message.react('✅');
+      await message.react('🐸');
     }
   } catch (error) {
     console.error('Error handling LLM mention:', error);
