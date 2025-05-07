@@ -125,13 +125,7 @@ export const runInference = async (prompt: string): Promise<string> => {
     
     // Sanitize the response to prevent @everyone and @here mentions
     result = sanitizeResponse(result);
-    
-    // Add kaomoji if none exists
-    if (!result.match(/\([^)]*[_^;].*\)/)) {
-      const kaomojis = ['(^_^)', '(｡･ω･｡)', '(⌐■_■)', '(≧◡≦)', '(^▽^)', '(✿◠‿◠)'];
-      const randomKaomoji = kaomojis[Math.floor(Math.random() * kaomojis.length)];
-      result += `\n\n${randomKaomoji}`;
-    }
+
     
     // Cache the response
     updateCache(prompt, result);
