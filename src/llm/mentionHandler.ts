@@ -181,8 +181,11 @@ export const handleMention = async (message: Message, contextPrompt?: string): P
           // Create content with attribution
           let redirectContent = `<@${message.author.id}> used a template in <#${message.channelId}>:\n`;
           
+          // Extract the template name from the query
+          const templateName = query.match(/^\{([\w-]+)\}/)?.[1] || "unknown";
+          
           // Include original query text if provided
-          redirectContent += `> Using template "${prompt.match(/^\{([\w-]+)\}/)?.[1] || "unknown"}" with: ${templateResult.processedPrompt}\n\n`;
+          redirectContent += `> Using template "${templateName}" with: ${templateResult.processedPrompt}\n\n`;
           
           // Add the response text
           redirectContent += formattedText;
