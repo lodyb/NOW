@@ -117,6 +117,27 @@ client.on(Events.MessageCreate, async (message) => {
   // Ignore bot messages
   if (message.author.bot) return;
   
+  // Check for replies to the bot's messages
+  if (message.reference && message.reference.messageId) {
+    try {
+      const repliedMessage = await message.channel.messages.fetch(message.reference.messageId);
+      if (repliedMessage.author.id === client.user!.id) {
+        // This is a reply to the bot's message
+        const originalContent = repliedMessage.content;
+        const replyContent = message.content;
+        
+        // Create a prompt that includes both the original message and the follow-up
+        const contextPrompt = `Context from my previous message: "${originalContent}"\n\nFollow-up question: ${replyContent}`;
+        
+        // Use the LLM handler with the merged context
+        await handleMention(message, contextPrompt);
+        return;
+      }
+    } catch (error) {
+      console.error('Error handling reply:', error);
+    }
+  }
+  
   // Check if message is mentioning the bot
   if (message.mentions.has(client.user!)) {
     try {

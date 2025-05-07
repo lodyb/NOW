@@ -78,6 +78,25 @@ const detectImageGenerationCommand = (text: string): string | null => {
   return null;
 };
 
+// Detect if user wants to generate an image
+const detectImageRequest = (text: string): string | null => {
+  // Check direct image generation requests
+  const drawRegex = /^(?:draw|create|generate|make|show|visualize)(?: me| us)? (?:an?|some) (.*?)(?:\.|$)/i;
+  const drawMatch = text.match(drawRegex);
+  if (drawMatch && drawMatch[1]) {
+    return drawMatch[1].trim();
+  }
+  
+  // Check for base64 image requests
+  const base64Regex = /^(?:base64|encode|convert to base64)(?: an?)? (?:image|picture|photo) (?:of|showing) (.*?)(?:\.|$)/i;
+  const base64Match = text.match(base64Regex);
+  if (base64Match && base64Match[1]) {
+    return base64Match[1].trim();
+  }
+  
+  return null;
+};
+
 // Detect base64 image data in the response
 const detectBase64Image = (text: string): string | null => {
   // Look for common base64 image patterns
@@ -191,6 +210,24 @@ export const runInference = async (prompt: string, message?: Message): Promise<{
     
     // Clean the prompt to prevent any confusion
     const cleanPrompt = fullPrompt.replace(/<@&\d+>/g, '').trim();
+    
+    // Check if this is a request to generate an image
+    const imageRequest = detectImageRequest(cleanPrompt);
+    if (imageRequest) {
+      try {
+        console.log(`Generating image for: ${imageRequest}`);
+        const generatedImagePaths = await generateImage(imageRequest);
+        if (generatedImagePaths && generatedImagePaths.length > 0) {
+          return { 
+            text: `Here's what I generated for "${imageRequest}":`, 
+            images: generatedImagePaths 
+          };
+        }
+      } catch (error) {
+        console.error('Failed to generate image:', error);
+        // Continue with normal text processing if image generation fails
+      }
+    }
     
     // Set up API request with timeout
     const controller = new AbortController();
@@ -363,7 +400,51 @@ export const generateImage = async (prompt: string): Promise<string[]> => {
     const randomId = crypto.randomBytes(4).toString('hex');
     const outputPath = path.join(TEMP_DIR, `generated_${randomId}.png`);
     
-    // Try to use Ollama for image generation if model supports it
+    // Special handling for base64 direct request
+    if (prompt.toLowerCase().includes('base64') || prompt.toLowerCase().includes('encoded')) {
+      // Request specifically for base64 output
+      const response = await axios.post(
+        `${OLLAMA_URL}/api/generate`, 
+        {
+          model: MODEL_NAME,
+          prompt: `Generate a base64 encoded PNG image of: ${prompt.replace(/base64|encoded/gi, '').trim()}. 
+                   Return ONLY the base64 string with no explanation, no markdown, and no additional text.`,
+          stream: false,
+          options: {
+            temperature: 0.7
+          }
+        },
+        {
+          timeout: INFERENCE_TIMEOUT
+        }
+      );
+      
+      // Extract base64 data from response
+      const responseText = response.data.response || '';
+      const base64Match = responseText.match(/\b([A-Za-z0-9+/]{40,}={0,2})\b/);
+      
+      if (base64Match && base64Match[1]) {
+        try {
+          // Clean base64 data
+          let cleanBase64 = base64Match[1];
+          cleanBase64 = cleanBase64.replace(/\s/g, '');
+          
+          // Ensure proper padding
+          while (cleanBase64.length % 4 !== 0) {
+            cleanBase64 += '=';
+          }
+          
+          // Save as image file
+          fs.writeFileSync(outputPath, Buffer.from(cleanBase64, 'base64'));
+          console.log(`Saved base64 image to ${outputPath}`);
+          return [outputPath];
+        } catch (e) {
+          console.error('Error processing base64 data:', e);
+        }
+      }
+    }
+    
+    // Standard image generation
     const response = await axios.post(
       `${OLLAMA_URL}/api/generate`, 
       {
@@ -388,6 +469,26 @@ export const generateImage = async (prompt: string): Promise<string[]> => {
     
     // Check if the model returned image URLs
     if (response.data.response) {
+      // First, check for base64 data in the response
+      const base64Match = response.data.response.match(/\b([A-Za-z0-9+/]{40,}={0,2})\b/);
+      if (base64Match && base64Match[1]) {
+        try {
+          let cleanBase64 = base64Match[1];
+          cleanBase64 = cleanBase64.replace(/\s/g, '');
+          
+          while (cleanBase64.length % 4 !== 0) {
+            cleanBase64 += '=';
+          }
+          
+          fs.writeFileSync(outputPath, Buffer.from(cleanBase64, 'base64'));
+          console.log(`Saved base64 image from response to ${outputPath}`);
+          return [outputPath];
+        } catch (e) {
+          console.error('Error processing base64 from response:', e);
+        }
+      }
+      
+      // Check for image URLs as fallback
       const urls = response.data.response.match(/(https?:\/\/[^\s]+\.(jpg|jpeg|png|gif|webp))/gi);
       if (urls && urls.length > 0) {
         const downloadedImages = [];

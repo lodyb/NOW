@@ -24,7 +24,7 @@ const extractQuery = (message: Message): string => {
 };
 
 // Process an @NOW mention message
-export const handleMention = async (message: Message): Promise<void> => {
+export const handleMention = async (message: Message, contextPrompt?: string): Promise<void> => {
   try {
     // Check if LLM service is ready
     if (!(await isLLMServiceReady())) {
@@ -43,8 +43,9 @@ export const handleMention = async (message: Message): Promise<void> => {
       return;
     }
     
-    // Extract query from message
-    const query = extractQuery(message);
+    // If contextPrompt is provided (from a reply), use that directly
+    // Otherwise extract query from message
+    const query = contextPrompt || extractQuery(message);
     
     // Don't process empty queries
     if (!query.trim() && message.attachments.size === 0) {
