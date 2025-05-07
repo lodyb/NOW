@@ -22,7 +22,7 @@ const extractQuery = (message: Message): string => {
 export const handleMention = async (message: Message): Promise<void> => {
   try {
     // Check if LLM service is ready
-    if (!isLLMServiceReady()) {
+    if (!(await isLLMServiceReady())) {
       await safeReply(message, 'Sorry, the AI service is not available at the moment.');
       return;
     }

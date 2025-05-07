@@ -1,21 +1,15 @@
-import { spawn } from 'child_process';
-import path from 'path';
-import fs from 'fs';
+import axios from 'axios';
 import dotenv from 'dotenv';
 
 // Load environment variables
 dotenv.config();
 
-// Model configuration
-const MODEL_PATH = process.env.LLM_MODEL_PATH || '';
+// Ollama configuration
+const OLLAMA_URL = process.env.OLLAMA_URL || 'http://localhost:11434';
+const MODEL_NAME = process.env.LLM_MODEL_NAME || 'deepseek-r1-llama-8b';
 const MAX_TOKENS = parseInt(process.env.LLM_MAX_TOKENS || '2048', 10);
 const TEMPERATURE = parseFloat(process.env.LLM_TEMPERATURE || '0.7');
-const GPU_LAYERS = parseInt(process.env.LLM_GPU_LAYERS || '35', 10);
-const CONTEXT_SIZE = parseInt(process.env.LLM_CONTEXT_SIZE || '4096', 10);
-const BATCH_SIZE = parseInt(process.env.LLM_BATCH_SIZE || '512', 10);
 const INFERENCE_TIMEOUT = parseInt(process.env.LLM_TIMEOUT || '60000', 10); // 60 seconds
-const LLAMA_CPP_PATH = process.env.LLAMA_CPP_PATH || 'llama-cpp';
-const LLAMA_CPP_DIR = path.dirname(LLAMA_CPP_PATH || '');
 
 // Cache for recent queries
 interface CacheEntry {
@@ -24,31 +18,6 @@ interface CacheEntry {
 }
 const queryCache = new Map<string, CacheEntry>();
 const CACHE_TTL = 1000 * 60 * 30; // 30 minutes
-
-// Check if model exists
-const validateModel = (): boolean => {
-  if (!MODEL_PATH) {
-    console.error('LLM_MODEL_PATH not set in environment variables');
-    return false;
-  }
-  
-  if (!fs.existsSync(MODEL_PATH)) {
-    console.error(`Model file not found at: ${MODEL_PATH}`);
-    return false;
-  }
-  
-  return true;
-};
-
-// Process the prompt for the model
-const processPrompt = (prompt: string): string => {
-  // Limit prompt size to prevent context overflow
-  const maxPromptLength = CONTEXT_SIZE - MAX_TOKENS - 100;
-  if (prompt.length > maxPromptLength) {
-    return prompt.substring(0, maxPromptLength);
-  }
-  return prompt;
-};
 
 // Check cache for existing response
 const checkCache = (prompt: string): string | null => {
@@ -89,130 +58,72 @@ const updateCache = (prompt: string, response: string): void => {
   }
 };
 
-// Run model inference using llama.cpp
-export const runInference = (prompt: string): Promise<string> => {
-  return new Promise((resolve, reject) => {
-    // Validate model
-    if (!validateModel()) {
-      return reject(new Error('LLM model not available'));
-    }
+// Run model inference using Ollama API
+export const runInference = async (prompt: string): Promise<string> => {
+  // Check cache
+  const cachedResponse = checkCache(prompt);
+  if (cachedResponse) {
+    return cachedResponse;
+  }
+  
+  try {
+    console.log(`Running LLM inference with Ollama using ${MODEL_NAME} model`);
     
-    // Check cache
-    const cachedResponse = checkCache(prompt);
-    if (cachedResponse) {
-      return resolve(cachedResponse);
-    }
+    // Set up API request with timeout
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), INFERENCE_TIMEOUT);
     
-    // Process the prompt
-    const processedPrompt = processPrompt(prompt);
-    
-    // Setup llama.cpp parameters - use only basic flags supported by all versions
-    const llamaArgs = [
-        '-m', MODEL_PATH,
-        '-n', MAX_TOKENS.toString(),
-        '--temp', TEMPERATURE.toString(),
-        '--ctx-size', CONTEXT_SIZE.toString(),
-        '-b', BATCH_SIZE.toString(),
-        '-ngl', GPU_LAYERS.toString(),
-        '--log-disable',
-        '--prompt-cache-all',
-        '--threads', '12',
-        '-p', processedPrompt
-      ];
-    
-    console.log(`Running LLM inference with ${GPU_LAYERS} GPU layers`);
-    
-    // Prepare environment with LD_LIBRARY_PATH to include llama.cpp directory
-    const env = { ...process.env };
-    if (LLAMA_CPP_DIR) {
-      env.LD_LIBRARY_PATH = `${LLAMA_CPP_DIR}:${env.LD_LIBRARY_PATH || ''}`;
-    }
-    
-    try {
-      // Spawn llama.cpp process with updated environment
-      const llamaProcess = spawn(LLAMA_CPP_PATH, llamaArgs, { env });
-      
-      let output = '';
-      let error = '';
-      let timeout: NodeJS.Timeout | null = null;
-      
-      // Set timeout for inference
-      timeout = setTimeout(() => {
-        llamaProcess.kill();
-        reject(new Error('LLM inference timed out'));
-      }, INFERENCE_TIMEOUT);
-      
-      // Collect stdout
-      llamaProcess.stdout.on('data', (data) => {
-        output += data.toString();
-      });
-      
-      // Collect stderr
-      llamaProcess.stderr.on('data', (data) => {
-        error += data.toString();
-      });
-      
-      // Handle process completion
-      llamaProcess.on('close', (code) => {
-        if (timeout) clearTimeout(timeout);
-        
-        if (code !== 0) {
-          console.error(`llama.cpp exited with code ${code}`);
-          console.error(`Error: ${error}`);
-          reject(new Error(`LLM inference failed with code ${code}`));
-          return;
+    // Make API request to Ollama
+    const response = await axios.post(
+      `${OLLAMA_URL}/api/generate`, 
+      {
+        model: MODEL_NAME,
+        prompt: prompt,
+        stream: false,
+        options: {
+          temperature: TEMPERATURE,
+          num_predict: MAX_TOKENS
         }
-        
-        // Extract the model's response (remove prompt and llama.cpp output info)
-        const lines = output.split('\n');
-        let responseStarted = false;
-        let responseLines: string[] = [];
-        
-        for (const line of lines) {
-          // Skip llama.cpp info lines
-          if (line.startsWith('llama_model_loader:') || 
-              line.startsWith('llama_new_context_with_model:') ||
-              line.startsWith('ggml_metal_init:') ||
-              line.startsWith('llama_print_timings:')) {
-            continue;
-          }
-          
-          // Start collecting response after we see the prompt
-          if (line.includes(processedPrompt.substring(0, 20))) {
-            responseStarted = true;
-            continue;
-          }
-          
-          if (responseStarted) {
-            responseLines.push(line);
-          }
+      },
+      {
+        signal: controller.signal,
+        headers: {
+          'Content-Type': 'application/json'
         }
-        
-        // Join response lines
-        const response = responseLines.join('\n').trim();
-        
-        // Cache the response
-        updateCache(prompt, response);
-        
-        resolve(response);
-      });
-      
-      // Handle errors
-      llamaProcess.on('error', (err) => {
-        if (timeout) clearTimeout(timeout);
-        console.error('Failed to start llama.cpp process:', err);
-        reject(new Error('Failed to start LLM inference process'));
-      });
-    } catch (error) {
-      console.error('Error spawning llama.cpp process:', error);
-      reject(new Error(`Failed to start LLM process: ${(error as Error).message}`));
+      }
+    );
+    
+    clearTimeout(timeoutId);
+    
+    // Extract response text
+    const result = response.data.response || '';
+    
+    // Cache the response
+    updateCache(prompt, result);
+    
+    return result;
+  } catch (error) {
+    if (axios.isAxiosError(error) && error.code === 'ECONNABORTED') {
+      throw new Error('LLM inference timed out');
     }
-  });
+    
+    console.error('Ollama API error:', error);
+    throw new Error(`LLM inference failed: ${(error as Error).message}`);
+  }
 };
 
-// Check if the LLM service is ready
-export const isLLMServiceReady = (): boolean => {
-  return validateModel();
+// Check if the LLM service is ready by making a simple status request
+export const isLLMServiceReady = async (): Promise<boolean> => {
+  try {
+    const response = await axios.get(`${OLLAMA_URL}/api/tags`, { timeout: 5000 });
+    const models = response.data.models || [];
+    
+    // Check if our model is available
+    return models.some((model: { name: string }) => model.name === MODEL_NAME);
+  } catch (error) {
+    console.error('Error checking Ollama service:', error);
+    return false;
+  }
 };
 
 // Format the final response for Discord (limit length, etc)
