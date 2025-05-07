@@ -100,8 +100,7 @@ export const runInference = async (prompt: string): Promise<string> => {
         options: {
           temperature: TEMPERATURE,
           num_predict: Math.min(MAX_TOKENS, 2048),
-          context: 0,
-          num_ctx: 0,
+          num_ctx: 4096,
           seed: Date.now()
         }
       },
