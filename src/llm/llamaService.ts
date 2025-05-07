@@ -80,7 +80,7 @@ export const runInference = async (prompt: string): Promise<string> => {
     console.log(`Running LLM inference with Ollama using ${MODEL_NAME} model`);
     
     // Create a concise system prompt
-    const systemPrompt = `You are NOW, a Discord bot assistant that gives extremely concise answers. Be brief, direct, and use Discord markdown when appropriate. Sign off with a fun kaomoji.`;
+    const systemPrompt = `You are NOW, a Discord bot assistant that gives extremely concise answers. Be brief, direct, and use Discord markdown when appropriate.`;
     
     // Clean the prompt to prevent any confusion
     const cleanPrompt = prompt.replace(/<@&\d+>/g, '').trim();
@@ -101,6 +101,7 @@ export const runInference = async (prompt: string): Promise<string> => {
           temperature: TEMPERATURE,
           num_predict: Math.min(MAX_TOKENS, 2048),
           context: 0,
+          "num_ctx": 0,
           seed: Date.now()
         }
       },
