@@ -1,6 +1,8 @@
 import { Message, TextChannel } from 'discord.js';
-import { runInference, formatResponseForDiscord, isLLMServiceReady } from './llamaService';
+import { runInference, formatResponseForDiscord, isLLMServiceReady, prepareDiscordResponse } from './llamaService';
 import { safeReply } from '../bot/utils/helpers';
+import fs from 'fs';
+import path from 'path';
 
 // AI channel configuration
 const AI_CHANNEL_ID = '1369649491573215262';
@@ -45,14 +47,14 @@ export const handleMention = async (message: Message): Promise<void> => {
     const query = extractQuery(message);
     
     // Don't process empty queries
-    if (!query.trim()) {
+    if (!query.trim() && message.attachments.size === 0) {
       const response = 'How can I help you? (Please include a question or prompt after mentioning me)';
       
       if (isInAIChannel) {
         await safeReply(message, response);
       } else {
         await aiChannel.send(`<@${message.author.id}> asked me something in <#${message.channelId}> but didn't provide a question.\n\n${response}`);
-        // Add a checkmark reaction to the original message
+        // Add a frog reaction to the original message
         await message.react('🐸');
       }
       return;
@@ -63,20 +65,59 @@ export const handleMention = async (message: Message): Promise<void> => {
     // Prepare a clean prompt without chat markers
     const prompt = query.trim();
     
-    // Run inference
-    const response = await runInference(prompt);
+    // If this is just an empty mention with an attachment, add a default prompt
+    const promptWithDefault = message.attachments.size > 0 && !prompt ? 
+      "Please analyze this attachment" : prompt;
     
-    // Format response for Discord
-    const formattedResponse = formatResponseForDiscord(response);
+    // Show typing indicator
+    if (isInAIChannel) {
+      message.channel.sendTyping().catch(err => console.error('Error showing typing indicator:', err));
+    } else {
+      aiChannel.sendTyping().catch(err => console.error('Error showing typing indicator:', err));
+    }
+    
+    // Run inference - pass the message to handle attachments
+    const response = await runInference(promptWithDefault, message);
+    
+    // Format text response for Discord
+    const formattedText = formatResponseForDiscord(response.text);
+    
+    // Prepare full response with any images
+    const discordResponse = prepareDiscordResponse(formattedText, response.images);
     
     // Send the response to the appropriate channel
     if (isInAIChannel) {
       // Reply directly in the AI channel
-      await safeReply(message, formattedResponse);
+      await safeReply(message, discordResponse);
+      
+      // Clean up any images after sending
+      if (response.images) {
+        cleanupTempImages(response.images);
+      }
     } else {
+      // Create content with attribution
+      let redirectContent = `<@${message.author.id}> asked me in <#${message.channelId}>:\n`;
+      
+      // Include original query text if provided
+      if (prompt) {
+        redirectContent += `> ${prompt}\n\n`;
+      } else if (message.attachments.size > 0) {
+        redirectContent += `> [Sent ${message.attachments.size} attachment(s)]\n\n`;
+      }
+      
+      // Add the response text
+      redirectContent += formattedText;
+      
       // Send to AI channel with context about the original message
-      await aiChannel.send(`<@${message.author.id}> asked me in <#${message.channelId}>:\n> ${query}\n\n${formattedResponse}`);
-      // Add a checkmark reaction to the original message
+      const redirectResponse = { ...discordResponse, content: redirectContent };
+      await aiChannel.send(redirectResponse);
+      
+      // Clean up any images after sending
+      if (response.images) {
+        cleanupTempImages(response.images);
+      }
+      
+      // Add a frog reaction to the original message
       await message.react('🐸');
     }
   } catch (error) {
@@ -90,6 +131,19 @@ export const handleMention = async (message: Message): Promise<void> => {
       }
     } else {
       await safeReply(message, `Sorry, I encountered an error: ${(error as Error).message}`);
+    }
+  }
+};
+
+// Helper function to clean up temporary image files
+const cleanupTempImages = (imagePaths: string[]): void => {
+  for (const imagePath of imagePaths) {
+    try {
+      if (fs.existsSync(imagePath)) {
+        fs.unlinkSync(imagePath);
+      }
+    } catch (error) {
+      console.error(`Error cleaning up temporary image ${imagePath}:`, error);
     }
   }
 };

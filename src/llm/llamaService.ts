@@ -1,5 +1,9 @@
 import axios from 'axios';
 import dotenv from 'dotenv';
+import fs from 'fs';
+import path from 'path';
+import crypto from 'crypto';
+import { Message, AttachmentBuilder, MessagePayload, MessageCreateOptions } from 'discord.js';
 
 // Load environment variables
 dotenv.config();
@@ -10,6 +14,12 @@ const MODEL_NAME = process.env.LLM_MODEL_NAME || 'gemma3:4b';
 const MAX_TOKENS = parseInt(process.env.LLM_MAX_TOKENS || '2048', 10);
 const TEMPERATURE = parseFloat(process.env.LLM_TEMPERATURE || '0.7');
 const INFERENCE_TIMEOUT = parseInt(process.env.LLM_TIMEOUT || '60000', 10); // 60 seconds
+const TEMP_DIR = path.join(process.cwd(), 'temp');
+
+// Create temp directory if it doesn't exist
+if (!fs.existsSync(TEMP_DIR)) {
+  fs.mkdirSync(TEMP_DIR, { recursive: true });
+}
 
 // Cache for recent queries
 interface CacheEntry {
@@ -58,6 +68,16 @@ const updateCache = (prompt: string, response: string): void => {
   }
 };
 
+// Detect if response contains image generation commands
+const detectImageGenerationCommand = (text: string): string | null => {
+  // Match for patterns like ![image description](generate:prompt)
+  const matches = text.match(/!\[.*?\]\(generate:(.*?)\)/);
+  if (matches && matches[1]) {
+    return matches[1].trim();
+  }
+  return null;
+};
+
 /**
  * Sanitize LLM response to remove potentially dangerous mentions
  * and strip out any thinking blocks
@@ -73,12 +93,83 @@ const sanitizeResponse = (text: string): string => {
     .trim();
 };
 
+/**
+ * Download and save attachment from a Discord message
+ */
+const downloadAttachment = async (url: string, filename: string): Promise<string> => {
+  const randomId = crypto.randomBytes(4).toString('hex');
+  const extension = path.extname(filename) || '.bin';
+  const outputPath = path.join(TEMP_DIR, `${randomId}${extension}`);
+  
+  const response = await axios({
+    method: 'GET',
+    url: url,
+    responseType: 'stream',
+  });
+  
+  const writer = fs.createWriteStream(outputPath);
+  
+  return new Promise((resolve, reject) => {
+    response.data.pipe(writer);
+    
+    writer.on('finish', () => resolve(outputPath));
+    writer.on('error', reject);
+  });
+};
+
+// Check if string is a valid URL
+const isValidUrl = (s: string): boolean => {
+  try {
+    new URL(s);
+    return true;
+  } catch (err) {
+    return false;
+  }
+};
+
+// Process attachments from a Discord message
+const processAttachments = async (message: Message): Promise<{filePaths: string[], prompt: string}> => {
+  const filePaths: string[] = [];
+  let additionalPrompt = '';
+  
+  if (message.attachments.size > 0) {
+    additionalPrompt = '\n\nPlease analyze the attached file(s):';
+    
+    for (const [, attachment] of message.attachments) {
+      try {
+        const filePath = await downloadAttachment(attachment.url, attachment.name);
+        filePaths.push(filePath);
+        additionalPrompt += `\n- ${attachment.name}`;
+      } catch (error) {
+        console.error(`Error downloading attachment ${attachment.name}:`, error);
+      }
+    }
+  }
+  
+  return { filePaths, prompt: additionalPrompt };
+};
+
 // Run model inference using Ollama API
-export const runInference = async (prompt: string): Promise<string> => {
-  // Check cache
-  const cachedResponse = checkCache(prompt);
-  if (cachedResponse) {
-    return cachedResponse;
+export const runInference = async (prompt: string, message?: Message): Promise<{text: string, images?: string[]}> => {
+  // Process any attachments if a message was provided
+  let filePaths: string[] = [];
+  let attachmentPrompt = '';
+  
+  if (message && message.attachments.size > 0) {
+    const processedAttachments = await processAttachments(message);
+    filePaths = processedAttachments.filePaths;
+    attachmentPrompt = processedAttachments.prompt;
+  }
+  
+  // Add attachment info to the prompt
+  const fullPrompt = prompt + attachmentPrompt;
+  
+  // Check cache only if no attachments
+  if (filePaths.length === 0) {
+    const cachedResponse = checkCache(fullPrompt);
+    if (cachedResponse) {
+      return { text: cachedResponse };
+    }
   }
   
   try {
@@ -88,27 +179,55 @@ export const runInference = async (prompt: string): Promise<string> => {
     const systemPrompt = `/no think You are NOW, a Discord bot assistant that gives extremely concise answers. Be brief, direct, and use Discord markdown when appropriate.`;
     
     // Clean the prompt to prevent any confusion
-    const cleanPrompt = prompt.replace(/<@&\d+>/g, '').trim();
+    const cleanPrompt = fullPrompt.replace(/<@&\d+>/g, '').trim();
     
     // Set up API request with timeout
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), INFERENCE_TIMEOUT);
     
+    // Prepare request body, handle image inputs if present
+    const requestBody: any = {
+      model: MODEL_NAME,
+      prompt: '/no think ' + cleanPrompt,
+      system: systemPrompt,
+      stream: false,
+      options: {
+        temperature: TEMPERATURE,
+        num_predict: Math.min(MAX_TOKENS, 2048),
+        num_ctx: 4096,
+        seed: Date.now()
+      }
+    };
+    
+    // Add images to the request if present
+    if (filePaths.length > 0) {
+      const images = [];
+      
+      for (const filePath of filePaths) {
+        // Check if file is an image
+        const fileExt = path.extname(filePath).toLowerCase();
+        const isImage = ['.jpg', '.jpeg', '.png', '.gif', '.webp'].includes(fileExt);
+        
+        if (isImage) {
+          // For images, encode as base64
+          const imageData = fs.readFileSync(filePath);
+          const base64Image = imageData.toString('base64');
+          images.push(`data:image/${fileExt.substring(1)};base64,${base64Image}`);
+        } else {
+          // For now, we only handle images
+          console.log(`Skipping non-image file: ${filePath}`);
+        }
+      }
+      
+      if (images.length > 0) {
+        requestBody.images = images;
+      }
+    }
+    
     // Make API request to Ollama with reduced context parameters
     const response = await axios.post(
       `${OLLAMA_URL}/api/generate`, 
-      {
-        model: MODEL_NAME,
-        prompt: '/no think ' + cleanPrompt,
-        system: systemPrompt,
-        stream: false,
-        options: {
-          temperature: TEMPERATURE,
-          num_predict: Math.min(MAX_TOKENS, 2048),
-          num_ctx: 4096,
-          seed: Date.now()
-        }
-      },
+      requestBody,
       {
         signal: controller.signal,
         headers: {
@@ -125,14 +244,48 @@ export const runInference = async (prompt: string): Promise<string> => {
     
     // Sanitize the response to prevent @everyone and @here mentions
     result = sanitizeResponse(result);
-
     
-    // Cache the response
-    updateCache(prompt, result);
+    // Check if the response contains an image generation command
+    const imagePrompt = detectImageGenerationCommand(result);
+    let generatedImages: string[] | undefined;
     
-    return result;
+    if (imagePrompt) {
+      // Remove the image generation command from the text response
+      result = result.replace(/!\[.*?\]\(generate:.*?\)/, '');
+      
+      try {
+        // Try to generate an image if detected
+        generatedImages = await generateImage(imagePrompt);
+      } catch (error) {
+        console.error('Error generating image:', error);
+        result += '\n\n*Sorry, I was unable to generate the requested image.*';
+      }
+    }
+    
+    // Cache the text response
+    updateCache(fullPrompt, result);
+    
+    // Clean up temporary files
+    for (const filePath of filePaths) {
+      try {
+        fs.unlinkSync(filePath);
+      } catch (err) {
+        console.error(`Error deleting temporary file ${filePath}:`, err);
+      }
+    }
+    
+    return { text: result, images: generatedImages };
   } catch (error) {
     console.error('Ollama API error:', error);
+    
+    // Clean up temporary files on error
+    for (const filePath of filePaths) {
+      try {
+        fs.unlinkSync(filePath);
+      } catch (err) {
+        console.error(`Error deleting temporary file ${filePath}:`, err);
+      }
+    }
     
     // Provide a friendly fallback response
     const fallbackResponses = [
@@ -144,7 +297,66 @@ export const runInference = async (prompt: string): Promise<string> => {
     ];
     
     const randomResponse = fallbackResponses[Math.floor(Math.random() * fallbackResponses.length)];
-    return randomResponse;
+    return { text: randomResponse };
+  }
+};
+
+// Generate an image using Ollama (if model supports it)
+export const generateImage = async (prompt: string): Promise<string[]> => {
+  try {
+    const randomId = crypto.randomBytes(4).toString('hex');
+    const outputPath = path.join(TEMP_DIR, `generated_${randomId}.png`);
+    
+    // Try to use Ollama for image generation if model supports it
+    const response = await axios.post(
+      `${OLLAMA_URL}/api/generate`, 
+      {
+        model: MODEL_NAME,
+        prompt: `Generate an image of: ${prompt}`,
+        stream: false,
+        options: {
+          temperature: 0.8
+        }
+      },
+      {
+        timeout: INFERENCE_TIMEOUT
+      }
+    );
+    
+    // If we get a base64 image in the response, save it
+    if (response.data.images && response.data.images.length > 0) {
+      const base64Data = response.data.images[0].replace(/^data:image\/\w+;base64,/, '');
+      fs.writeFileSync(outputPath, Buffer.from(base64Data, 'base64'));
+      return [outputPath];
+    }
+    
+    // Check if the model returned image URLs
+    if (response.data.response) {
+      const urls = response.data.response.match(/(https?:\/\/[^\s]+\.(jpg|jpeg|png|gif|webp))/gi);
+      if (urls && urls.length > 0) {
+        const downloadedImages = [];
+        
+        for (const url of urls) {
+          try {
+            if (isValidUrl(url)) {
+              const imgPath = await downloadAttachment(url, `image_${randomId}.png`);
+              downloadedImages.push(imgPath);
+            }
+          } catch (err) {
+            console.error(`Error downloading image from ${url}:`, err);
+          }
+        }
+        
+        if (downloadedImages.length > 0) {
+          return downloadedImages;
+        }
+      }
+    }
+    
+    throw new Error('Model does not support image generation');
+  } catch (error) {
+    console.error('Error generating image:', error);
+    throw error;
   }
 };
 
@@ -184,5 +396,21 @@ export const formatResponseForDiscord = (response: string): string => {
     return response.substring(0, MAX_DISCORD_LENGTH - 100) + 
       '\n\n*Response truncated due to Discord message size limits.*';
   }
+  return response;
+};
+
+// Prepare a Discord message with text and optional images
+export const prepareDiscordResponse = (
+  textResponse: string, 
+  imagePaths?: string[]
+): MessagePayload | MessageCreateOptions => {
+  const response: MessageCreateOptions = {
+    content: textResponse
+  };
+  
+  if (imagePaths && imagePaths.length > 0) {
+    response.files = imagePaths.map(path => new AttachmentBuilder(path));
+  }
+  
   return response;
 };
