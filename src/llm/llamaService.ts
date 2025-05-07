@@ -5,7 +5,7 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 // Ollama configuration
-const OLLAMA_URL = process.env.OLLAMA_URL || 'http://localhost:11434';
+const OLLAMA_URL = process.env.OLLAMA_URL || 'http://127.0.0.1:11434';
 const MODEL_NAME = process.env.LLM_MODEL_NAME || 'deepseek-r1-llama-8b';
 const MAX_TOKENS = parseInt(process.env.LLM_MAX_TOKENS || '2048', 10);
 const TEMPERATURE = parseFloat(process.env.LLM_TEMPERATURE || '0.7');
@@ -115,11 +115,24 @@ export const runInference = async (prompt: string): Promise<string> => {
 // Check if the LLM service is ready by making a simple status request
 export const isLLMServiceReady = async (): Promise<boolean> => {
   try {
-    const response = await axios.get(`${OLLAMA_URL}/api/tags`, { timeout: 5000 });
+    // Make sure to use IP instead of localhost to avoid IPv6 issues
+    const response = await axios.get(`${OLLAMA_URL}/api/tags`, { 
+      timeout: 5000,
+      headers: { 'Accept-Encoding': 'gzip, deflate' } 
+    });
+    
     const models = response.data.models || [];
     
     // Check if our model is available
-    return models.some((model: { name: string }) => model.name === MODEL_NAME);
+    const modelAvailable = models.some((model: { name: string }) => 
+      model.name === MODEL_NAME
+    );
+    
+    if (!modelAvailable) {
+      console.log(`Model ${MODEL_NAME} not found in Ollama models`);
+    }
+    
+    return modelAvailable;
   } catch (error) {
     console.error('Error checking Ollama service:', error);
     return false;
