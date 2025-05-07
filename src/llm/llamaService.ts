@@ -176,7 +176,7 @@ export const runInference = async (prompt: string, message?: Message): Promise<{
     console.log(`Running LLM inference with Ollama using ${MODEL_NAME} model`);
     
     // Create a concise system prompt
-    const systemPrompt = `/no think You are NOW, a Discord bot assistant that gives extremely concise answers. Be brief, direct, and use Discord markdown when appropriate.`;
+    const systemPrompt = `You are NOW, a Discord bot assistant that gives extremely concise answers. Be brief, direct, and use Discord markdown when appropriate.`;
     
     // Clean the prompt to prevent any confusion
     const cleanPrompt = fullPrompt.replace(/<@&\d+>/g, '').trim();
@@ -188,7 +188,7 @@ export const runInference = async (prompt: string, message?: Message): Promise<{
     // Prepare request body, handle image inputs if present
     const requestBody: any = {
       model: MODEL_NAME,
-      prompt: '/no think ' + cleanPrompt,
+      prompt: cleanPrompt,
       system: systemPrompt,
       stream: false,
       options: {
