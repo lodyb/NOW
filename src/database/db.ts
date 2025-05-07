@@ -31,6 +31,14 @@ interface AnswerItem {
 
 type AnswerInput = string | AnswerItem;
 
+// Define interface for prompt templates
+export interface PromptTemplate {
+  id: number;
+  name: string;
+  template: string;
+  createdAt?: string;
+}
+
 const DB_PATH = path.join(process.cwd(), 'data', 'now.sqlite');
 
 // Ensure data directory exists
@@ -87,6 +95,13 @@ export const initDatabase = (): Promise<void> => {
         username VARCHAR NOT NULL,
         correctAnswers INTEGER NOT NULL DEFAULT (0),
         gamesPlayed INTEGER NOT NULL DEFAULT (0)
+      )`);
+      
+      db.run(`CREATE TABLE IF NOT EXISTS prompt_templates (
+        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+        name VARCHAR NOT NULL UNIQUE,
+        template TEXT NOT NULL,
+        createdAt DATETIME NOT NULL DEFAULT (datetime('now'))
       )`);
 
       // Check and add missing columns if needed
@@ -536,6 +551,82 @@ export const getMediaById = async (id: number): Promise<Media | null> => {
         };
         
         resolve(result);
+      }
+    );
+  });
+};
+
+// Prompt template functions
+export const savePromptTemplate = (name: string, template: string): Promise<number> => {
+  return new Promise((resolve, reject) => {
+    const query = `
+      INSERT INTO prompt_templates (name, template)
+      VALUES (?, ?)
+      ON CONFLICT(name) DO UPDATE SET
+        template = ?
+    `;
+    
+    db.run(query, [name, template, template], function(err) {
+      if (err) {
+        reject(err);
+      } else {
+        resolve(this.lastID || 0);
+      }
+    });
+  });
+};
+
+export const getPromptTemplate = (name: string): Promise<PromptTemplate | null> => {
+  return new Promise((resolve, reject) => {
+    db.get(
+      `SELECT * FROM prompt_templates WHERE name = ?`,
+      [name],
+      (err, row: PromptTemplate | undefined) => {
+        if (err) {
+          reject(err);
+          return;
+        }
+        
+        if (!row) {
+          resolve(null);
+          return;
+        }
+        
+        resolve(row);
+      }
+    );
+  });
+};
+
+export const getAllPromptTemplates = (): Promise<PromptTemplate[]> => {
+  return new Promise((resolve, reject) => {
+    db.all(
+      `SELECT * FROM prompt_templates ORDER BY name ASC`,
+      [],
+      (err, rows: PromptTemplate[]) => {
+        if (err) {
+          reject(err);
+          return;
+        }
+        
+        resolve(rows || []);
+      }
+    );
+  });
+};
+
+export const deletePromptTemplate = (name: string): Promise<boolean> => {
+  return new Promise((resolve, reject) => {
+    db.run(
+      `DELETE FROM prompt_templates WHERE name = ?`,
+      [name],
+      function(err) {
+        if (err) {
+          reject(err);
+          return;
+        }
+        
+        resolve(this.changes > 0);
       }
     );
   });

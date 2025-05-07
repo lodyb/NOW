@@ -1,6 +1,7 @@
 import { Message, TextChannel, MessagePayload, MessageCreateOptions, AttachmentBuilder } from 'discord.js';
 import { runInference, formatResponseForDiscord, isLLMServiceReady, prepareDiscordResponse } from './llamaService';
 import { safeReply } from '../bot/utils/helpers';
+import { getPromptTemplate, savePromptTemplate, getAllPromptTemplates, deletePromptTemplate } from '../database/db';
 import fs from 'fs';
 import path from 'path';
 
@@ -21,6 +22,93 @@ const extractQuery = (message: Message): string => {
   });
   
   return content;
+};
+
+// Check for prompt template commands
+const processPromptTemplateCommand = async (content: string): Promise<{ isCommand: boolean; processedPrompt?: string; }> => {
+  // Command format examples:
+  // {save:templateName} Template content goes here
+  // {list}
+  // {delete:templateName}
+  // {templateName} User message to fill in the template
+
+  // Check for save template command
+  const saveMatch = content.match(/^\{save:([\w-]+)\}([\s\S]+)$/);
+  if (saveMatch) {
+    const templateName = saveMatch[1].trim();
+    const templateContent = saveMatch[2].trim();
+    
+    if (templateContent) {
+      await savePromptTemplate(templateName, templateContent);
+      return { 
+        isCommand: true,
+        processedPrompt: `Prompt template "${templateName}" has been saved.` 
+      };
+    }
+    return { 
+      isCommand: true,
+      processedPrompt: `Error: Template content cannot be empty.` 
+    };
+  }
+  
+  // Check for list templates command
+  if (content.trim() === '{list}') {
+    const templates = await getAllPromptTemplates();
+    if (templates.length === 0) {
+      return { 
+        isCommand: true,
+        processedPrompt: 'No prompt templates found.' 
+      };
+    }
+    
+    const templateList = templates
+      .map(t => `• **${t.name}**: ${t.template.substring(0, 50)}${t.template.length > 50 ? '...' : ''}`)
+      .join('\n');
+    
+    return { 
+      isCommand: true,
+      processedPrompt: `**Available Prompt Templates:**\n${templateList}` 
+    };
+  }
+  
+  // Check for delete template command
+  const deleteMatch = content.match(/^\{delete:([\w-]+)\}$/);
+  if (deleteMatch) {
+    const templateName = deleteMatch[1].trim();
+    const deleted = await deletePromptTemplate(templateName);
+    
+    return { 
+      isCommand: true,
+      processedPrompt: deleted 
+        ? `Prompt template "${templateName}" has been deleted.`
+        : `Template "${templateName}" not found.` 
+    };
+  }
+  
+  // Check for template usage
+  const useTemplateMatch = content.match(/^\{([\w-]+)\}([\s\S]*)$/);
+  if (useTemplateMatch) {
+    const templateName = useTemplateMatch[1].trim();
+    const userMessage = useTemplateMatch[2].trim();
+    
+    const template = await getPromptTemplate(templateName);
+    if (!template) {
+      return { 
+        isCommand: true,
+        processedPrompt: `Template "${templateName}" not found. Use {list} to see available templates.` 
+      };
+    }
+    
+    // Combine template with user message
+    const combinedPrompt = `${template.template}\n\n${userMessage}`.trim();
+    return { 
+      isCommand: true,
+      processedPrompt: combinedPrompt 
+    };
+  }
+  
+  // Not a template command
+  return { isCommand: false };
 };
 
 // Process an @NOW mention message
@@ -62,6 +150,21 @@ export const handleMention = async (message: Message, contextPrompt?: string): P
     }
     
     console.log(`Processing LLM query: ${query}`);
+    
+    // Check for prompt template commands
+    const templateResult = await processPromptTemplateCommand(query);
+    if (templateResult.isCommand) {
+      if (isInAIChannel) {
+        await safeReply(message, templateResult.processedPrompt || 'Command processed.');
+      } else {
+        // Create content with attribution for template commands
+        let redirectContent = `<@${message.author.id}> used a template command in <#${message.channelId}>:\n\n`;
+        redirectContent += templateResult.processedPrompt || 'Command processed.';
+        await aiChannel.send(redirectContent);
+        await message.react('🐸');
+      }
+      return;
+    }
     
     // Prepare a clean prompt without chat markers
     const prompt = query.trim();
