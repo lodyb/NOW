@@ -180,7 +180,11 @@ const processAttachments = async (message: Message): Promise<{filePaths: string[
 };
 
 // Run model inference using Ollama API
-export const runInference = async (prompt: string, message?: Message): Promise<{text: string, images?: string[]}> => {
+export const runInference = async (
+  prompt: string, 
+  message?: Message, 
+  customSystemPrompt?: string
+): Promise<{text: string, images?: string[]}> => {
   // Process any attachments if a message was provided
   let filePaths: string[] = [];
   let attachmentPrompt = '';
@@ -205,8 +209,9 @@ export const runInference = async (prompt: string, message?: Message): Promise<{
   try {
     console.log(`Running LLM inference with Ollama using ${MODEL_NAME} model`);
     
-    // Create a concise system prompt
-    const systemPrompt = `You are NOW, a Discord bot assistant that gives extremely concise answers. Be brief, direct, and use Discord markdown when appropriate.`;
+    // Use custom system prompt if provided, otherwise use default
+    const systemPrompt = customSystemPrompt || 
+      `You are NOW, a Discord bot assistant that gives extremely concise answers. Be brief, direct, and use Discord markdown when appropriate.`;
     
     // Clean the prompt to prevent any confusion
     const cleanPrompt = fullPrompt.replace(/<@&\d+>/g, '').trim();

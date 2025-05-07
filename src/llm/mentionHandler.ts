@@ -25,7 +25,7 @@ const extractQuery = (message: Message): string => {
 };
 
 // Check for prompt template commands
-const processPromptTemplateCommand = async (content: string): Promise<{ isCommand: boolean; processedPrompt?: string; }> => {
+const processPromptTemplateCommand = async (content: string): Promise<{ isCommand: boolean; processedPrompt?: string; systemPrompt?: string; }> => {
   // Command format examples:
   // {save:templateName} Template content goes here
   // {list}
@@ -99,11 +99,12 @@ const processPromptTemplateCommand = async (content: string): Promise<{ isComman
       };
     }
     
-    // Combine template with user message
-    const combinedPrompt = `${template.template}\n\n${userMessage}`.trim();
-    return { 
+    // The template becomes the system prompt for the model,
+    // and we use the user's message as the actual query
+    return {
       isCommand: true,
-      processedPrompt: combinedPrompt 
+      processedPrompt: userMessage || "Tell me about this world.",
+      systemPrompt: template.template
     };
   }
   
@@ -154,16 +155,69 @@ export const handleMention = async (message: Message, contextPrompt?: string): P
     // Check for prompt template commands
     const templateResult = await processPromptTemplateCommand(query);
     if (templateResult.isCommand) {
-      if (isInAIChannel) {
-        await safeReply(message, templateResult.processedPrompt || 'Command processed.');
+      if (templateResult.systemPrompt) {
+        // This is a template usage, not a management command
+        console.log('Using template as system prompt');
+        
+        // Run inference with the template as system prompt
+        const response = await runInference(templateResult.processedPrompt || "", message, templateResult.systemPrompt);
+        
+        // Format text response for Discord
+        const formattedText = formatResponseForDiscord(response.text);
+        
+        // Prepare full response with any images
+        const discordResponse = prepareDiscordResponse(formattedText, response.images);
+        
+        // Send the response to the appropriate channel
+        if (isInAIChannel) {
+          // Reply directly in the AI channel
+          await safeReply(message, discordResponse);
+          
+          // Clean up any images after sending
+          if (response.images) {
+            cleanupTempImages(response.images);
+          }
+        } else {
+          // Create content with attribution
+          let redirectContent = `<@${message.author.id}> used a template in <#${message.channelId}>:\n`;
+          
+          // Include original query text if provided
+          redirectContent += `> Using template "${prompt.match(/^\{([\w-]+)\}/)?.[1] || "unknown"}" with: ${templateResult.processedPrompt}\n\n`;
+          
+          // Add the response text
+          redirectContent += formattedText;
+          
+          // Create a new MessageCreateOptions with the updated content
+          const redirectOptions: MessageCreateOptions = {
+            content: redirectContent,
+            files: discordResponse.files || []
+          };
+          
+          // Send to AI channel with context about the original message
+          await aiChannel.send(redirectOptions);
+          
+          // Clean up any images after sending
+          if (response.images) {
+            cleanupTempImages(response.images);
+          }
+          
+          // Add a frog reaction to the original message
+          await message.react('🐸');
+        }
+        return;
       } else {
-        // Create content with attribution for template commands
-        let redirectContent = `<@${message.author.id}> used a template command in <#${message.channelId}>:\n\n`;
-        redirectContent += templateResult.processedPrompt || 'Command processed.';
-        await aiChannel.send(redirectContent);
-        await message.react('🐸');
+        // This is a template management command, not template usage
+        if (isInAIChannel) {
+          await safeReply(message, templateResult.processedPrompt || 'Command processed.');
+        } else {
+          // Create content with attribution for template commands
+          let redirectContent = `<@${message.author.id}> used a template command in <#${message.channelId}>:\n\n`;
+          redirectContent += templateResult.processedPrompt || 'Command processed.';
+          await aiChannel.send(redirectContent);
+          await message.react('🐸');
+        }
+        return;
       }
-      return;
     }
     
     // Prepare a clean prompt without chat markers
