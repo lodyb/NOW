@@ -60,12 +60,17 @@ const updateCache = (prompt: string, response: string): void => {
 
 /**
  * Sanitize LLM response to remove potentially dangerous mentions
+ * and strip out any thinking blocks
  */
 const sanitizeResponse = (text: string): string => {
+  // Remove any <think>...</think> blocks
+  const withoutThinking = text.replace(/<think>[\s\S]*?<\/think>/g, '');
+  
   // Replace @everyone and @here with safe versions that don't ping
-  return text
+  return withoutThinking
     .replace(/@everyone/gi, '`@everyone`')
-    .replace(/@here/gi, '`@here`');
+    .replace(/@here/gi, '`@here`')
+    .trim();
 };
 
 // Run model inference using Ollama API
