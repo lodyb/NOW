@@ -31,9 +31,10 @@ const helpContent: HelpContent = {
       { name: 'NOW waveform [search]', description: 'Show audio waveform visualization' },
       { name: 'NOW spectrogram [search]', description: 'Show audio spectrogram visualization' },
       { name: 'NOW mahjong [tiles]', description: 'Analyze a Riichi Mahjong hand' },
+      { name: '@NOW [message]', description: 'Talk to the AI assistant' },
       { name: 'NOW help [topic]', description: 'Show help for a specific topic' }
     ],
-    footer: 'Type `NOW help [topic]` for more details on a topic.\nAvailable topics: filters, quiz, play, mahjong'
+    footer: 'Type `NOW help [topic]` for more details on a topic.\nAvailable topics: filters, quiz, play, mahjong, ai'
   },
   
   filters: {
@@ -101,6 +102,18 @@ const helpContent: HelpContent = {
       { name: 'NOW mahjong 1m2m3mro4p5p6peo7s8s9sno', description: 'Analyze a hand with open (called) tiles' }
     ],
     footer: 'Tile notation:\n• Number tiles: 1-9 followed by m (man), p (pin), or s (sou)\n• Honor tiles: r (red dragon), g (green dragon), w (white dragon)\n• Wind tiles: e (east), s (south), x (west), n (north)\n• Open tiles: Add "o" after a tile (e.g., 1so = 1 sou open)\n\nExample: 1s2s3s = 1,2,3 of sou; rr = pair of red dragons'
+  },
+  
+  ai: {
+    title: '🤖 AI Assistant',
+    description: 'Interact with NOW\'s AI assistant:',
+    commands: [
+      { name: '@NOW [your message]', description: 'Talk to the AI assistant by mentioning the bot' },
+      { name: '@NOW help me find a specific song', description: 'Ask about media in the collection' },
+      { name: '@NOW explain how the quiz works', description: 'Get help with bot features' },
+      { name: '@NOW suggest some filter combinations', description: 'Get creative suggestions' }
+    ],
+    footer: 'The AI assistant uses a language model to provide helpful responses. Just mention the bot with @NOW and ask your question!'
   }
 };
 
@@ -113,7 +126,7 @@ export const handleHelpCommand = async (message: Message, helpTopic?: string) =>
     if (!Object.prototype.hasOwnProperty.call(helpContent, topic)) {
       await safeReply(
         message, 
-        `Unknown help topic: "${topic}". Available topics: general, filters, quiz, play`
+        `Unknown help topic: "${topic}". Available topics: general, filters, quiz, play, mahjong, ai`
       );
       return;
     }

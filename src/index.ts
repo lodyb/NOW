@@ -16,6 +16,7 @@ import { handleWaveformCommand, handleSpectrogramCommand } from './bot/commands/
 import { handleHelpCommand } from './bot/commands/help';
 import { handleMahjongCommand } from './bot/commands/mahjong';
 import { handleEffectsCommand } from './bot/commands';
+import { handleMention } from './llm/mentionHandler';
 import apiRoutes from './web/api';
 import authRoutes from './web/auth-routes';
 import { setupAuth, isAuthenticated } from './web/auth';
@@ -89,6 +90,16 @@ client.once(Events.ClientReady, (readyClient) => {
 client.on(Events.MessageCreate, async (message) => {
   // Ignore bot messages
   if (message.author.bot) return;
+  
+  // Check if message is mentioning the bot
+  if (message.mentions.has(client.user!)) {
+    try {
+      await handleMention(message);
+      return; // Exit early if it's a mention
+    } catch (error) {
+      console.error('Error handling mention:', error);
+    }
+  }
   
   // Parse the command - returns null if not a NOW command
   const commandArgs = parseCommand(message);
