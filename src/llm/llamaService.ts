@@ -78,6 +78,17 @@ const detectImageGenerationCommand = (text: string): string | null => {
   return null;
 };
 
+// Detect base64 image data in the response
+const detectBase64Image = (text: string): string | null => {
+  // Look for common base64 image patterns
+  const base64Pattern = /\b([A-Za-z0-9+/]{40,}={0,2})\b/;
+  const match = text.match(base64Pattern);
+  if (match && match[1] && match[1].length > 1000) {
+    return match[1];
+  }
+  return null;
+};
+
 /**
  * Sanitize LLM response to remove potentially dangerous mentions
  * and strip out any thinking blocks
@@ -258,9 +269,10 @@ export const runInference = async (prompt: string, message?: Message): Promise<{
     // Sanitize the response to prevent @everyone and @here mentions
     result = sanitizeResponse(result);
     
+    let generatedImages: string[] | undefined;
+    
     // Check if the response contains an image generation command
     const imagePrompt = detectImageGenerationCommand(result);
-    let generatedImages: string[] | undefined;
     
     if (imagePrompt) {
       // Remove the image generation command from the text response
@@ -272,6 +284,37 @@ export const runInference = async (prompt: string, message?: Message): Promise<{
       } catch (error) {
         console.error('Error generating image:', error);
         result += '\n\n*Sorry, I was unable to generate the requested image.*';
+      }
+    } else {
+      // Check if response contains base64 image data
+      const base64Data = detectBase64Image(result);
+      if (base64Data) {
+        try {
+          // Create a proper image file from the base64 data
+          const randomId = crypto.randomBytes(4).toString('hex');
+          const outputPath = path.join(TEMP_DIR, `detected_${randomId}.png`);
+          
+          let cleanBase64 = base64Data;
+          // Try to clean up the base64 if it has issues
+          cleanBase64 = cleanBase64.replace(/\s/g, '');
+          
+          // Ensure the base64 string has valid padding
+          while (cleanBase64.length % 4 !== 0) {
+            cleanBase64 += '=';
+          }
+          
+          try {
+            fs.writeFileSync(outputPath, Buffer.from(cleanBase64, 'base64'));
+            generatedImages = [outputPath];
+            
+            // Remove the raw base64 from the text response
+            result = result.replace(base64Data, '*Image generated*');
+          } catch (e) {
+            console.error('Error saving base64 as image:', e);
+          }
+        } catch (error) {
+          console.error('Error processing detected base64 image:', error);
+        }
       }
     }
     
