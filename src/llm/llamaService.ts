@@ -86,8 +86,14 @@ export const runInference = async (prompt: string): Promise<string> => {
         stream: false,
         options: {
           temperature: TEMPERATURE,
-          num_predict: MAX_TOKENS
-        }
+          num_predict: MAX_TOKENS,
+          // Force a fresh context for each request
+          num_ctx: 0,      // Reset context window
+          seed: Date.now() // Use unique seed each time
+        },
+        // Use a unique conversation ID to prevent state persistence
+        context: [],       // Empty context array
+        format: "json"     // Ensures clean response formatting
       },
       {
         signal: controller.signal,
