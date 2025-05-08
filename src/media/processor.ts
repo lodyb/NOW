@@ -1331,6 +1331,26 @@ const applyFilters = (command: ffmpeg.FfmpegCommand, filters: MediaFilter, isVid
     if (filters.__raw_complex_filter) {
       const rawFilter = filters.__raw_complex_filter;
       
+      // Validate the raw filter before attempting to use it
+      // Check against a list of known valid filters
+      const validRawFilters = new Set([
+        // Common audio filters
+        'volume', 'bass', 'treble', 'equalizer', 'aecho', 'flanger', 'chorus', 'vibrato', 'tremolo', 
+        'compand', 'dynaudnorm', 'loudnorm', 'silenceremove', 'areverse', 'atempo', 'asetrate',
+        // Common video filters
+        'scale', 'crop', 'rotate', 'transpose', 'hflip', 'vflip', 'blur', 'gblur', 'unsharp', 
+        'noise', 'eq', 'hue', 'saturation', 'colorbalance', 'overlay', 'fade', 'reverse',
+        // Complex filters
+        'split', 'asplit', 'amerge', 'amix', 'concat', 'hstack', 'vstack'
+      ]);
+      
+      // Check if the filter name (before any parameters) is in our valid list
+      const filterName = rawFilter.split('=')[0].trim();
+      if (!validRawFilters.has(filterName) && !rawFilter.includes(',')) {
+        // Give a helpful error for unknown filters
+        throw new Error(`Unknown filter "${filterName}". Try using a different filter name or check your syntax.`);
+      }
+      
       // Check if this is just a single effect that should be handled by our custom effects
       if (!rawFilter.includes(',')) {
         const effectName = rawFilter.trim();

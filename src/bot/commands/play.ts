@@ -125,15 +125,34 @@ export const handlePlayCommand = async (
         };
         
         logFFmpegCommand(`Processing with options ${JSON.stringify(options)} for Discord message`);
-        filePath = await processMedia(filePath, outputFilename, options);
-        
-        // Update status message when processing is complete
-        await statusMessage.edit(`Processing complete! Uploading... 📤`);
-      } catch (error) {
-        console.error('Error processing media:', error);
-        await statusMessage.edit(`Error applying filters: ${(error as Error).message} ❌`);
-        return;
-      }
+          try {
+            filePath = await processMedia(filePath, outputFilename, options);
+            
+            // Update status message when processing is complete
+            await statusMessage.edit(`Processing complete! Uploading... 📤`);
+          } catch (error) {
+            console.error('Error processing media:', error);
+            
+            // Handle different types of errors with user-friendly messages
+            let errorMessage = `Error applying filters: ${(error as Error).message} ❌`;
+            
+            // Special handling for unknown filter errors
+            if ((error as Error).message.includes('Unknown filter') || 
+                (error as Error).message.includes('Invalid argument')) {
+              errorMessage = `Invalid filter: "${filterString}" isn't a supported filter. Try a valid filter like volume, bass, treble, reverse, etc. ❌`;
+            } 
+            // Special handling for timeout errors
+            else if ((error as Error).message.includes('timeout')) {
+              errorMessage = `Processing timeout: Your filter is too complex or resource-intensive. Try a simpler filter. ❌`;
+            }
+            
+            await statusMessage.edit(errorMessage);
+            return;
+          }
+        } catch (error) {
+          console.error('Error processing media:', error);
+          await statusMessage.edit(`Error applying filters: ${(error as Error).message} ❌`);
+          return;
     }
     
     if (!fs.existsSync(filePath)) {
