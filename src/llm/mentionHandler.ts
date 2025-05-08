@@ -170,6 +170,9 @@ export const handleMention = async (message: Message, contextPrompt?: string, is
     // but if isContextOnly is true, extract just the user message for display
     const query = contextPrompt && !isContextOnly ? contextPrompt : extractQuery(message);
     
+    // For context-only mode, we should send the context to the model but not include it in the response
+    const modelPrompt = isContextOnly && contextPrompt ? contextPrompt : query;
+    
     // Don't process empty queries
     if (!query.trim() && message.attachments.size === 0) {
       const response = 'How can I help you? (Please include a question or prompt after mentioning me)';
@@ -274,7 +277,7 @@ export const handleMention = async (message: Message, contextPrompt?: string, is
     }
     
     // Run inference - pass the message to handle attachments
-    const response = await runInference(promptWithDefault, message);
+    const response = await runInference(modelPrompt, message);
     
     // Format text response for Discord
     const formattedText = formatResponseForDiscord(response.text);
