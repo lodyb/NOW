@@ -31,14 +31,7 @@ const CACHE_TTL = 1000 * 60 * 30; // 30 minutes
 
 // Check cache for existing response
 const checkCache = (prompt: string): string | null => {
-  const cacheKey = prompt.trim();
-  const cached = queryCache.get(cacheKey);
-  
-  if (cached && (Date.now() - cached.timestamp) < CACHE_TTL) {
-    console.log('Using cached LLM response');
-    return cached.response;
-  }
-  
+  // Disable caching entirely
   return null;
 };
 
