@@ -13,7 +13,7 @@ const extractQuery = (message: Message): string => {
   // Remove the mention and extract the actual query
   let content = message.content.trim();
   
-  // Remove all mentions of the bot
+  // Remove all mentions of the bot (user mentions)
   message.mentions.users.forEach(user => {
     if (user.id === message.client.user?.id) {
       const mentionRegex = new RegExp(`<@!?${user.id}>`, 'g');
@@ -21,6 +21,10 @@ const extractQuery = (message: Message): string => {
     }
   });
   
+  // Also remove role mentions completely
+  content = content.replace(/<@&\d+>/g, '').trim();
+  
+  console.log(`Extracted query: "${content}"`);
   return content;
 };
 
