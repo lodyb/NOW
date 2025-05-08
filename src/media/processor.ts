@@ -925,6 +925,19 @@ export const parseFilterString = (filterString: string): MediaFilter => {
   
   // Check if this is a raw complex filter string (no key=value format)
   if (!content.includes('=') && !content.includes('+')) {
+    // Before assuming it's a raw filter, check if it's a known custom effect
+    const effectName = content.trim().toLowerCase(); // Convert to lowercase for case-insensitive comparison
+    
+    // Look for known audio or video effects
+    const audioEffect = effectName in audioEffects;
+    const videoEffect = effectName in videoEffects;
+    
+    if (audioEffect || videoEffect) {
+      // It's a known custom effect, treat it as a stacked filter
+      filters.__stacked_filters = [effectName];
+      return filters;
+    }
+    
     // This appears to be a raw complex filter string without any key=value pairs
     filters.__raw_complex_filter = content;
     return filters;
