@@ -559,6 +559,7 @@ export const getMediaById = async (id: number): Promise<Media | null> => {
 // Prompt template functions
 export const savePromptTemplate = (name: string, template: string): Promise<number> => {
   return new Promise((resolve, reject) => {
+    console.log(`Saving template "${name}" with content length: ${template.length}`);
     const query = `
       INSERT INTO prompt_templates (name, template)
       VALUES (?, ?)
@@ -568,8 +569,10 @@ export const savePromptTemplate = (name: string, template: string): Promise<numb
     
     db.run(query, [name, template, template], function(err) {
       if (err) {
+        console.error(`Error saving prompt template "${name}":`, err);
         reject(err);
       } else {
+        console.log(`Successfully saved prompt template "${name}" with ID: ${this.lastID || 'updated'}`);
         resolve(this.lastID || 0);
       }
     });
@@ -578,20 +581,24 @@ export const savePromptTemplate = (name: string, template: string): Promise<numb
 
 export const getPromptTemplate = (name: string): Promise<PromptTemplate | null> => {
   return new Promise((resolve, reject) => {
+    console.log(`Looking up template with name: "${name}"`);
     db.get(
       `SELECT * FROM prompt_templates WHERE name = ?`,
       [name],
       (err, row: PromptTemplate | undefined) => {
         if (err) {
+          console.error(`Error retrieving template "${name}":`, err);
           reject(err);
           return;
         }
         
         if (!row) {
+          console.log(`Template "${name}" not found`);
           resolve(null);
           return;
         }
         
+        console.log(`Found template "${name}" with id ${row.id}`);
         resolve(row);
       }
     );
@@ -600,15 +607,18 @@ export const getPromptTemplate = (name: string): Promise<PromptTemplate | null> 
 
 export const getAllPromptTemplates = (): Promise<PromptTemplate[]> => {
   return new Promise((resolve, reject) => {
+    console.log(`Retrieving all prompt templates`);
     db.all(
       `SELECT * FROM prompt_templates ORDER BY name ASC`,
       [],
       (err, rows: PromptTemplate[]) => {
         if (err) {
+          console.error(`Error retrieving all templates:`, err);
           reject(err);
           return;
         }
         
+        console.log(`Found ${rows?.length || 0} templates`);
         resolve(rows || []);
       }
     );
@@ -617,15 +627,18 @@ export const getAllPromptTemplates = (): Promise<PromptTemplate[]> => {
 
 export const deletePromptTemplate = (name: string): Promise<boolean> => {
   return new Promise((resolve, reject) => {
+    console.log(`Attempting to delete template "${name}"`);
     db.run(
       `DELETE FROM prompt_templates WHERE name = ?`,
       [name],
       function(err) {
         if (err) {
+          console.error(`Error deleting template "${name}":`, err);
           reject(err);
           return;
         }
         
+        console.log(`Template "${name}" deletion result: ${this.changes > 0 ? 'deleted' : 'not found'}`);
         resolve(this.changes > 0);
       }
     );

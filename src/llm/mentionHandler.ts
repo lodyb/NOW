@@ -39,11 +39,20 @@ const processPromptTemplateCommand = async (content: string): Promise<{ isComman
     const templateContent = saveMatch[2].trim();
     
     if (templateContent) {
-      await savePromptTemplate(templateName, templateContent);
-      return { 
-        isCommand: true,
-        processedPrompt: `Prompt template "${templateName}" has been saved.` 
-      };
+      try {
+        await savePromptTemplate(templateName, templateContent);
+        console.log(`Template "${templateName}" saved successfully`);
+        return { 
+          isCommand: true,
+          processedPrompt: `Prompt template "${templateName}" has been saved.` 
+        };
+      } catch (error) {
+        console.error(`Error saving template "${templateName}":`, error);
+        return { 
+          isCommand: true,
+          processedPrompt: `Error saving template "${templateName}": ${(error as Error).message}` 
+        };
+      }
     }
     return { 
       isCommand: true,
@@ -53,22 +62,32 @@ const processPromptTemplateCommand = async (content: string): Promise<{ isComman
   
   // Check for list templates command
   if (content.trim() === '{list}') {
-    const templates = await getAllPromptTemplates();
-    if (templates.length === 0) {
+    try {
+      const templates = await getAllPromptTemplates();
+      console.log(`Retrieved ${templates.length} templates`);
+      
+      if (templates.length === 0) {
+        return { 
+          isCommand: true,
+          processedPrompt: 'No prompt templates found.' 
+        };
+      }
+      
+      const templateList = templates
+        .map(t => `• **${t.name}**: ${t.template.substring(0, 50)}${t.template.length > 50 ? '...' : ''}`)
+        .join('\n');
+      
       return { 
         isCommand: true,
-        processedPrompt: 'No prompt templates found.' 
+        processedPrompt: `**Available Prompt Templates:**\n${templateList}` 
+      };
+    } catch (error) {
+      console.error('Error retrieving templates:', error);
+      return {
+        isCommand: true,
+        processedPrompt: `Error listing templates: ${(error as Error).message}`
       };
     }
-    
-    const templateList = templates
-      .map(t => `• **${t.name}**: ${t.template.substring(0, 50)}${t.template.length > 50 ? '...' : ''}`)
-      .join('\n');
-    
-    return { 
-      isCommand: true,
-      processedPrompt: `**Available Prompt Templates:**\n${templateList}` 
-    };
   }
   
   // Check for delete template command
@@ -91,21 +110,32 @@ const processPromptTemplateCommand = async (content: string): Promise<{ isComman
     const templateName = useTemplateMatch[1].trim();
     const userMessage = useTemplateMatch[2].trim();
     
-    const template = await getPromptTemplate(templateName);
-    if (!template) {
-      return { 
+    try {
+      console.log(`Looking for template: "${templateName}"`);
+      const template = await getPromptTemplate(templateName);
+      console.log(`Template lookup result:`, template ? `Found template "${templateName}"` : `Template "${templateName}" not found`);
+      
+      if (!template) {
+        return { 
+          isCommand: true,
+          processedPrompt: `Template "${templateName}" not found. Use {list} to see available templates.` 
+        };
+      }
+      
+      // The template becomes the system prompt for the model,
+      // and we use the user's message as the actual query
+      return {
         isCommand: true,
-        processedPrompt: `Template "${templateName}" not found. Use {list} to see available templates.` 
+        processedPrompt: userMessage || "Tell me about this world.",
+        systemPrompt: template.template
+      };
+    } catch (error) {
+      console.error(`Error retrieving template "${templateName}":`, error);
+      return {
+        isCommand: true,
+        processedPrompt: `Error retrieving template "${templateName}": ${(error as Error).message}`
       };
     }
-    
-    // The template becomes the system prompt for the model,
-    // and we use the user's message as the actual query
-    return {
-      isCommand: true,
-      processedPrompt: userMessage || "Tell me about this world.",
-      systemPrompt: template.template
-    };
   }
   
   // Not a template command
