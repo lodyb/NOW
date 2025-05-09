@@ -1341,17 +1341,25 @@ const applyFilters = (command: ffmpeg.FfmpegCommand, filters: MediaFilter, isVid
           throw new Error(`Overlay file not found: ${overlayPath}`);
         }
         
+        // Use a unique output label for overlay to avoid conflicts
+        const outputVideoLabel = 'v_overlay';
+        const outputAudioLabel = 'a_out';
+        
         // Apply overlay with FFmpeg input and complex filter
         command.input(overlayPath);
-        command.complexFilter('[0:v][1:v]overlay=0:0[v]', ['v']);
-        command.outputOption('-map [v]');
-        command.outputOption('-map 0:a');
+        command.complexFilter(
+          `[0:v][1:v]overlay=0:0[${outputVideoLabel}];[0:a]acopy[${outputAudioLabel}]`,
+          [outputVideoLabel, outputAudioLabel]
+        );
+        command.outputOptions(`-map [${outputVideoLabel}]`);
+        command.outputOptions(`-map [${outputAudioLabel}]`);
         
         logFFmpegCommand(`Applied overlay filter with file: ${path.basename(overlayPath)}`);
         
         // Remove processed filters
         delete filters.overlay;
         delete filters.__raw_complex_filter;
+        delete filters.__overlay_path;
         return; // Exit after processing overlay
       } else {
         throw new Error('Overlay file path not provided. Please attach an image to your message.');
