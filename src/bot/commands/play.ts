@@ -1,6 +1,6 @@
 import { Message, AttachmentBuilder } from 'discord.js';
 import { findMediaBySearch, getRandomMedia } from '../../database/db';
-import { processMedia, parseFilterString, parseClipOptions, ProcessOptions, containsVideoFilters, isVideoFile } from '../../media/processor';
+import { processMedia, parseFilterString, parseClipOptions, ProcessOptions, containsVideoFilters, isVideoFile, getMediaDuration } from '../../media/processor';
 import { safeReply } from '../utils/helpers';
 import { logFFmpegCommand } from '../../utils/logger';
 import path from 'path';
@@ -24,6 +24,10 @@ interface MultiMediaPlaybackHandler {
   (message: Message, searchTerm?: string, multi?: number, filterString?: string, clipOptions?: { duration?: string; start?: string }): Promise<void>;
 }
 
+interface JumblePlaybackHandler {
+  (message: Message, searchTerm?: string, filterString?: string, clipOptions?: { duration?: string; start?: string }): Promise<void>;
+}
+
 // Function declarations
 export const handlePlayCommand = async (
   message: Message, 
@@ -33,6 +37,14 @@ export const handlePlayCommand = async (
   multi?: number
 ) => {
   try {
+    // Special case for jumble command
+    if (filterString && filterString.startsWith('{') && filterString.endsWith('}') && 
+        filterString.toLowerCase().includes('jumble')) {
+      // Trigger jumble playback
+      await handleJumblePlayback(message, searchTerm, filterString.replace(/(jumble|{|})/gi, ''), clipOptions);
+      return;
+    }
+    
     // Special case for stereo split command - when using 'stereo' keyword explicitly
     if (filterString && filterString.startsWith('{') && filterString.endsWith('}') && 
         (filterString.toLowerCase().includes('stereo') || filterString.toLowerCase() === '{split}')) {
@@ -1639,4 +1651,233 @@ const createAudioPlaceholderVideo = async (
         }
       });
   });
+};
+
+/**
+ * Handle jumble playback (video from one source, audio from another)
+ */
+export const handleJumblePlayback = async (
+  message: Message,
+  searchTerm?: string,
+  filterString?: string,
+  clipOptions?: { duration?: string; start?: string }
+) => {
+  try {
+    const statusMessage = await message.reply(`Processing jumble request... ⏳`);
+    
+    // We need at least one video file, so first get all available video files
+    const videoResults = await findMediaBySearch(searchTerm || '', true, 5);
+    
+    if (videoResults.length === 0) {
+      await statusMessage.edit(`No video files found ${searchTerm ? `for "${searchTerm}"` : 'in the database'}`);
+      return;
+    }
+    
+    // Get a random video from the results
+    const videoIndex = Math.floor(Math.random() * videoResults.length);
+    const videoMedia = videoResults[videoIndex];
+    
+    // Now get a random media file for audio (could be audio or video)
+    const audioResults = await getRandomMedia(5);
+    
+    if (audioResults.length === 0) {
+      await statusMessage.edit('No audio sources found in the database');
+      return;
+    }
+    
+    // Select a random audio source that's different from the video
+    const availableAudioSources = audioResults.filter(m => m.id !== videoMedia.id);
+    const audioMedia = availableAudioSources.length > 0 
+      ? availableAudioSources[Math.floor(Math.random() * availableAudioSources.length)]
+      : audioResults[Math.floor(Math.random() * audioResults.length)];
+    
+    // Update status message
+    await statusMessage.edit(`Found video and audio sources, preparing to jumble... ⏳`);
+    
+    // Get the file paths
+    let videoPath, audioPath;
+    
+    if (videoMedia.normalizedPath) {
+      const filename = path.basename(videoMedia.normalizedPath);
+      const normalizedFilename = filename.startsWith('norm_') ? filename : `norm_${filename}`;
+      videoPath = path.join(process.cwd(), 'normalized', normalizedFilename);
+    } else {
+      videoPath = videoMedia.filePath;
+    }
+    
+    if (audioMedia.normalizedPath) {
+      const filename = path.basename(audioMedia.normalizedPath);
+      const normalizedFilename = filename.startsWith('norm_') ? filename : `norm_${filename}`;
+      audioPath = path.join(process.cwd(), 'normalized', normalizedFilename);
+    } else {
+      audioPath = audioMedia.filePath;
+    }
+    
+    // Verify both files exist
+    if (!fs.existsSync(videoPath)) {
+      await statusMessage.edit(`Error: Video file not found. Path: ${videoPath}`);
+      return;
+    }
+    
+    if (!fs.existsSync(audioPath)) {
+      await statusMessage.edit(`Error: Audio file not found. Path: ${audioPath}`);
+      return;
+    }
+    
+    // Get durations of both media files
+    await statusMessage.edit(`Analyzing media durations... ⏳`);
+    
+    const videoDuration = await getMediaDuration(videoPath);
+    const audioDuration = await getMediaDuration(audioPath);
+    
+    if (videoDuration <= 0 || audioDuration <= 0) {
+      await statusMessage.edit('Error: Could not determine media durations');
+      return;
+    }
+    
+    // Calculate clip duration (30 seconds or shortest media)
+    const maxClipDuration = Math.min(30, videoDuration, audioDuration);
+    
+    // Generate random start positions
+    const videoStartTime = videoDuration > maxClipDuration 
+      ? Math.floor(Math.random() * (videoDuration - maxClipDuration)) 
+      : 0;
+    
+    const audioStartTime = audioDuration > maxClipDuration 
+      ? Math.floor(Math.random() * (audioDuration - maxClipDuration)) 
+      : 0;
+    
+    await statusMessage.edit(`Creating jumbled clips... ⏳`);
+    
+    // Create temp files for the clips
+    const TEMP_DIR = path.join(process.cwd(), 'temp');
+    const randomId = crypto.randomBytes(4).toString('hex');
+    
+    const videoClipPath = path.join(TEMP_DIR, `video_${randomId}.mp4`);
+    const audioClipPath = path.join(TEMP_DIR, `audio_${randomId}.aac`);
+    const outputPath = path.join(TEMP_DIR, `jumble_${randomId}.mp4`);
+    
+    try {
+      // Extract video clip (with no audio)
+      await new Promise<void>((resolve, reject) => {
+        ffmpeg(videoPath)
+          .setStartTime(videoStartTime)
+          .setDuration(maxClipDuration)
+          .outputOptions('-an') // No audio
+          .outputOptions('-c:v libx264')
+          .outputOptions('-preset fast')
+          .outputOptions('-crf 23')
+          .on('progress', (progress) => {
+            console.log(`Video clip progress: ${progress.percent}%`);
+          })
+          .on('end', () => resolve())
+          .on('error', (err) => reject(err))
+          .save(videoClipPath);
+      });
+      
+      await statusMessage.edit(`Video clip created, extracting audio... ⏳`);
+      
+      // Extract audio clip
+      await new Promise<void>((resolve, reject) => {
+        ffmpeg(audioPath)
+          .setStartTime(audioStartTime)
+          .setDuration(maxClipDuration)
+          .outputOptions('-vn') // No video
+          .outputOptions('-c:a aac')
+          .outputOptions('-b:a 192k')
+          .on('progress', (progress) => {
+            console.log(`Audio clip progress: ${progress.percent}%`);
+          })
+          .on('end', () => resolve())
+          .on('error', (err) => reject(err))
+          .save(audioClipPath);
+      });
+      
+      await statusMessage.edit(`Combining clips... ⏳`);
+      
+      // Combine video and audio clips
+      await new Promise<void>((resolve, reject) => {
+        ffmpeg(videoClipPath)
+          .input(audioClipPath)
+          .outputOptions('-c:v copy') // Copy video stream without re-encoding
+          .outputOptions('-c:a aac') // Re-encode audio to ensure compatibility
+          .outputOptions('-b:a 192k')
+          .outputOptions('-shortest') // End when shortest input ends
+          .on('progress', (progress) => {
+            console.log(`Combining progress: ${progress.percent}%`);
+          })
+          .on('end', () => resolve())
+          .on('error', (err) => reject(err))
+          .save(outputPath);
+      });
+      
+      // Apply additional filters if specified
+      let finalPath = outputPath;
+      if (filterString && filterString.trim() !== '') {
+        await statusMessage.edit(`Applying additional filters... ⏳`);
+        
+        const finalOutputFilename = `final_jumble_${randomId}.mp4`;
+        const finalOutputPath = path.join(TEMP_DIR, finalOutputFilename);
+        
+        const options: ProcessOptions = {
+          filters: parseFilterString(filterString.startsWith('{') ? filterString : `{${filterString}}`),
+          enforceDiscordLimit: true,
+          progressCallback: async (stage, progress) => {
+            try {
+              await statusMessage.edit(`${stage} (${Math.round(progress * 100)}%)... ⏳`);
+            } catch (err) {
+              console.error('Error updating status message:', err);
+            }
+          }
+        };
+        
+        finalPath = await processMedia(outputPath, finalOutputFilename, options);
+      } else {
+        // Ensure the output meets Discord's requirements
+        await statusMessage.edit(`Optimizing for Discord... ⏳`);
+        
+        const finalOutputFilename = `final_jumble_${randomId}.mp4`;
+        const finalOutputPath = path.join(TEMP_DIR, finalOutputFilename);
+        
+        const options: ProcessOptions = {
+          enforceDiscordLimit: true,
+          progressCallback: async (stage, progress) => {
+            try {
+              await statusMessage.edit(`${stage} (${Math.round(progress * 100)}%)... ⏳`);
+            } catch (err) {
+              console.error('Error updating status message:', err);
+            }
+          }
+        };
+        
+        finalPath = await processMedia(outputPath, finalOutputFilename, options);
+      }
+      
+      // Send the result
+      await statusMessage.edit(`Jumble created! Uploading... 📤`);
+      
+      const attachment = new AttachmentBuilder(finalPath);
+      await safeReply(message, { files: [attachment] });
+      
+      // Clean up temporary files
+      await statusMessage.delete().catch(err => console.error('Failed to delete status message:', err));
+      
+      try {
+        if (fs.existsSync(videoClipPath)) fs.unlinkSync(videoClipPath);
+        if (fs.existsSync(audioClipPath)) fs.unlinkSync(audioClipPath);
+        if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath);
+        if (finalPath !== outputPath && fs.existsSync(finalPath)) fs.unlinkSync(finalPath);
+      } catch (err) {
+        console.error('Error cleaning up temporary files:', err);
+      }
+      
+    } catch (error) {
+      console.error('Error during jumble creation:', error);
+      await statusMessage.edit(`Error creating jumble: ${(error as Error).message} ❌`);
+    }
+    
+  } catch (error) {
+    console.error('Error handling jumble playback:', error);
+    await safeReply(message, `An error occurred: ${(error as Error).message}`);
+  }
 };
