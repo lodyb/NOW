@@ -1351,6 +1351,8 @@ const applyFilters = (command: ffmpeg.FfmpegCommand, filters: MediaFilter, isVid
           `[0:v][1:v]overlay=0:0[${outputVideoLabel}];[0:a]acopy[${outputAudioLabel}]`,
           [outputVideoLabel, outputAudioLabel]
         );
+        
+        // Map each output only once
         command.outputOptions(`-map [${outputVideoLabel}]`);
         command.outputOptions(`-map [${outputAudioLabel}]`);
         
