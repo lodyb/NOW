@@ -9,6 +9,7 @@ import crypto from 'crypto';
 import ffmpeg from 'fluent-ffmpeg';
 import { promisify } from 'util';
 import { exec, execSync } from 'child_process';
+import fetch from 'node-fetch';
 
 // Function type declarations for forward references
 interface StereoSplitPlaybackHandler {
@@ -70,7 +71,7 @@ export const handlePlayCommand = async (
       if (filterString) {
         try {
           const parsedFilters = parseFilterString(filterString);
-          requireVideo = containsVideoFilters(parsedFilters);
+          requireVideo = containsVideoFilters(parsedFilters) || 'overlay' in parsedFilters;
           
           if (requireVideo) {
             console.log(`Video filters detected, searching for video files only`);
@@ -118,8 +119,46 @@ export const handlePlayCommand = async (
         const outputFilename = `temp_${randomId}_${path.basename(filePath)}`;
         const options: ProcessOptions = {};
         
+        // Check for overlay filter and attached files
+        let overlayPath: string | undefined;
+        if (filterString && filterString.toLowerCase().includes('overlay') && message.attachments.size > 0) {
+          await statusMessage.edit(`Downloading attachment for overlay... ⏳`);
+          
+          const attachment = message.attachments.first();
+          if (attachment) {
+            try {
+              // Download the attachment
+              const response = await fetch(attachment.url);
+              const buffer = await response.arrayBuffer();
+              
+              // Save to temp file
+              const ext = path.extname(attachment.name || '.png').toLowerCase();
+              const supportedExts = ['.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp'];
+              
+              if (!supportedExts.includes(ext)) {
+                await statusMessage.edit(`Unsupported overlay file format. Supported formats: ${supportedExts.join(', ')}`);
+                return;
+              }
+              
+              overlayPath = path.join(process.cwd(), 'temp', `overlay_${randomId}${ext}`);
+              fs.writeFileSync(overlayPath, Buffer.from(buffer));
+              
+              await statusMessage.edit(`Attachment downloaded, applying overlay... ⏳`);
+            } catch (err) {
+              console.error('Error downloading attachment:', err);
+              await statusMessage.edit(`Error downloading attachment: ${(err as Error).message}`);
+              return;
+            }
+          }
+        }
+        
         if (filterString) {
           options.filters = parseFilterString(filterString);
+          
+          // Set overlay path if we have one
+          if (overlayPath) {
+            options.filters.__overlay_path = overlayPath;
+          }
         }
         
         if (clipOptions) {
@@ -162,6 +201,15 @@ export const handlePlayCommand = async (
           
           await statusMessage.edit(errorMessage);
           return;
+        }
+        
+        // Clean up overlay file if it exists
+        if (overlayPath && fs.existsSync(overlayPath)) {
+          try {
+            fs.unlinkSync(overlayPath);
+          } catch (err) {
+            console.error('Error cleaning up overlay file:', err);
+          }
         }
       } catch (error) {
         console.error('Error processing media:', error);
@@ -469,6 +517,7 @@ export const handleMultiMediaPlayback = async (
         processedFiles.push(filePath);
       }
     }
+    
     
     if (processedFiles.length === 0) {
       await statusMessage.edit('Failed to process any media files ❌');

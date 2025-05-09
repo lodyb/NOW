@@ -30,6 +30,7 @@ export interface MediaFilter {
   [key: string]: string | number | string[] | undefined;
   __raw_complex_filter?: string; // Special property for raw complex filter strings
   __stacked_filters?: string[]; // Array of stacked filter names
+  __overlay_path?: string; // Special property for overlay file path
 }
 
 export interface ClipOptions {
@@ -42,6 +43,7 @@ export interface ProcessOptions {
   clip?: ClipOptions;
   enforceDiscordLimit?: boolean; // Add this parameter to indicate if we need to enforce Discord's file size limit
   progressCallback?: (stage: string, progress: number) => Promise<void>; // Add callback for progress updates
+  overlayAttachment?: Buffer; // Added to support message attachments for overlay
 }
 
 // Define interface for media row from database
@@ -1330,6 +1332,31 @@ const applyFilters = (command: ffmpeg.FfmpegCommand, filters: MediaFilter, isVid
       return; // Exit after processing stacked filters
     }
     
+    // Check for overlay filter
+    if ('overlay' in filters && isVideo) {
+      if (filters.__overlay_path) {
+        // Get overlay path from the special property
+        const overlayPath = filters.__overlay_path;
+        
+        if (!fs.existsSync(overlayPath)) {
+          throw new Error(`Overlay file not found: ${overlayPath}`);
+        }
+        
+        // Apply overlay filter with complex filtergraph
+        // Format: [0:v][1:v]overlay=0:0[v]
+        // This places the overlay (input 1) on top of the base video (input 0)
+        command.input(overlayPath);
+        command.complexFilter('[0:v][1:v]overlay=0:0[v];[0:a]acopy[a]', ['v', 'a']);
+        
+        logFFmpegCommand(`Applied overlay filter with file: ${path.basename(overlayPath)}`);
+        delete filters.overlay; // Remove the filter so it's not processed again
+      } else {
+        throw new Error('Overlay file path not provided. Please attach an image to your message.');
+      }
+    } else if ('overlay' in filters && !isVideo) {
+      throw new Error('Overlay filter can only be applied to video files, not audio files');
+    }
+    
     // Handle filter aliases (map user-friendly names to actual filter names)
     Object.keys(filters).forEach(key => {
       if (key in filterAliases) {
@@ -1340,108 +1367,6 @@ const applyFilters = (command: ffmpeg.FfmpegCommand, filters: MediaFilter, isVid
       }
     });
     
-    // Handle raw complex filter string if it exists
-    if (filters.__raw_complex_filter) {
-      const rawFilter = filters.__raw_complex_filter;
-      
-      // Validate the raw filter before attempting to use it
-      // Check against a list of known valid filters
-      const validRawFilters = new Set([
-        // Common audio filters
-        'volume', 'bass', 'treble', 'equalizer', 'aecho', 'flanger', 'chorus', 'vibrato', 'tremolo', 
-        'compand', 'dynaudnorm', 'loudnorm', 'silenceremove', 'areverse', 'atempo', 'asetrate',
-        // Common video filters
-        'scale', 'crop', 'rotate', 'transpose', 'hflip', 'vflip', 'blur', 'gblur', 'unsharp', 
-        'noise', 'eq', 'hue', 'saturation', 'colorbalance', 'overlay', 'fade', 'reverse',
-        // Complex filters
-        'split', 'asplit', 'amerge', 'amix', 'concat', 'hstack', 'vstack'
-      ]);
-      
-      // Check if the filter name (before any parameters) is in our valid list
-      const filterName = rawFilter.split('=')[0].trim();
-      if (!validRawFilters.has(filterName) && !rawFilter.includes(',')) {
-        // Give a helpful error for unknown filters
-        throw new Error(`Unknown filter "${filterName}". Try using a different filter name or check your syntax.`);
-      }
-      
-      // Check if this is just a single effect that should be handled by our custom effects
-      if (!rawFilter.includes(',')) {
-        const effectName = rawFilter.trim();
-        
-        // Try to apply as a custom effect
-        if (applyCustomEffect(command, effectName, 1, isVideo)) {
-          // Custom effect was successfully applied
-          logFFmpegCommand(`Applied custom effect as filter: ${effectName}`);
-          return; // Skip other filter processing
-        } else if (effectName in filterAliases) {
-          // It's an alias to a standard filter
-          const actualFilter = filterAliases[effectName];
-          
-          if (isVideo) {
-            if (filterTypes.video.has(actualFilter)) {
-              command.videoFilters(actualFilter);
-            } else if (filterTypes.audio.has(actualFilter)) {
-              command.audioFilters(actualFilter);
-            } else {
-              // Try as a complex filter
-              command.complexFilter(actualFilter);
-            }
-          } else {
-            // Audio only
-            if (filterTypes.audio.has(actualFilter)) {
-              command.audioFilters(actualFilter);
-            } else {
-              throw new Error(`The filter "${effectName}" can't be applied to audio-only files.`);
-            }
-          }
-          
-          logFFmpegCommand(`Applied aliased filter: ${actualFilter} (from ${effectName})`);
-          return; // Skip other filter processing
-        }
-      }
-      
-      // Handle multiple effects
-      const effectNames = rawFilter.split(',').map(part => part.trim());
-      const appliedCustom = effectNames.some(name => {
-        return applyCustomEffect(command, name, 1, isVideo);
-      });
-      
-      if (appliedCustom) {
-        // At least one custom effect was applied, skip normal processing
-        logFFmpegCommand(`Applied custom effects from filter string: ${rawFilter}`);
-        return;
-      }
-      
-      // Otherwise, fall back to processing as a normal raw filter string 
-      // Process any aliases in the raw filter string
-      const processedFilter = rawFilter.split(',').map(part => {
-        const trimmed = part.trim();
-        if (trimmed in filterAliases) {
-          return filterAliases[trimmed];
-        }
-        return trimmed;
-      }).join(',');
-      
-      logFFmpegCommand(`Applying raw complex filter: ${processedFilter} (was: ${rawFilter})`);
-      
-      if (isVideo) {
-        // For video files, we can use complex filtergraph
-        command.complexFilter(processedFilter);
-        return; // Skip other filter processing
-      } else {
-        // For audio-only files, we need to check if this is an audio-only filter
-        // If it contains semicolons or otherwise appears to be a complex filter graph,
-        // we need to warn the user appropriately
-        if (processedFilter.includes(';') || /\[[0-9]+:[v]\]/.test(processedFilter)) {
-          throw new Error(`The complex filter "${processedFilter}" appears to require video streams, but this is an audio-only file.`);
-        }
-        
-        // Apply as audio filter if it seems audio-compatible
-        command.audioFilters(processedFilter);
-        return; // Skip other filter processing
-      }
-    }
-
     // Handle macroblock effect
     if ('macroblock' in filters) {
       const strength = Number(filters.macroblock) || 1;
@@ -1539,6 +1464,29 @@ const applyFilters = (command: ffmpeg.FfmpegCommand, filters: MediaFilter, isVid
       }
     }
     
+    // Handle overlay filter
+    if ('overlay' in filters && isVideo) {
+      if (!filters.__overlay_path) {
+        throw new Error('Overlay file path not provided. Please attach an image to your message.');
+      }
+      
+      // Get overlay path from the special property
+      const overlayPath = filters.__overlay_path;
+      
+      if (!fs.existsSync(overlayPath)) {
+        throw new Error(`Overlay file not found: ${overlayPath}`);
+      }
+      
+      // Apply overlay filter with complex filtergraph
+      // Format: [0:v][1:v]overlay=0:0[v]
+      // This places the overlay (input 1) on top of the base video (input 0)
+      command.input(overlayPath);
+      command.complexFilter('[0:v][1:v]overlay=0:0[v];[0:a]acopy[a]', ['v', 'a']);
+      
+      logFFmpegCommand(`Applied overlay filter with file: ${path.basename(overlayPath)}`);
+      delete filters.overlay; // Remove the filter so it's not processed again
+    }
+
     // Detect if we're trying to apply video filters to audio
     if (!isVideo) {
       const videoFiltersRequested = Object.keys(filters).filter(key => 
