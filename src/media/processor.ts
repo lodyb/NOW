@@ -1333,28 +1333,29 @@ const applyFilters = (command: ffmpeg.FfmpegCommand, filters: MediaFilter, isVid
     }
     
     // Check for overlay filter
-    if ('overlay' in filters && isVideo) {
+    if ('overlay' in filters || filters.__raw_complex_filter === 'overlay') {
       if (filters.__overlay_path) {
-        // Get overlay path from the special property
         const overlayPath = filters.__overlay_path;
         
         if (!fs.existsSync(overlayPath)) {
           throw new Error(`Overlay file not found: ${overlayPath}`);
         }
         
-        // Apply overlay filter with complex filtergraph
-        // Format: [0:v][1:v]overlay=0:0[v]
-        // This places the overlay (input 1) on top of the base video (input 0)
+        // Apply the overlay using complex filter
+        command.complexFilter(`[0:v][1:v]overlay=0:0[v]`, ['v']);
         command.input(overlayPath);
-        command.complexFilter('[0:v][1:v]overlay=0:0[v];[0:a]acopy[a]', ['v', 'a']);
+        command.outputOption('-map [v]');
+        command.outputOption('-map 0:a');
         
         logFFmpegCommand(`Applied overlay filter with file: ${path.basename(overlayPath)}`);
-        delete filters.overlay; // Remove the filter so it's not processed again
+        
+        // Remove processed filters
+        delete filters.overlay;
+        delete filters.__raw_complex_filter;
+        return; // Exit after processing overlay to avoid conflicts
       } else {
         throw new Error('Overlay file path not provided. Please attach an image to your message.');
       }
-    } else if ('overlay' in filters && !isVideo) {
-      throw new Error('Overlay filter can only be applied to video files, not audio files');
     }
     
     // Handle filter aliases (map user-friendly names to actual filter names)
