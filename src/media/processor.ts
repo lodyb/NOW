@@ -1342,10 +1342,10 @@ const applyFilters = (command: ffmpeg.FfmpegCommand, filters: MediaFilter, isVid
         }
         
         // Apply the overlay using complex filter
-        command.complexFilter(`[0:v][1:v]overlay=0:0[v]`, ['v']);
+        command.complexFilter('[0:v][1:v]overlay=0:0[v]', ['v']);
         command.input(overlayPath);
-        command.outputOption('-map [v]');
-        command.outputOption('-map 0:a');
+        command.outputOption('-map [v]'); // Map video stream only once
+        command.outputOption('-map 0:a'); // Map audio from original input
         
         logFFmpegCommand(`Applied overlay filter with file: ${path.basename(overlayPath)}`);
         
