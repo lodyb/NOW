@@ -1347,16 +1347,14 @@ const applyFilters = (command: ffmpeg.FfmpegCommand, filters: MediaFilter, isVid
         
         // Apply overlay with FFmpeg input and complex filter
         command.input(overlayPath);
-        
-        // Use fluent-ffmpeg's outputOptions method to prevent duplicate mapping
         command.complexFilter(
-          `[0:v][1:v]overlay=0:0[${outputVideoLabel}];[0:a]acopy[${outputAudioLabel}]`
+          `[0:v][1:v]overlay=0:0[${outputVideoLabel}];[0:a]acopy[${outputAudioLabel}]`,
+          [outputVideoLabel, outputAudioLabel]
         );
         
-        // Only apply mapping options once - fixed issue with duplicated -map args
-        command._currentOutput.outputOptions = command._currentOutput.outputOptions || [];
-        command._currentOutput.outputOptions.push(`-map [${outputVideoLabel}]`);
-        command._currentOutput.outputOptions.push(`-map [${outputAudioLabel}]`);
+        // Use the standard outputOptions method with each mapping
+        command.outputOptions(`-map [${outputVideoLabel}]`);
+        command.outputOptions(`-map [${outputAudioLabel}]`);
         
         logFFmpegCommand(`Applied overlay filter with file: ${path.basename(overlayPath)}`);
         
