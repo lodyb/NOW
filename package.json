@@ -14,6 +14,11 @@
     "pm2:stop": "pm2 stop now-discord-bot",
     "pm2:restart": "pm2 restart now-discord-bot",
     "pm2:logs": "pm2 logs now-discord-bot",
+    "pm2:dev:start": "pm2 start ecosystem.config.json --only now-discord-bot-dev",
+    "pm2:dev:stop": "pm2 stop now-discord-bot-dev",
+    "pm2:dev:restart": "pm2 restart now-discord-bot-dev",
+    "pm2:dev:logs": "pm2 logs now-discord-bot-dev",
+    "pm2:dev:monitor": "pm2 monit",
     "production": "npm run build && npm run pm2:ecosystem"
   },
   "dependencies": {
