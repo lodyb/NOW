@@ -420,6 +420,7 @@
       width: 100%;
       height: 100%;
       display: flex;
+      pointer-events: none;
       align-items: center;
       justify-content: center;
       background-color: rgba(0, 0, 0, 0.3);
@@ -565,70 +566,6 @@
     .logout-btn:hover {
       background-color: rgba(255, 255, 255, 0.2);
     }
-
-    /* Style for direct media links */
-    .media-direct-link {
-      position: absolute;
-      top: 8px;
-      right: 8px;
-      background-color: rgba(0, 0, 0, 0.6);
-      color: white;
-      border-radius: 4px;
-      padding: 4px 8px;
-      font-size: 0.75rem;
-      z-index: 5;
-      text-decoration: none;
-      opacity: 0;
-      transition: opacity 0.2s;
-    }
-    
-    .thumbnail-carousel:hover .media-direct-link,
-    .media-audio:hover .media-direct-link,
-    .media-video:hover .media-direct-link {
-      opacity: 1;
-    }
-    
-    .media-direct-link:hover {
-      background-color: rgba(0, 0, 0, 0.8);
-    }
-
-    .thumbnail-carousel,
-    .media-audio,
-    .media-video {
-      position: relative;
-      height: 100%;
-      width: 100%;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
-
-    /* Style for clickable thumbnails */
-    .thumbnail-link {
-      display: block;
-      width: 100%;
-      height: 100%;
-      position: absolute;
-      top: 0;
-      left: 0;
-      z-index: 1;
-    }
-
-    .play-overlay {
-      position: absolute;
-      top: 0;
-      left: 0;
-      width: 100%;
-      height: 100%;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      background-color: rgba(0, 0, 0, 0.3);
-      opacity: 0;
-      transition: opacity 0.2s;
-      z-index: 2;
-      cursor: pointer;
-    }
   </style>
 </head>
 <body>
@@ -731,8 +668,6 @@
 
         <!-- Audio files - always use waveform thumbnail when available -->
         <div v-else-if="isAudio(item) && hasThumbnails(item)" class="thumbnail-carousel">
-          <a :href="getMediaUrl(item)" target="_blank" class="thumbnail-link" title="Open media in new tab"></a>
-          
           <img 
             :src="item.thumbnails[0]"
             class="thumbnail"
@@ -745,18 +680,10 @@
         </div>
         
         <!-- Fallback for audio without thumbnails -->
-        <div v-else-if="isAudio(item)" class="media-audio">
-          <a :href="getMediaUrl(item)" target="_blank" class="thumbnail-link" title="Open media in new tab"></a>
-          🎵
-          <div class="play-overlay" @click="playVideo(item)">
-            <div class="play-button">▶</div>
-          </div>
-        </div>
+        <div v-else-if="isAudio(item)" class="media-audio">🎵</div>
         
         <!-- Video - always use first thumbnail when available -->
         <div v-else-if="isVideo(item) && hasThumbnails(item)" class="thumbnail-carousel">
-          <a :href="getMediaUrl(item)" target="_blank" class="thumbnail-link" title="Open media in new tab"></a>
-          
           <img 
             :src="item.thumbnails[0]"
             class="thumbnail"
@@ -770,8 +697,6 @@
         
         <!-- Fallback for video without thumbnails -->
         <div v-else-if="isVideo(item)" class="media-video">
-          <a :href="getMediaUrl(item)" target="_blank" class="thumbnail-link" title="Open media in new tab"></a>
-          
           <div class="play-overlay" @click="playVideo(item)">
             <div class="play-button">▶</div>
           </div>
@@ -820,42 +745,30 @@
       <div class="media-thumbnail" @click="playMedia">
         <!-- Video or audio with thumbnails -->
         <div v-if="media.thumbnails && media.thumbnails.length > 0" class="thumbnail-carousel">
-          <a :href="getMediaUrl(media)" target="_blank" class="thumbnail-link" title="Open media in new tab"></a>
-          <img :src="currentThumbnailUrl" class="thumbnail" alt="Media thumbnail">
-          <div class="carousel-nav" v-if="thumbnailCount > 1">
+          <img :src="media.thumbnails[media.currentThumbnail]" class="thumbnail" alt="Media thumbnail">
+          <div class="carousel-nav" v-if="media.thumbnails.length > 1">
             <button class="carousel-btn" @click.stop="prevThumbnail">←</button>
             <button class="carousel-btn" @click.stop="nextThumbnail">→</button>
           </div>
-          <div class="carousel-indicators" v-if="thumbnailCount > 1">
+          <div class="carousel-indicators" v-if="media.thumbnails.length > 1">
             <div 
               v-for="(_, index) in media.thumbnails" 
               :key="index"
               class="indicator"
-              :class="{ active: index === currentThumbnailIndex }"
-              @click.stop="$emit('showThumbnail', media, index)"
+              :class="{ active: index === media.currentThumbnail }"
+              @click.stop="showThumbnail(index)"
             ></div>
-          </div>
-          <div class="play-overlay" @click.stop="playMedia">
-            <div class="play-button">▶</div>
           </div>
         </div>
         
         <!-- Audio without thumbnails -->
         <div v-else-if="isAudio" class="media-audio">
-          <a :href="getMediaUrl(media)" target="_blank" class="thumbnail-link" title="Open media in new tab"></a>
           <i class="fas fa-music"></i>
-          <div class="play-overlay" @click.stop="playMedia">
-            <div class="play-button">▶</div>
-          </div>
         </div>
         
         <!-- Video without thumbnails -->
         <div v-else-if="isVideo" class="media-video">
-          <a :href="getMediaUrl(media)" target="_blank" class="thumbnail-link" title="Open media in new tab"></a>
           <i class="fas fa-film"></i>
-          <div class="play-overlay" @click.stop="playMedia">
-            <div class="play-button">▶</div>
-          </div>
         </div>
         
         <!-- Processing indicator -->
