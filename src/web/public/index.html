@@ -591,6 +591,44 @@
     .media-direct-link:hover {
       background-color: rgba(0, 0, 0, 0.8);
     }
+
+    .thumbnail-carousel,
+    .media-audio,
+    .media-video {
+      position: relative;
+      height: 100%;
+      width: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    /* Style for clickable thumbnails */
+    .thumbnail-link {
+      display: block;
+      width: 100%;
+      height: 100%;
+      position: absolute;
+      top: 0;
+      left: 0;
+      z-index: 1;
+    }
+
+    .play-overlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background-color: rgba(0, 0, 0, 0.3);
+      opacity: 0;
+      transition: opacity 0.2s;
+      z-index: 2;
+      cursor: pointer;
+    }
   </style>
 </head>
 <body>
@@ -693,13 +731,13 @@
 
         <!-- Audio files - always use waveform thumbnail when available -->
         <div v-else-if="isAudio(item) && hasThumbnails(item)" class="thumbnail-carousel">
+          <a :href="getMediaUrl(item)" target="_blank" class="thumbnail-link" title="Open media in new tab"></a>
+          
           <img 
             :src="item.thumbnails[0]"
             class="thumbnail"
             alt="Audio visualization"
           />
-          
-          <a :href="getMediaUrl(item)" target="_blank" class="media-direct-link" title="Open in new tab">Open</a>
           
           <div class="play-overlay" @click="playVideo(item)">
             <div class="play-button">▶</div>
@@ -708,19 +746,22 @@
         
         <!-- Fallback for audio without thumbnails -->
         <div v-else-if="isAudio(item)" class="media-audio">
+          <a :href="getMediaUrl(item)" target="_blank" class="thumbnail-link" title="Open media in new tab"></a>
           🎵
-          <a :href="getMediaUrl(item)" target="_blank" class="media-direct-link" title="Open in new tab">Open</a>
+          <div class="play-overlay" @click="playVideo(item)">
+            <div class="play-button">▶</div>
+          </div>
         </div>
         
         <!-- Video - always use first thumbnail when available -->
         <div v-else-if="isVideo(item) && hasThumbnails(item)" class="thumbnail-carousel">
+          <a :href="getMediaUrl(item)" target="_blank" class="thumbnail-link" title="Open media in new tab"></a>
+          
           <img 
             :src="item.thumbnails[0]"
             class="thumbnail"
             alt="Video thumbnail"
           />
-          
-          <a :href="getMediaUrl(item)" target="_blank" class="media-direct-link" title="Open in new tab">Open</a>
           
           <div class="play-overlay" @click="playVideo(item)">
             <div class="play-button">▶</div>
@@ -729,7 +770,7 @@
         
         <!-- Fallback for video without thumbnails -->
         <div v-else-if="isVideo(item)" class="media-video">
-          <a :href="getMediaUrl(item)" target="_blank" class="media-direct-link" title="Open in new tab">Open</a>
+          <a :href="getMediaUrl(item)" target="_blank" class="thumbnail-link" title="Open media in new tab"></a>
           
           <div class="play-overlay" @click="playVideo(item)">
             <div class="play-button">▶</div>
@@ -779,8 +820,8 @@
       <div class="media-thumbnail" @click="playMedia">
         <!-- Video or audio with thumbnails -->
         <div v-if="media.thumbnails && media.thumbnails.length > 0" class="thumbnail-carousel">
+          <a :href="getMediaUrl(media)" target="_blank" class="thumbnail-link" title="Open media in new tab"></a>
           <img :src="currentThumbnailUrl" class="thumbnail" alt="Media thumbnail">
-          <a :href="getMediaUrl(media)" target="_blank" class="media-direct-link" title="Open in new tab">Open</a>
           <div class="carousel-nav" v-if="thumbnailCount > 1">
             <button class="carousel-btn" @click.stop="prevThumbnail">←</button>
             <button class="carousel-btn" @click.stop="nextThumbnail">→</button>
@@ -794,18 +835,27 @@
               @click.stop="$emit('showThumbnail', media, index)"
             ></div>
           </div>
+          <div class="play-overlay" @click.stop="playMedia">
+            <div class="play-button">▶</div>
+          </div>
         </div>
         
         <!-- Audio without thumbnails -->
         <div v-else-if="isAudio" class="media-audio">
+          <a :href="getMediaUrl(media)" target="_blank" class="thumbnail-link" title="Open media in new tab"></a>
           <i class="fas fa-music"></i>
-          <a :href="getMediaUrl(media)" target="_blank" class="media-direct-link" title="Open in new tab">Open</a>
+          <div class="play-overlay" @click.stop="playMedia">
+            <div class="play-button">▶</div>
+          </div>
         </div>
         
         <!-- Video without thumbnails -->
         <div v-else-if="isVideo" class="media-video">
+          <a :href="getMediaUrl(media)" target="_blank" class="thumbnail-link" title="Open media in new tab"></a>
           <i class="fas fa-film"></i>
-          <a :href="getMediaUrl(media)" target="_blank" class="media-direct-link" title="Open in new tab">Open</a>
+          <div class="play-overlay" @click.stop="playMedia">
+            <div class="play-button">▶</div>
+          </div>
         </div>
         
         <!-- Processing indicator -->
