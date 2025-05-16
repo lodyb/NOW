@@ -301,11 +301,13 @@ client.on(Events.MessageCreate, async (message) => {
           break;
           
         case 'remix':
+          console.log(`Processing remix command with filterString: ${commandArgs.filterString || 'none'}`);
           await handleRemixCommand(
             message,
             commandArgs.filterString,
             commandArgs.clipOptions
           );
+          console.log(`Remix command processing completed`);
           await saveUserLastCommand(message.author.id, message.author.username, message.content);
           break;
           

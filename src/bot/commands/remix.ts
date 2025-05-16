@@ -20,39 +20,50 @@ export const handleRemixCommand = async (
   clipOptions?: ClipOptions
 ) => {
   try {
+    console.log(`handleRemixCommand called with filterString: ${filterString || 'none'}`);
     // Get the message to process
     let targetMessage = message;
     
     // If this is a reply, use the referenced message
     if (message.reference) {
+      console.log(`This is a reply, fetching referenced message: ${message.reference.messageId}`);
       const referencedMessage = await fetchReferencedMessage(message);
       if (!referencedMessage) {
+        console.log(`Failed to fetch referenced message`);
         await safeReply(message, "Couldn't fetch the message you replied to.");
         return;
       }
+      console.log(`Referenced message fetched successfully from ${referencedMessage.author.username}`);
       targetMessage = referencedMessage;
     }
     
     // First check for attachments in the message
+    console.log(`Looking for media in the ${targetMessage === message ? 'original' : 'referenced'} message`);
     const mediaUrl = await findMediaUrl(targetMessage);
     
     if (!mediaUrl) {
+      console.log(`No media found in message`);
       await safeReply(message, "No media found in this message. Please reply to a message with media or include media in your message.");
       return;
     }
+    
+    console.log(`Found media URL: ${mediaUrl}`);
     
     // Send initial status message
     const statusMessage = await message.reply(`Found media, downloading... ⏳`);
     
     try {
       // Download the media to a temporary location
+      console.log(`Downloading media from URL: ${mediaUrl}`);
       const downloadedFilePath = await downloadMedia(mediaUrl, statusMessage);
       
       if (!downloadedFilePath) {
+        console.log(`Failed to download media`);
         await statusMessage.edit("Failed to download media ❌");
         return;
       }
       
+      console.log(`Media downloaded to: ${downloadedFilePath}`);
       await statusMessage.edit(`Media downloaded, processing with filters... ⏳`);
       
       // Process the media with filters
@@ -126,41 +137,62 @@ async function fetchReferencedMessage(message: Message): Promise<Message | null>
  * Find a media URL in a message (attachment or embed)
  */
 async function findMediaUrl(message: Message): Promise<string | null> {
+  console.log(`Finding media in message from ${message.author.username}`);
+  
   // Check message attachments first
   if (message.attachments.size > 0) {
+    console.log(`Found ${message.attachments.size} attachments in message`);
     const attachment = message.attachments.first();
     if (attachment) {
       const url = attachment.url;
       const contentType = attachment.contentType || '';
+      console.log(`First attachment has URL ${url} and content type ${contentType || 'unknown'}`);
       
       if (contentType.startsWith('video/') || 
           contentType.startsWith('audio/') || 
           contentType.startsWith('image/gif')) {
+        console.log(`Found valid media attachment: ${contentType}`);
         return url;
+      } else {
+        console.log(`Attachment content type not recognized as media: ${contentType || 'unknown'}`);
       }
     }
+  } else {
+    console.log(`No attachments found in the message`);
   }
   
   // Check embeds for media links
   if (message.embeds.length > 0) {
+    console.log(`Found ${message.embeds.length} embeds in message`);
     for (const embed of message.embeds) {
+      console.log(`Checking embed type: ${embed.type || 'unknown'}`);
+      
       // Check for video in the embed
       if (embed.video) {
+        console.log(`Found video in embed: ${embed.video.url}`);
         return embed.video.url;
       }
       
       // Check for an image in the embed (might be a gif)
       if (embed.image) {
+        console.log(`Found image in embed: ${embed.image.url}`);
         return embed.image.url;
       }
     }
+    console.log(`No usable media found in embeds`);
+  } else {
+    console.log(`No embeds found in the message`);
   }
   
   // Check message content for media links
+  console.log(`Checking message content for media links: ${message.content.substring(0, 50)}...`);
   const urlRegex = /(https?:\/\/[^\s]+\.(mp4|mp3|ogg|wav|webm|gif))/i;
   const urlMatch = message.content.match(urlRegex);
   if (urlMatch && urlMatch[0]) {
+    console.log(`Found direct media URL in content: ${urlMatch[0]}`);
     return urlMatch[0];
+  } else {
+    console.log(`No direct media URLs found in content`);
   }
   
   // Check for common video hosting links
@@ -177,6 +209,7 @@ async function findMediaUrl(message: Message): Promise<string | null> {
     return null;
   }
   
+  console.log(`No media found in message`);
   return null;
 }
 
