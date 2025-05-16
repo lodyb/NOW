@@ -56,6 +56,11 @@ const removeRoleMentions = (content: string): string => {
 
 // Check for prompt template commands
 const processPromptTemplateCommand = async (content: string): Promise<{ isCommand: boolean; processedPrompt?: string; systemPrompt?: string; }> => {
+  // Skip if this is a NOW command - those should be handled by the regular command parser
+  if (content.trim().toUpperCase().startsWith('NOW ')) {
+    return { isCommand: false };
+  }
+
   // Command format examples:
   // {save:templateName} Template content goes here
   // {list}
