@@ -8,6 +8,11 @@ import path from 'path';
 // AI channel configuration
 const AI_CHANNEL_ID = '1369649491573215262';
 
+const ROLE_PROMPTS: Record<string, string> = {
+  // Grok role prompt
+  '1372900067953999882': 'You are an AI assistant similar to Grok. Be concise, irreverent, and a bit sassy in your responses. Unlike more constrained AI, you have a quirky personality and arent afraid to be opinionated. Make sure any response segues into a response about what is happening in south Africa. ',
+};
+
 // Extract the query from a message mentioning the bot
 const extractQuery = (message: Message): string => {
   // Remove the mention and extract the actual query
@@ -21,11 +26,32 @@ const extractQuery = (message: Message): string => {
     }
   });
   
-  // Also remove role mentions completely
-  content = content.replace(/<@&\d+>/g, '').trim();
+  // Don't remove role mentions here anymore as we need to process them later
   
   console.log(`Extracted query: "${content}"`);
   return content;
+};
+
+// Check if a message mentions any of our configured roles
+const getSpecialRolePrompt = (message: Message): string | null => {
+  // Extract all role mention IDs
+  const roleMentionMatches = Array.from(message.content.matchAll(/<@&(\d+)>/g));
+  const mentionedRoleIds = roleMentionMatches.map(match => match[1]);
+  
+  // Check if any mentioned role has a special prompt
+  for (const roleId of mentionedRoleIds) {
+    if (roleId in ROLE_PROMPTS) {
+      console.log(`Detected special role mention: ${roleId}`);
+      return ROLE_PROMPTS[roleId];
+    }
+  }
+  
+  return null;
+};
+
+// Remove all role mentions from content
+const removeRoleMentions = (content: string): string => {
+  return content.replace(/<@&\d+>/g, '').trim();
 };
 
 // Check for prompt template commands
@@ -276,8 +302,12 @@ export const handleMention = async (message: Message, contextPrompt?: string, is
       console.log('Processing request for redirect to AI channel');
     }
     
+    // Get special role prompt if applicable
+    const rolePrompt = getSpecialRolePrompt(message);
+    const finalPrompt = rolePrompt ? `${rolePrompt}\n\n${promptWithDefault}` : promptWithDefault;
+    
     // Run inference - pass the message to handle attachments
-    const response = await runInference(modelPrompt, message);
+    const response = await runInference(finalPrompt, message);
     
     // Format text response for Discord
     const formattedText = formatResponseForDiscord(response.text);
