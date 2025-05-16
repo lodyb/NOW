@@ -80,8 +80,14 @@ export const handleRemixCommand = async (
       const randomId = crypto.randomBytes(4).toString('hex');
       const outputFilename = `remix_${randomId}${path.extname(downloadedFilePath)}`;
       
+      // Ensure filterString is properly formatted with braces
+      let parsedFilterString = filterString;
+      if (filterString && !filterString.startsWith('{')) {
+        parsedFilterString = `{${filterString}}`;
+      }
+      
       const options = {
-        filters: filterString ? parseFilterString(filterString) : {},
+        filters: parsedFilterString ? parseFilterString(parsedFilterString) : {},
         clip: clipOptions,
         enforceDiscordLimit: true,
         progressCallback: async (stage: string, progress: number) => {
@@ -93,6 +99,7 @@ export const handleRemixCommand = async (
         }
       };
       
+      console.log(`Processing media with filters: ${JSON.stringify(options.filters)}`);
       const processedPath = await processMedia(downloadedFilePath, outputFilename, options);
       
       // Send the processed media
