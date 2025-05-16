@@ -17,6 +17,7 @@ import { handleHelpCommand } from './bot/commands/help';
 import { handleMahjongCommand } from './bot/commands/mahjong';
 import { handleWhatWasThatCommand } from './bot/commands/whatWasThat';
 import { handleEffectsCommand } from './bot/commands';
+import { handleRemixCommand } from './bot/commands/remix';
 import { handleMention } from './llm/mentionHandler';
 import apiRoutes from './web/api';
 import authRoutes from './web/auth-routes';
@@ -291,6 +292,15 @@ client.on(Events.MessageCreate, async (message) => {
           await saveUserLastCommand(message.author.id, message.author.username, message.content);
           break;
           
+        case 'remix':
+          await handleRemixCommand(
+            message,
+            commandArgs.filterString,
+            commandArgs.clipOptions
+          );
+          await saveUserLastCommand(message.author.id, message.author.username, message.content);
+          break;
+          
         case 'repeat':
           // Handle the repeat command
           try {
@@ -316,6 +326,9 @@ client.on(Events.MessageCreate, async (message) => {
                 switch (args.command) {
                   case 'play':
                     await handlePlayCommand(message, args.searchTerm, args.filterString, args.clipOptions, args.multi);
+                    break;
+                  case 'remix':
+                    await handleRemixCommand(message, args.filterString, args.clipOptions);
                     break;
                   case 'quiz':
                     await handleQuizCommand(message, args.filterString, args.clipOptions);
