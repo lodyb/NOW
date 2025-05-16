@@ -19,6 +19,14 @@ export const parseCommand = (message: Message): CommandArgs | null => {
 
   // Special handling for complex filter strings
   let content = message.content.substring(4).trim();
+
+  // Special handling for "!!" command to repeat last command
+  if (content === '!!') {
+    return { 
+      command: 'repeat',
+    };
+  }
+  
   let filterString: string | undefined;
   
   // Extract filter string between { and } considering nested braces

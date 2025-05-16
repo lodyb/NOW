@@ -22,6 +22,7 @@ const helpContent: HelpContent = {
       { name: 'NOW play [search]', description: 'Play media matching your search' },
       { name: 'NOW play [search] {filter=value}', description: 'Play media with filters applied' },
       { name: 'NOW clip=5s start=10s [search]', description: 'Play a specific clip from media' },
+      { name: 'NOW !!', description: 'Repeat your last command' },
       { name: 'NOW quiz', description: 'Start a quiz game in your voice channel' },
       { name: 'NOW quiz {filter=value}', description: 'Start a quiz with filtered audio' },
       { name: 'NOW quiz clip=5s start=2s', description: 'Start a quiz with shorter clips' },

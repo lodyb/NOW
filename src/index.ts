@@ -6,7 +6,7 @@ import dotenv from 'dotenv';
 import session from 'express-session';
 import passport from 'passport';
 import cookieParser from 'cookie-parser';
-import { initDatabase } from './database/db';
+import { initDatabase, saveUserLastCommand, getUserLastCommand } from './database/db';
 import { parseCommand, safeReply } from './bot/utils/helpers';
 import { handlePlayCommand } from './bot/commands/play';
 import { handleQuizCommand, handleStopCommand, handleQuizAnswer } from './bot/commands/quiz';
@@ -215,6 +215,8 @@ client.on(Events.MessageCreate, async (message) => {
             commandArgs.clipOptions,
             commandArgs.multi
           );
+          // Save this command to the database
+          await saveUserLastCommand(message.author.id, message.author.username, message.content);
           break;
           
         case 'image':
@@ -222,6 +224,7 @@ client.on(Events.MessageCreate, async (message) => {
             message,
             commandArgs.searchTerm
           );
+          await saveUserLastCommand(message.author.id, message.author.username, message.content);
           break;
           
         case 'quiz':
@@ -230,14 +233,17 @@ client.on(Events.MessageCreate, async (message) => {
             commandArgs.filterString, 
             commandArgs.clipOptions
           );
+          await saveUserLastCommand(message.author.id, message.author.username, message.content);
           break;
           
         case 'stop':
           await handleStopCommand(message);
+          await saveUserLastCommand(message.author.id, message.author.username, message.content);
           break;
           
         case 'upload':
           await handleUploadCommand(message);
+          await saveUserLastCommand(message.author.id, message.author.username, message.content);
           break;
           
         case 'waveform':
@@ -245,6 +251,7 @@ client.on(Events.MessageCreate, async (message) => {
             message,
             commandArgs.searchTerm
           );
+          await saveUserLastCommand(message.author.id, message.author.username, message.content);
           break;
           
         case 'spectrogram':
@@ -252,6 +259,7 @@ client.on(Events.MessageCreate, async (message) => {
             message,
             commandArgs.searchTerm
           );
+          await saveUserLastCommand(message.author.id, message.author.username, message.content);
           break;
           
         case 'help':
@@ -259,6 +267,7 @@ client.on(Events.MessageCreate, async (message) => {
             message,
             commandArgs.searchTerm
           );
+          await saveUserLastCommand(message.author.id, message.author.username, message.content);
           break;
           
         case 'mahjong':
@@ -266,11 +275,82 @@ client.on(Events.MessageCreate, async (message) => {
             message,
             commandArgs.searchTerm
           );
+          await saveUserLastCommand(message.author.id, message.author.username, message.content);
           break;
           
         case 'effects':
         case 'filters':
           await handleEffectsCommand(message);
+          await saveUserLastCommand(message.author.id, message.author.username, message.content);
+          break;
+          
+        case 'repeat':
+          // Handle the repeat command
+          try {
+            // Get the last command from the database
+            const lastCommand = await getUserLastCommand(message.author.id);
+            
+            if (lastCommand) {
+              // Show the user what command we're repeating
+              await message.channel.send(`Repeating your last command: \`${lastCommand}\``);
+              
+              // Instead of creating a new Message object, manually parse and execute
+              // the last command directly
+              const args = parseCommand({ 
+                content: lastCommand, 
+                author: message.author,
+                channel: message.channel,
+                guild: message.guild,
+                reply: message.reply.bind(message)
+              } as Message);
+              
+              if (args) {
+                // Execute the appropriate command based on parsed arguments
+                switch (args.command) {
+                  case 'play':
+                    await handlePlayCommand(message, args.searchTerm, args.filterString, args.clipOptions, args.multi);
+                    break;
+                  case 'quiz':
+                    await handleQuizCommand(message, args.filterString, args.clipOptions);
+                    break;
+                  case 'image':
+                    await handleImageCommand(message, args.searchTerm);
+                    break;
+                  case 'stop':
+                    await handleStopCommand(message);
+                    break;
+                  case 'upload':
+                    await handleUploadCommand(message);
+                    break;
+                  case 'waveform':
+                    await handleWaveformCommand(message, args.searchTerm);
+                    break;
+                  case 'spectrogram':
+                    await handleSpectrogramCommand(message, args.searchTerm);
+                    break;
+                  case 'help':
+                    await handleHelpCommand(message, args.searchTerm);
+                    break;
+                  case 'mahjong':
+                    await handleMahjongCommand(message, args.searchTerm);
+                    break;
+                  case 'effects':
+                  case 'filters':
+                    await handleEffectsCommand(message);
+                    break;
+                  default:
+                    await safeReply(message, `Cannot repeat command: ${args.command}`);
+                }
+              } else {
+                await safeReply(message, `Error: Cannot parse the previous command: ${lastCommand}`);
+              }
+            } else {
+              await safeReply(message, 'No previous command found to repeat.');
+            }
+          } catch (error) {
+            console.error('Error handling repeat command:', error);
+            await safeReply(message, `Error: ${(error as Error).message}`);
+          }
           break;
           
         default:

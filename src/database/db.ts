@@ -644,3 +644,33 @@ export const deletePromptTemplate = (name: string): Promise<boolean> => {
     );
   });
 };
+
+export const saveUserLastCommand = (userId: string, username: string, command: string): Promise<void> => {
+  return new Promise((resolve, reject) => {
+    db.run(`
+      INSERT INTO users (id, username, correctAnswers, gamesPlayed, lastCommand)
+      VALUES (?, ?, 0, 0, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        username = ?,
+        lastCommand = ?
+    `, [userId, username, command, username, command], (err) => {
+      if (err) {
+        reject(err);
+      } else {
+        resolve();
+      }
+    });
+  });
+};
+
+export const getUserLastCommand = (userId: string): Promise<string | null> => {
+  return new Promise((resolve, reject) => {
+    db.get('SELECT lastCommand FROM users WHERE id = ?', [userId], (err, row: { lastCommand?: string } | undefined) => {
+      if (err) {
+        reject(err);
+      } else {
+        resolve(row?.lastCommand || null);
+      }
+    });
+  });
+};
