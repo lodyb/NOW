@@ -178,19 +178,20 @@ const processPromptTemplateCommand = async (content: string): Promise<{ isComman
 };
 
 // Process an @NOW mention message
-export const handleMention = async (message: Message, contextPrompt?: string, isContextOnly: boolean = false): Promise<void> => {
+export const handleMention = async (message: Message, contextPrompt?: string, isContextOnly: boolean = false): Promise<boolean> => {
   try {
     // Skip processing for NOW commands
     const messageContent = contextPrompt || message.content;
     if (messageContent.trim().toUpperCase().startsWith('NOW ')) {
       console.log('Skipping AI processing for NOW command:', messageContent.substring(0, 50));
-      return;
+      // Return TRUE to indicate this is a NOW command that should be handled elsewhere
+      return true;
     }
     
     // Check if LLM service is ready
     if (!(await isLLMServiceReady())) {
       await safeReply(message, 'Sorry, the AI service is not available at the moment.');
-      return;
+      return false;
     }
     
     // Check if message is in the AI channel
@@ -201,7 +202,7 @@ export const handleMention = async (message: Message, contextPrompt?: string, is
     if (!aiChannel) {
       console.error(`AI channel with ID ${AI_CHANNEL_ID} not found`);
       await safeReply(message, "Sorry, I can't find the designated AI channel.");
-      return;
+      return false;
     }
     
     // If contextPrompt is provided (from a reply), use that directly for context
@@ -222,7 +223,7 @@ export const handleMention = async (message: Message, contextPrompt?: string, is
         // Add a frog reaction to the original message
         await message.react('🐸');
       }
-      return;
+      return false;
     }
     
     console.log(`Processing LLM query: ${query}`);
@@ -282,7 +283,7 @@ export const handleMention = async (message: Message, contextPrompt?: string, is
           // Add a frog reaction to the original message
           await message.react('🐸');
         }
-        return;
+        return false;
       } else {
         // This is a template management command, not template usage
         if (isInAIChannel) {
@@ -294,7 +295,7 @@ export const handleMention = async (message: Message, contextPrompt?: string, is
           await aiChannel.send(redirectContent);
           await message.react('🐸');
         }
-        return;
+        return false;
       }
     }
     
@@ -367,6 +368,9 @@ export const handleMention = async (message: Message, contextPrompt?: string, is
       // Add a frog reaction to the original message
       await message.react('🐸');
     }
+    
+    // We processed an AI response, return false to indicate it's not a NOW command
+    return false;
   } catch (error) {
     console.error('Error handling LLM mention:', error);
     // Add an error reaction to the original message
@@ -379,6 +383,9 @@ export const handleMention = async (message: Message, contextPrompt?: string, is
     } else {
       await safeReply(message, `Sorry, I encountered an error: ${(error as Error).message}`);
     }
+    
+    // Return false on error (not a NOW command)
+    return false;
   }
 };
 

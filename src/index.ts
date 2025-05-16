@@ -187,8 +187,11 @@ client.on(Events.MessageCreate, async (message) => {
           console.log(`Processing reply to bot with context chain of ${contextChain.length} messages`);
           
           // Use the LLM handler with the full conversation context
-          await handleMention(message, contextPrompt, true); // Add isContextOnly flag
-          return; // Only return for AI processing
+          // Only return early if it's not a NOW command
+          const isNowCommand = await handleMention(message, contextPrompt, true);
+          if (!isNowCommand) {
+            return; // Only exit early for AI responses, not commands
+          }
         }
         // Case 2: Reply to someone else's message while mentioning the bot
         else if (message.mentions.has(client.user!)) {
@@ -198,8 +201,11 @@ client.on(Events.MessageCreate, async (message) => {
           const contextPrompt = `Source message: "${repliedMessage.content}" from "${repliedMessage.author.displayName}"\n\nMy message: ${message.content.replace(/<@!?\d+>/g, '').trim()}`;
           
           // Use the LLM handler with the replied message as context
-          await handleMention(message, contextPrompt);
-          return; // Only return for AI processing
+          // Only return early if it's not a NOW command
+          const isNowCommand = await handleMention(message, contextPrompt);
+          if (!isNowCommand) {
+            return; // Only return for AI processing
+          }
         }
       }
     } catch (error) {
@@ -210,8 +216,12 @@ client.on(Events.MessageCreate, async (message) => {
   // Check if message is mentioning the bot
   if (message.mentions.has(client.user!)) {
     try {
-      await handleMention(message);
-      return; // Exit early if it's a mention
+      // Only return early if handleMention returns false (not a NOW command)
+      const isNowCommand = await handleMention(message);
+      if (!isNowCommand) {
+        return; // Exit early if it's handled by the AI but not for NOW commands
+      }
+      // Otherwise continue to potentially handle as a NOW command
     } catch (error) {
       console.error('Error handling mention:', error);
     }
