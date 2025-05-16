@@ -9,7 +9,9 @@ import {
   saveMediaAnswers, 
   toggleMediaDeleted,
   getMediaById,
-  findAllMediaPaginated
+  findAllMediaPaginated,
+  getUserGalleryItems,
+  getGalleryUsers
 } from '../database/db';
 
 // Extend request type to include multer's file property
@@ -68,10 +70,21 @@ const upload = multer({
 router.use('/media/normalized', express.static(NORMALIZED_DIR));
 router.use('/media/uploads', express.static(UPLOADS_DIR));
 router.use('/media/thumbnails', express.static(THUMBNAILS_DIR));
+router.use('/gallery', express.static(path.join(process.cwd(), 'gallery')));
 
 // Serve SPA from root
 router.get('/', (req, res) => {
   res.sendFile(path.join(process.cwd(), 'src/web/public/index.html'));
+});
+
+// Serve gallery page
+router.get('/gallery', (req, res) => {
+  res.sendFile(path.join(process.cwd(), 'src/web/public/gallery.html'));
+});
+
+// Serve individual user gallery pages
+router.get('/gallery/:userId', (req, res) => {
+  res.sendFile(path.join(process.cwd(), 'src/web/public/gallery.html'));
 });
 
 // API endpoints
@@ -312,6 +325,33 @@ router.post('/api/generate-thumbnails', async (req, res) => {
   try {
     generateThumbnailsForExistingMedia();
     res.json({ success: true, message: 'Thumbnail generation started for existing media' });
+  } catch (error) {
+    res.status(500).json({ error: (error as Error).message });
+  }
+});
+
+// Gallery API endpoints
+
+// API route to get a user's gallery
+router.get('/api/gallery/:userId', async (req, res) => {
+  try {
+    const userId = req.params.userId;
+    const galleryItems = await getUserGalleryItems(userId);
+    
+    res.json({ 
+      userId, 
+      items: galleryItems 
+    });
+  } catch (error) {
+    res.status(500).json({ error: (error as Error).message });
+  }
+});
+
+// API route to get all gallery users
+router.get('/api/gallery', async (req, res) => {
+  try {
+    const users = await getGalleryUsers();
+    res.json({ users });
   } catch (error) {
     res.status(500).json({ error: (error as Error).message });
   }

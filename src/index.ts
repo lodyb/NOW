@@ -19,6 +19,7 @@ import { handleWhatWasThatCommand } from './bot/commands/whatWasThat';
 import { handleEffectsCommand } from './bot/commands';
 import { handleRemixCommand } from './bot/commands/remix';
 import { handleMention } from './llm/mentionHandler';
+import { handleGalleryCommand, handleGalleryReaction, handleGalleryReactionRemove } from './bot/commands/gallery';
 import apiRoutes from './web/api';
 import authRoutes from './web/auth-routes';
 import { setupAuth, isAuthenticated } from './web/auth';
@@ -237,6 +238,7 @@ client.on(Events.MessageCreate, async (message) => {
     try {
       console.log(`Command received: ${commandArgs.command}`, commandArgs);
       
+      // Register gallery-related commands in the command switch statement
       switch (commandArgs.command) {
         case 'play':
           await handlePlayCommand(
@@ -247,6 +249,13 @@ client.on(Events.MessageCreate, async (message) => {
             commandArgs.multi
           );
           // Save this command to the database
+          await saveUserLastCommand(message.author.id, message.author.username, message.content);
+          break;
+          
+        case 'gallery':
+          // Check if a user was mentioned
+          let targetUser = message.mentions.users.first();
+          await handleGalleryCommand(message, targetUser);
           await saveUserLastCommand(message.author.id, message.author.username, message.content);
           break;
           
@@ -460,6 +469,21 @@ async function init() {
       // Generate thumbnails for existing videos without them
       generateThumbnailsForExistingMedia()
         .catch(error => console.error('Error generating thumbnails:', error));
+    });
+    
+    // Register reaction add/remove event handlers for gallery feature
+    client.on(Events.MessageReactionAdd, async (reaction, user) => {
+      // Ensure the reaction emoji is a frog 🐸
+      if (reaction.emoji.name === '🐸') {
+        await handleGalleryReaction(reaction, user);
+      }
+    });
+    
+    client.on(Events.MessageReactionRemove, async (reaction, user) => {
+      // Ensure the reaction emoji is a frog 🐸
+      if (reaction.emoji.name === '🐸') {
+        await handleGalleryReactionRemove(reaction, user);
+      }
     });
     
     // Log in to Discord

@@ -105,6 +105,20 @@ export const initDatabase = (): Promise<void> => {
         createdAt DATETIME NOT NULL DEFAULT (datetime('now'))
       )`);
       
+      // Create gallery_items table
+      db.run(`CREATE TABLE IF NOT EXISTS gallery_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+        userId VARCHAR NOT NULL,
+        messageId VARCHAR NOT NULL,
+        guildId VARCHAR NOT NULL,
+        filePath VARCHAR NOT NULL,
+        mediaType VARCHAR NOT NULL,
+        sourceUrl VARCHAR,
+        createdAt DATETIME NOT NULL DEFAULT (datetime('now')),
+        CONSTRAINT FK_gallery_user FOREIGN KEY (userId) 
+        REFERENCES users (id) ON DELETE CASCADE ON UPDATE NO ACTION
+      )`);
+      
       // Initialize jumble history table
       initializeJumbleTable()
         .then(() => console.log('Jumble history table initialized'))
@@ -787,6 +801,117 @@ export const initializeJumbleTable = (): Promise<void> => {
       } else {
         console.log('jumble_history table initialized');
         resolve();
+      }
+    });
+  });
+};
+
+// Functions to manage gallery items
+
+// Define interface for gallery items
+export interface GalleryItem {
+  id?: number;
+  userId: string;
+  messageId: string;
+  guildId: string;
+  filePath: string;
+  mediaType: string;
+  sourceUrl: string;
+  createdAt?: string;
+}
+
+export const saveGalleryItem = (item: GalleryItem): Promise<number> => {
+  return new Promise((resolve, reject) => {
+    const query = `
+      INSERT INTO gallery_items (userId, messageId, guildId, filePath, mediaType, sourceUrl)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `;
+    
+    db.run(query, [
+      item.userId, 
+      item.messageId, 
+      item.guildId, 
+      item.filePath, 
+      item.mediaType, 
+      item.sourceUrl
+    ], function(err) {
+      if (err) {
+        reject(err);
+      } else {
+        resolve(this.lastID);
+      }
+    });
+  });
+};
+
+export const getUserGalleryItems = (userId: string): Promise<GalleryItem[]> => {
+  return new Promise((resolve, reject) => {
+    const query = `
+      SELECT * FROM gallery_items
+      WHERE userId = ?
+      ORDER BY createdAt DESC
+    `;
+    
+    db.all(query, [userId], (err, rows: GalleryItem[]) => {
+      if (err) {
+        reject(err);
+      } else {
+        resolve(rows || []);
+      }
+    });
+  });
+};
+
+export const getGalleryUsers = (): Promise<{id: string, username: string, itemCount: number}[]> => {
+  return new Promise((resolve, reject) => {
+    const query = `
+      SELECT u.id, u.username, COUNT(g.id) as itemCount
+      FROM users u
+      JOIN gallery_items g ON u.id = g.userId
+      GROUP BY u.id, u.username
+      ORDER BY COUNT(g.id) DESC
+    `;
+    
+    db.all(query, [], (err, rows: {id: string, username: string, itemCount: number}[]) => {
+      if (err) {
+        reject(err);
+      } else {
+        resolve(rows || []);
+      }
+    });
+  });
+};
+
+export const removeGalleryItem = (userId: string, messageId: string): Promise<boolean> => {
+  return new Promise((resolve, reject) => {
+    const query = `
+      DELETE FROM gallery_items
+      WHERE userId = ? AND messageId = ?
+    `;
+    
+    db.run(query, [userId, messageId], function(err) {
+      if (err) {
+        reject(err);
+      } else {
+        resolve(this.changes > 0);
+      }
+    });
+  });
+};
+
+export const checkGalleryItem = (userId: string, messageId: string): Promise<boolean> => {
+  return new Promise((resolve, reject) => {
+    const query = `
+      SELECT COUNT(*) as count
+      FROM gallery_items
+      WHERE userId = ? AND messageId = ?
+    `;
+    
+    db.get(query, [userId, messageId], (err, row: {count: number}) => {
+      if (err) {
+        reject(err);
+      } else {
+        resolve(row.count > 0);
       }
     });
   });

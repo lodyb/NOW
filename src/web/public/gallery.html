@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NOW - User Gallery</title>
+  <script src="https://cdn.jsdelivr.net/npm/vue@3.2.26/dist/vue.global.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+  <style>
+    :root {
+      --primary: #5865f2;
+      --secondary: #7983f5;
+      --background: #202225;
+      --card-bg: #36393f;
+      --text: #dcddde;
+      --muted: #72767d;
+      --danger: #ed4245;
+      --success: #57f287;
+      --warning: #fee75c;
+    }
+    
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background-color: var(--background);
+      color: var(--text);
+      line-height: 1.6;
+      overflow-x: hidden;
+    }
+    
+    .container {
+      max-width: 1400px;
+      margin: 0 auto;
+      padding: 2rem 1rem;
+    }
+    
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 2rem;
+      border-bottom: 1px solid var(--muted);
+      padding-bottom: 1rem;
+    }
+    
+    .nav-links {
+      display: flex;
+      gap: 1rem;
+    }
+    
+    .nav-links a {
+      color: var(--muted);
+      text-decoration: none;
+      padding: 0.5rem 1rem;
+      border-radius: 4px;
+      transition: all 0.2s;
+    }
+    
+    .nav-links a:hover,
+    .nav-links a.active {
+      color: var(--text);
+      background-color: rgba(255, 255, 255, 0.1);
+    }
+    
+    .gallery-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+      gap: 1rem;
+    }
+    
+    .masonry-grid {
+      display: flex;
+      width: 100%;
+    }
+    
+    .masonry-column {
+      display: flex;
+      flex-direction: column;
+      padding: 0 10px;
+    }
+    
+    .gallery-item {
+      margin-bottom: 1rem;
+      break-inside: avoid;
+      position: relative;
+    }
+    
+    .gallery-item img {
+      width: 100%;
+      border-radius: 8px;
+      display: block;
+    }
+    
+    .gallery-item video,
+    .gallery-item audio {
+      width: 100%;
+      border-radius: 8px;
+    }
+    
+    .users-list {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 1rem;
+      margin-bottom: 2rem;
+    }
+    
+    .user-card {
+      background-color: var(--card-bg);
+      padding: 1rem;
+      border-radius: 8px;
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    
+    .user-card:hover {
+      transform: translateY(-5px);
+      box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
+    }
+    
+    .user-avatar {
+      width: 80px;
+      height: 80px;
+      border-radius: 50%;
+      margin: 0 auto 1rem;
+      background-color: var(--primary);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 2rem;
+      color: white;
+    }
+    
+    .loading {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 50vh;
+      font-size: 1.5rem;
+      color: var(--muted);
+    }
+    
+    .empty-state {
+      text-align: center;
+      padding: 3rem 0;
+      color: var(--muted);
+    }
+    
+    .toast {
+      position: fixed;
+      bottom: 1rem;
+      right: 1rem;
+      padding: 0.75rem 1.5rem;
+      border-radius: 4px;
+      color: white;
+      z-index: 1000;
+      animation: fadeIn 0.3s, fadeOut 0.3s 2.7s forwards;
+    }
+    
+    .success-toast {
+      background-color: var(--success);
+    }
+    
+    .error-toast {
+      background-color: var(--danger);
+    }
+    
+    @keyframes fadeIn {
+      from {
+        opacity: 0;
+        transform: translateY(20px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+    
+    @keyframes fadeOut {
+      from {
+        opacity: 1;
+        transform: translateY(0);
+      }
+      to {
+        opacity: 0;
+        transform: translateY(20px);
+      }
+    }
+  </style>
+</head>
+<body>
+  <div id="app" class="container">
+    <div class="header">
+      <h1>NOW Gallery</h1>
+      <div class="nav-links">
+        <a :class="{ active: view === 'users' }" href="#" @click="view = 'users'">All Galleries</a>
+        <a :class="{ active: view === 'gallery' && currentUserId !== null }" 
+           href="#" 
+           @click="view = 'gallery'"
+           v-if="currentUserId !== null">
+          Current Gallery
+        </a>
+        <a href="/">Media Manager</a>
+      </div>
+    </div>
+    
+    <div v-if="toast" :class="['toast', toastClass]">
+      {{ toast }}
+    </div>
+    
+    <!-- Users view - list of all gallery users -->
+    <div v-if="view === 'users'" class="users-view">
+      <h2>User Galleries</h2>
+      <p v-if="loading" class="loading">Loading users...</p>
+      
+      <div v-else-if="users.length === 0" class="empty-state">
+        <h3>No galleries found</h3>
+        <p>Users need to react with 🐸 to media in Discord to create galleries</p>
+      </div>
+      
+      <div v-else class="users-list">
+        <div 
+          v-for="user in users" 
+          :key="user.id" 
+          class="user-card"
+          @click="openGallery(user.id)">
+          <div class="user-avatar">{{ user.username.charAt(0).toUpperCase() }}</div>
+          <h3>{{ user.username }}</h3>
+          <p>{{ user.itemCount }} item{{ user.itemCount !== 1 ? 's' : '' }}</p>
+        </div>
+      </div>
+    </div>
+    
+    <!-- Gallery view - display a user's gallery -->
+    <div v-else-if="view === 'gallery'" class="gallery-view">
+      <h2>Gallery for {{ currentUsername || currentUserId }}</h2>
+      <p v-if="loading" class="loading">Loading gallery...</p>
+      
+      <div v-else-if="galleryItems.length === 0" class="empty-state">
+        <h3>This gallery is empty</h3>
+        <p>React with 🐸 to media in Discord to add items to this gallery</p>
+      </div>
+      
+      <div v-else class="masonry-grid">
+        <div 
+          v-for="(column, columnIndex) in masonryColumns" 
+          :key="columnIndex"
+          class="masonry-column"
+          :style="{ width: (100 / columnCount) + '%' }">
+          <div 
+            v-for="item in column" 
+            :key="item.id" 
+            class="gallery-item">
+            <!-- Display based on media type -->
+            <img v-if="item.mediaType === 'image'" :src="`/gallery/${item.filePath}`" loading="lazy" />
+            <video v-else-if="item.mediaType === 'video'" controls :src="`/gallery/${item.filePath}`" preload="metadata"></video>
+            <audio v-else-if="item.mediaType === 'audio'" controls :src="`/gallery/${item.filePath}`" preload="metadata"></audio>
+            <div v-else class="unknown-media">Unknown media type</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  
+  <script>
+    const { createApp, ref, computed, onMounted, watch } = Vue;
+    
+    createApp({
+      setup() {
+        const view = ref('users'); // 'users' or 'gallery'
+        const users = ref([]);
+        const galleryItems = ref([]);
+        const currentUserId = ref(null);
+        const currentUsername = ref('');
+        const loading = ref(false);
+        const toast = ref('');
+        const toastClass = ref('success-toast');
+        const toastTimeout = ref(null);
+        const columnCount = ref(4); // Number of columns for the masonry layout
+        
+        // Compute masonry columns for better layout
+        const masonryColumns = computed(() => {
+          const columns = Array.from({ length: columnCount.value }, () => []);
+          
+          galleryItems.value.forEach((item, index) => {
+            const columnIndex = index % columnCount.value;
+            columns[columnIndex].push(item);
+          });
+          
+          return columns;
+        });
+        
+        // Adjust column count based on screen width
+        const adjustColumnCount = () => {
+          const width = window.innerWidth;
+          if (width < 600) {
+            columnCount.value = 1;
+          } else if (width < 900) {
+            columnCount.value = 2;
+          } else if (width < 1200) {
+            columnCount.value = 3;
+          } else {
+            columnCount.value = 4;
+          }
+        };
+        
+        // Load all gallery users
+        const loadUsers = async () => {
+          loading.value = true;
+          try {
+            const response = await axios.get('/api/gallery');
+            users.value = response.data.users;
+          } catch (error) {
+            showToast('Error loading users: ' + (error.response?.data?.error || error.message), 'error');
+          }
+          loading.value = false;
+        };
+        
+        // Load a specific user's gallery
+        const loadGallery = async (userId) => {
+          loading.value = true;
+          try {
+            const response = await axios.get(`/api/gallery/${userId}`);
+            galleryItems.value = response.data.items;
+            currentUserId.value = userId;
+            
+            // Try to find username from the users list
+            const userInfo = users.value.find(user => user.id === userId);
+            currentUsername.value = userInfo ? userInfo.username : '';
+            
+          } catch (error) {
+            showToast('Error loading gallery: ' + (error.response?.data?.error || error.message), 'error');
+          }
+          loading.value = false;
+        };
+        
+        // Open a specific user's gallery
+        const openGallery = (userId) => {
+          currentUserId.value = userId;
+          view.value = 'gallery';
+          const userInfo = users.value.find(user => user.id === userId);
+          if (userInfo) {
+            currentUsername.value = userInfo.username;
+          }
+          loadGallery(userId);
+        };
+        
+        // Show toast message
+        const showToast = (message, type = 'success') => {
+          if (toastTimeout.value) {
+            clearTimeout(toastTimeout.value);
+          }
+          
+          toast.value = message;
+          toastClass.value = type === 'error' ? 'error-toast' : 'success-toast';
+          
+          toastTimeout.value = setTimeout(() => {
+            toast.value = '';
+          }, 3000);
+        };
+        
+        // Extract user ID from URL if present
+        const extractUserIdFromUrl = () => {
+          const path = window.location.pathname;
+          const match = path.match(/\/gallery\/([^\/]+)/);
+          if (match && match[1]) {
+            return match[1];
+          }
+          return null;
+        };
+        
+        // Initialize based on URL
+        onMounted(() => {
+          adjustColumnCount();
+          window.addEventListener('resize', adjustColumnCount);
+          
+          const urlUserId = extractUserIdFromUrl();
+          if (urlUserId) {
+            currentUserId.value = urlUserId;
+            view.value = 'gallery';
+            loadGallery(urlUserId);
+          } else {
+            loadUsers();
+          }
+        });
+        
+        return {
+          view,
+          users,
+          galleryItems,
+          currentUserId,
+          currentUsername,
+          loading,
+          toast,
+          toastClass,
+          masonryColumns,
+          columnCount,
+          loadUsers,
+          loadGallery,
+          openGallery,
+          showToast
+        };
+      }
+    }).mount('#app');
+  </script>
+</body>
+</html>
