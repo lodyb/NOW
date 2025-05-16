@@ -165,8 +165,8 @@ client.on(Events.MessageCreate, async (message) => {
           command: commandArgs
         }, null, 2)}`);
         
-        // IMPORTANT: Don't return here - we need to fall through to the command handling below
-        // Skip the rest of the reply handling code but continue with command processing
+        // Skip the rest of this conditional block but DO NOT RETURN
+        // So we'll continue to the main command processing below
       } else {
         // Not a command, process as a reply
         const repliedMessage = await message.channel.messages.fetch(message.reference.messageId);
@@ -188,7 +188,7 @@ client.on(Events.MessageCreate, async (message) => {
           
           // Use the LLM handler with the full conversation context
           await handleMention(message, contextPrompt, true); // Add isContextOnly flag
-          return; // Only exit early for AI responses, not commands
+          return; // Only return for AI processing
         }
         // Case 2: Reply to someone else's message while mentioning the bot
         else if (message.mentions.has(client.user!)) {
@@ -199,7 +199,7 @@ client.on(Events.MessageCreate, async (message) => {
           
           // Use the LLM handler with the replied message as context
           await handleMention(message, contextPrompt);
-          return; // Only exit early for AI responses, not commands
+          return; // Only return for AI processing
         }
       }
     } catch (error) {
@@ -219,6 +219,8 @@ client.on(Events.MessageCreate, async (message) => {
   
   // Parse the command - returns null if not a NOW command
   const commandArgs = parseCommand(message);
+  
+  console.log(`After all checks - Command args: ${commandArgs ? JSON.stringify(commandArgs) : 'null'}`);
   
   // Handle different commands
   if (commandArgs) {
