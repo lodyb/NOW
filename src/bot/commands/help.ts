@@ -22,6 +22,7 @@ const helpContent: HelpContent = {
       { name: 'NOW play [search]', description: 'Play media matching your search' },
       { name: 'NOW play [search] {filter=value}', description: 'Play media with filters applied' },
       { name: 'NOW clip=5s start=10s [search]', description: 'Play a specific clip from media' },
+      { name: 'NOW what was that', description: 'Show the sources used in the last jumble' },
       { name: 'NOW !!', description: 'Repeat your last command' },
       { name: 'NOW quiz', description: 'Start a quiz game in your voice channel' },
       { name: 'NOW quiz {filter=value}', description: 'Start a quiz with filtered audio' },
@@ -73,7 +74,8 @@ const helpContent: HelpContent = {
       { name: 'NOW clip=5s start=10s [search]', description: '5 second clip starting at 10 seconds' },
       { name: 'NOW image [search]', description: 'Show a thumbnail image' },
       { name: 'NOW waveform [search]', description: 'Show audio waveform visualization' },
-      { name: 'NOW spectrogram [search]', description: 'Show audio frequency visualization' }
+      { name: 'NOW spectrogram [search]', description: 'Show audio frequency visualization' },
+      { name: 'NOW what was that', description: 'Show sources used in the last jumble command' }
     ],
     footer: 'Use precise search terms for better results. You can combine the multi parameter with filters or clip options.'
   },

@@ -94,7 +94,8 @@ export const initDatabase = (): Promise<void> => {
         id VARCHAR PRIMARY KEY NOT NULL,
         username VARCHAR NOT NULL,
         correctAnswers INTEGER NOT NULL DEFAULT (0),
-        gamesPlayed INTEGER NOT NULL DEFAULT (0)
+        gamesPlayed INTEGER NOT NULL DEFAULT (0),
+        lastCommand TEXT
       )`);
       
       db.run(`CREATE TABLE IF NOT EXISTS prompt_templates (
@@ -103,6 +104,11 @@ export const initDatabase = (): Promise<void> => {
         template TEXT NOT NULL,
         createdAt DATETIME NOT NULL DEFAULT (datetime('now'))
       )`);
+      
+      // Initialize jumble history table
+      initializeJumbleTable()
+        .then(() => console.log('Jumble history table initialized'))
+        .catch(err => console.error('Error initializing jumble table:', err));
 
       // Check and add missing columns if needed
       db.all(`PRAGMA table_info(media)`, (err, rows) => {
@@ -133,6 +139,23 @@ export const initDatabase = (): Promise<void> => {
               }
             });
         }
+        
+        // Check for lastCommand column in users table
+        db.all(`PRAGMA table_info(users)`, (userErr, userRows) => {
+          if (userErr) {
+            console.error('Error checking users table schema:', userErr);
+          } else {
+            const userColumns = userRows.map((row: any) => row.name);
+            if (!userColumns.includes('lastCommand')) {
+              db.run(`ALTER TABLE users ADD COLUMN lastCommand TEXT`, 
+                (err: Error | null) => {
+                  if (err && !err.message.includes('duplicate column')) {
+                    console.error('Error adding lastCommand column:', err);
+                  }
+                });
+            }
+          }
+        });
         
         resolve();
       });
@@ -670,6 +693,100 @@ export const getUserLastCommand = (userId: string): Promise<string | null> => {
         reject(err);
       } else {
         resolve(row?.lastCommand || null);
+      }
+    });
+  });
+};
+
+// Functions to track and retrieve jumble source information
+export interface JumbleInfo {
+  userId: string;
+  guildId: string;
+  videoId: number;
+  videoTitle: string;
+  videoStart: number;
+  videoDuration: number;
+  audioId: number;
+  audioTitle: string;
+  audioStart: number;
+  audioDuration: number;
+  timestamp: number;
+}
+
+export const saveJumbleInfo = (jumbleInfo: JumbleInfo): Promise<void> => {
+  return new Promise((resolve, reject) => {
+    db.run(
+      `INSERT OR REPLACE INTO jumble_history 
+      (userId, guildId, videoId, videoTitle, videoStart, videoDuration, audioId, audioTitle, audioStart, audioDuration, timestamp) 
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        jumbleInfo.userId,
+        jumbleInfo.guildId,
+        jumbleInfo.videoId,
+        jumbleInfo.videoTitle,
+        jumbleInfo.videoStart,
+        jumbleInfo.videoDuration,
+        jumbleInfo.audioId,
+        jumbleInfo.audioTitle,
+        jumbleInfo.audioStart,
+        jumbleInfo.audioDuration,
+        jumbleInfo.timestamp
+      ],
+      function(err) {
+        if (err) {
+          console.error('Error saving jumble info:', err);
+          reject(err);
+        } else {
+          resolve();
+        }
+      }
+    );
+  });
+};
+
+export const getLatestJumbleInfo = (userId: string, guildId: string): Promise<JumbleInfo | null> => {
+  return new Promise((resolve, reject) => {
+    db.get(
+      `SELECT * FROM jumble_history
+       WHERE userId = ? AND guildId = ?
+       ORDER BY timestamp DESC
+       LIMIT 1`,
+      [userId, guildId],
+      (err, row) => {
+        if (err) {
+          console.error('Error retrieving jumble info:', err);
+          reject(err);
+        } else {
+          resolve(row ? row as JumbleInfo : null);
+        }
+      }
+    );
+  });
+};
+
+// Initialize jumble history table
+export const initializeJumbleTable = (): Promise<void> => {
+  return new Promise((resolve, reject) => {
+    db.run(`CREATE TABLE IF NOT EXISTS jumble_history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+      userId VARCHAR NOT NULL,
+      guildId VARCHAR NOT NULL,
+      videoId INTEGER NOT NULL,
+      videoTitle VARCHAR NOT NULL,
+      videoStart FLOAT NOT NULL,
+      videoDuration FLOAT NOT NULL,
+      audioId INTEGER NOT NULL,
+      audioTitle VARCHAR NOT NULL,
+      audioStart FLOAT NOT NULL,
+      audioDuration FLOAT NOT NULL,
+      timestamp INTEGER NOT NULL
+    )`, (err) => {
+      if (err) {
+        console.error('Error creating jumble_history table:', err);
+        reject(err);
+      } else {
+        console.log('jumble_history table initialized');
+        resolve();
       }
     });
   });

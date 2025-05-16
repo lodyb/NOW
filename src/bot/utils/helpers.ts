@@ -20,6 +20,13 @@ export const parseCommand = (message: Message): CommandArgs | null => {
   // Special handling for complex filter strings
   let content = message.content.substring(4).trim();
 
+  // Special handling for multi-word commands like "what was that"
+  if (content.startsWith('what was that')) {
+    return {
+      command: 'what was that'
+    };
+  }
+  
   // Special handling for "!!" command to repeat last command
   if (content === '!!') {
     return { 

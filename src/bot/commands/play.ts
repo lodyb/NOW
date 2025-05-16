@@ -1,6 +1,6 @@
 import { Message, AttachmentBuilder } from 'discord.js';
-import { findMediaBySearch, getRandomMedia } from '../../database/db';
-import { processMedia, parseFilterString, parseClipOptions, ProcessOptions, containsVideoFilters, isVideoFile, getMediaDuration } from '../../media/processor';
+import { findMediaBySearch, getRandomMedia, saveJumbleInfo } from '../../database/db';
+import { processMedia, parseFilterString, parseClipOptions, ProcessOptions, containsVideoFilters, isVideoFile, getMediaDuration, getMediaInfo } from '../../media/processor';
 import { safeReply } from '../utils/helpers';
 import { logFFmpegCommand } from '../../utils/logger';
 import path from 'path';
@@ -983,60 +983,6 @@ async function createSideBySideVideoNoAudio(
 }
 
 /**
- * Clean up temporary files after processing
- */
-function cleanupTempFiles(processedFiles: string[], gridFile: string): void {
-  const TEMP_DIR = path.join(process.cwd(), 'temp');
-  const filesToDelete = processedFiles.filter(file => file.includes(TEMP_DIR));
-  
-  filesToDelete.forEach(file => {
-    try {
-      if (fs.existsSync(file)) {
-        fs.unlinkSync(file);
-      }
-    } catch (error) {
-      console.error(`Error deleting temporary file ${file}:`, error);
-    }
-  });
-  
-  try {
-    if (fs.existsSync(gridFile)) {
-      fs.unlinkSync(gridFile);
-    }
-  } catch (error) {
-    console.error(`Error deleting grid file ${gridFile}:`, error);
-  }
-}
-
-/**
- * Get media information (duration, dimensions) using ffmpeg
- */
-async function getMediaInfo(filePath: string): Promise<{ duration?: number; width?: number; height?: number }> {
-  return new Promise((resolve, reject) => {
-    ffmpeg.ffprobe(filePath, (err, metadata) => {
-      if (err) {
-        reject(err);
-        return;
-      }
-      
-      const info: { duration?: number; width?: number; height?: number } = {};
-      
-      if (metadata.format && metadata.format.duration) {
-        info.duration = metadata.format.duration;
-      }
-      
-      const videoStream = metadata.streams?.find(stream => stream.codec_type === 'video');
-      if (videoStream) {
-        info.width = videoStream.width;
-        info.height = videoStream.height;
-      }
-      
-      resolve(info);
-    });
-  });
-}
-
-/**
  * Handle concatenation of random media clips
  * Creates a montage of short random segments from different media files
  */
@@ -1747,6 +1693,28 @@ export const handleJumblePlayback = async (
       ? Math.floor(Math.random() * (audioDuration - maxClipDuration)) 
       : 0;
     
+    // Save jumble info to database for later reference
+    try {
+      const jumbleInfo = {
+        userId: message.author.id,
+        guildId: message.guildId || '',
+        videoId: videoMedia.id,
+        videoTitle: videoMedia.title,
+        videoStart: videoStartTime,
+        videoDuration: maxClipDuration,
+        audioId: audioMedia.id,
+        audioTitle: audioMedia.title,
+        audioStart: audioStartTime,
+        audioDuration: maxClipDuration,
+        timestamp: Date.now()
+      };
+      
+      await saveJumbleInfo(jumbleInfo);
+    } catch (error) {
+      console.error('Error saving jumble info:', error);
+      // Continue even if saving jumble info fails
+    }
+    
     await statusMessage.edit(`Creating jumbled clips... ⏳`);
     
     // Create temp files for the clips
@@ -1879,5 +1847,34 @@ export const handleJumblePlayback = async (
   } catch (error) {
     console.error('Error handling jumble playback:', error);
     await safeReply(message, `An error occurred: ${(error as Error).message}`);
+  }
+};
+
+/**
+ * Clean up temporary files created during processing
+ */
+const cleanupTempFiles = (filePaths: string[], outputPath?: string): void => {
+  try {
+    // Clean up all the temporary files
+    for (const file of filePaths) {
+      if (fs.existsSync(file)) {
+        try {
+          fs.unlinkSync(file);
+        } catch (err) {
+          console.error(`Failed to delete temporary file ${file}:`, err);
+        }
+      }
+    }
+    
+    // Clean up the output file if specified
+    if (outputPath && fs.existsSync(outputPath)) {
+      try {
+        fs.unlinkSync(outputPath);
+      } catch (err) {
+        console.error(`Failed to delete output file ${outputPath}:`, err);
+      }
+    }
+  } catch (err) {
+    console.error('Error cleaning up temporary files:', err);
   }
 };

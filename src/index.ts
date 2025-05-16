@@ -15,6 +15,7 @@ import { handleImageCommand } from './bot/commands/image';
 import { handleWaveformCommand, handleSpectrogramCommand } from './bot/commands/visualization';
 import { handleHelpCommand } from './bot/commands/help';
 import { handleMahjongCommand } from './bot/commands/mahjong';
+import { handleWhatWasThatCommand } from './bot/commands/whatWasThat';
 import { handleEffectsCommand } from './bot/commands';
 import { handleMention } from './llm/mentionHandler';
 import apiRoutes from './web/api';
@@ -219,6 +220,12 @@ client.on(Events.MessageCreate, async (message) => {
           await saveUserLastCommand(message.author.id, message.author.username, message.content);
           break;
           
+        case 'what was that':
+        case 'whatwasthat':
+          await handleWhatWasThatCommand(message);
+          await saveUserLastCommand(message.author.id, message.author.username, message.content);
+          break;
+          
         case 'image':
           await handleImageCommand(
             message,
@@ -321,6 +328,10 @@ client.on(Events.MessageCreate, async (message) => {
                     break;
                   case 'upload':
                     await handleUploadCommand(message);
+                    break;
+                  case 'what was that':
+                  case 'whatwasthat':
+                    await handleWhatWasThatCommand(message);
                     break;
                   case 'waveform':
                     await handleWaveformCommand(message, args.searchTerm);
