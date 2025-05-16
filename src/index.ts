@@ -158,6 +158,15 @@ client.on(Events.MessageCreate, async (message) => {
       if (commandArgs) {
         // This is a command, don't handle it as a reply
         console.log(`Command in reply detected: ${commandArgs.command}, skipping reply handler`);
+        console.log(`Raw message content: ${JSON.stringify({
+          content: message.content,
+          author: message.author.username,
+          reference: message.reference.messageId,
+          command: commandArgs
+        }, null, 2)}`);
+        
+        // IMPORTANT: Don't return here - we need to fall through to the command handling below
+        // Skip the rest of the reply handling code but continue with command processing
       } else {
         // Not a command, process as a reply
         const repliedMessage = await message.channel.messages.fetch(message.reference.messageId);
@@ -179,7 +188,7 @@ client.on(Events.MessageCreate, async (message) => {
           
           // Use the LLM handler with the full conversation context
           await handleMention(message, contextPrompt, true); // Add isContextOnly flag
-          return;
+          return; // Only exit early for AI responses, not commands
         }
         // Case 2: Reply to someone else's message while mentioning the bot
         else if (message.mentions.has(client.user!)) {
@@ -190,7 +199,7 @@ client.on(Events.MessageCreate, async (message) => {
           
           // Use the LLM handler with the replied message as context
           await handleMention(message, contextPrompt);
-          return;
+          return; // Only exit early for AI responses, not commands
         }
       }
     } catch (error) {
