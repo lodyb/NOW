@@ -11,6 +11,16 @@ import { promisify } from 'util';
 // Directory for temporary downloads
 const TEMP_DIR = path.join(process.cwd(), 'temp');
 
+// Ensure temp directory exists
+if (!fs.existsSync(TEMP_DIR)) {
+  try {
+    fs.mkdirSync(TEMP_DIR, { recursive: true });
+    console.log(`Created temporary directory: ${TEMP_DIR}`);
+  } catch (error) {
+    console.error(`Error creating temp directory: ${error}`);
+  }
+}
+
 /**
  * Handle the remix command that processes media from message attachments or embeds
  */

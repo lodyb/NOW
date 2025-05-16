@@ -12,13 +12,19 @@ export interface CommandArgs {
 }
 
 export const parseCommand = (message: Message): CommandArgs | null => {
-  // Check if message starts with NOW prefix
-  if (!message.content.startsWith('NOW ')) {
+  // Extract the content without mentions to handle replies properly
+  let content = message.content;
+  
+  // Remove any mentions that might appear at the start of the message (common in replies)
+  content = content.replace(/^<@!?[0-9]+>\s*/, '').trim();
+  
+  // Check if message contains NOW prefix
+  if (!content.startsWith('NOW ')) {
     return null;
   }
 
   // Special handling for complex filter strings
-  let content = message.content.substring(4).trim();
+  content = content.substring(4).trim();
 
   // Special handling for multi-word commands like "what was that"
   if (content.startsWith('what was that')) {
@@ -66,7 +72,7 @@ export const parseCommand = (message: Message): CommandArgs | null => {
   const command = parts[0].toLowerCase();
   
   // Handle basic commands without search term
-  if (['upload', 'quiz', 'stop', 'help'].includes(command) && parts.length === 1) {
+  if (['upload', 'quiz', 'stop', 'help', 'remix', 'effects', 'filters'].includes(command) && parts.length === 1) {
     const result: CommandArgs = { command };
     if (filterString) {
       result.filterString = filterString;
