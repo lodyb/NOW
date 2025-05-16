@@ -165,7 +165,7 @@ async function findMediaUrl(message: Message): Promise<string | null> {
   if (message.embeds.length > 0) {
     console.log(`Found ${message.embeds.length} embeds in message`);
     for (const embed of message.embeds) {
-      console.log(`Checking embed type: ${embed.type || 'unknown'}`);
+      console.log(`Checking embed for media content`);
       
       // Check for video in the embed
       if (embed.video) {
