@@ -180,6 +180,13 @@ const processPromptTemplateCommand = async (content: string): Promise<{ isComman
 // Process an @NOW mention message
 export const handleMention = async (message: Message, contextPrompt?: string, isContextOnly: boolean = false): Promise<void> => {
   try {
+    // Skip processing for NOW commands
+    const messageContent = contextPrompt || message.content;
+    if (messageContent.trim().toUpperCase().startsWith('NOW ')) {
+      console.log('Skipping AI processing for NOW command:', messageContent.substring(0, 50));
+      return;
+    }
+    
     // Check if LLM service is ready
     if (!(await isLLMServiceReady())) {
       await safeReply(message, 'Sorry, the AI service is not available at the moment.');
