@@ -713,9 +713,9 @@ export const encodeMediaWithBitrates = async (
         console.log(`Successfully encoded to ${fileSizeMB}MB`);
         
         // Clean up pre-trimmed file if it exists
-        if (inputForEncoding !== inputPath && fs.existsSync(inputForEncoding)) {
+        if (inputForEncoding !== inputPath && fs.existsSync(preTrimPath)) {
           try {
-            fs.unlinkSync(inputForEncoding);
+            fs.unlinkSync(preTrimPath);
           } catch (error) {
             console.error(`Error cleaning up pre-trimmed file: ${error}`);
           }
@@ -901,7 +901,7 @@ export const generateThumbnailsForExistingMedia = (): Promise<void> => {
                   return thumbnails;
                 })
                 .catch(error => {
-                  console.error(`Failed to generate thumbnails for media ${row.id}:`, error);
+                  console.error(`Error generating thumbnails for media ${row.id}:`, error);
                   return [];
                 });
               promises.push(promise);
@@ -1205,7 +1205,7 @@ export const scanAndProcessUnprocessedMedia = async (): Promise<void> => {
                     }
                     return { id: media.id, success: true, message: 'Thumbnails generated' };
                   } catch (error) {
-                    console.error(`Error generating thumbnails for media ${media.id}:`, error);
+                    console.error(`Error generating thumbnails for media ${row.id}:`, error);
                     return { id: media.id, success: false, message: String(error) };
                   }
                 } else {
@@ -1545,7 +1545,6 @@ const applyFilters = (
     console.log(`Processing stacked filters: ${stackedFilters.join(', ')}`);
     
     // Check if macroblock is among the stacked filters (special case)
-    // If so, remember it but remove it to process separately
     let hasMacroblock = false;
     let macroBlockStrength = 0;
     const nonMacroblockFilters = stackedFilters.filter(filter => {
@@ -1568,7 +1567,7 @@ const applyFilters = (
 
     // Organize filters by type
     nonMacroblockFilters.forEach(filterName => {
-      const filterNameLower = filterName.toLowerCase();
+      const filterNameLower = filterName.toLowerCase().trim();
       
       if (filterNameLower in audioEffects) {
         audioFilterNames.push(filterNameLower);
@@ -1579,7 +1578,9 @@ const applyFilters = (
       }
     });
     
-    // Apply video noise for macroblock if needed
+    console.log(`Found ${audioFilterNames.length} audio filters: ${audioFilterNames.join(', ')}`);
+    
+    // Apply video noise and codec settings for macroblock if needed
     if (hasMacroblock && isVideo) {
       console.log(`Applying macroblock effect (strength: ${macroBlockStrength})`);
       // Apply noise filter first
@@ -1596,40 +1597,14 @@ const applyFilters = (
       console.log(`Applied macroblock effect with q:v=${Math.min(300000, Math.max(2, Math.floor(2 + (macroBlockStrength * 3))))}`);
     }
     
-    // Handle audio filters in compatible groups to avoid filter graph errors
+    // Handle audio filters - this runs even when macroblock is present
     if (audioFilterNames.length > 0) {
-      console.log(`Processing ${audioFilterNames.length} audio filters in batches`);
+      console.log(`Processing ${audioFilterNames.length} audio filters sequentially`);
       
-      // Group audio filters by category to prevent conflicts
-      const filterGroups = {
-        pitch: audioFilterNames.filter(name => 
-          ['chipmunk', 'demon', 'nightcore', 'vaporwave', 'phonk'].includes(name)).slice(0, 1),
-        bass: audioFilterNames.filter(name => 
-          ['bass', 'bassboosted', 'extremebass', 'distortbass', 'earrape', 'nuked'].includes(name)).slice(0, 1),
-        distort: audioFilterNames.filter(name => 
-          ['corrupt', 'bitcrush', 'crunch', 'crushcrush', 'deepfried', 'distortion', 'hardclip'].includes(name)).slice(0, 1),
-        echo: audioFilterNames.filter(name => 
-          ['echo', 'aecho', 'reverb', 'metallic', 'hall', 'mountains'].includes(name)).slice(0, 2),
-        robot: audioFilterNames.filter(name => 
-          ['robotize', 'telephone', 'alien'].includes(name)).slice(0, 1),
-        other: audioFilterNames.filter(name => 
-          !['chipmunk', 'demon', 'nightcore', 'vaporwave', 'phonk', 
-            'bass', 'bassboosted', 'extremebass', 'distortbass', 'earrape', 'nuked',
-            'corrupt', 'bitcrush', 'crunch', 'crushcrush', 'deepfried', 'distortion', 'hardclip',
-            'echo', 'aecho', 'reverb', 'metallic', 'hall', 'mountains',
-            'robotize', 'telephone', 'alien'].includes(name)).slice(0, 2)
-      };
-      
-      // Build filter strings for each compatible group
-      Object.entries(filterGroups).forEach(([groupName, filterNames]) => {
-        if (filterNames.length === 0) return;
-        
-        const groupFilterStrings = filterNames.map(name => audioEffects[name]);
-        if (groupFilterStrings.length > 0) {
-          const combinedFilters = groupFilterStrings.join(',');
-          console.log(`Applying ${groupName} audio filters: ${filterNames.join(', ')}`);
-          command.audioFilters(combinedFilters);
-        }
+      // Apply each filter individually in sequence
+      audioFilterNames.forEach((filterName, index) => {
+        console.log(`Applying audio filter ${index + 1}/${audioFilterNames.length}: ${filterName}`);
+        command.audioFilters(audioEffects[filterName]);
       });
     }
     
