@@ -78,56 +78,118 @@ export const processFilterChain = async (
     // 2. Parse the filter string if provided
     if (filterString && filterString !== '{}') {
       const parsedFilters = parseFilterString(filterString);
-      const filterKeys = Object.keys(parsedFilters);
       
-      // Process each filter in sequence
-      for (let i = 0; i < filterKeys.length; i++) {
-        const filterKey = filterKeys[i];
-        const filterValue = parsedFilters[filterKey];
+      // Handle stacked filters - process them one by one
+      if (parsedFilters.__stacked_filters && parsedFilters.__stacked_filters.length > 0) {
+        const stackedFilters = parsedFilters.__stacked_filters;
         
-        // Apply this individual filter
-        const filterOutputFilename = `filter_${i}_${randomId}_${path.basename(currentInputPath)}`;
-        
-        if (progressCallback) {
-          await progressCallback(
-            `Applying filter: ${filterKey}${filterValue ? `=${filterValue}` : ''}`, 
-            0
-          );
-        }
-        
-        // Create filter options for this single filter
-        const filterOptions: ProcessOptions = {
-          filters: { [filterKey]: filterValue },
-          enforceDiscordLimit: false,
-          progressCallback: async (stage, progress) => {
-            if (progressCallback) {
-              await progressCallback(
-                `Filter ${i + 1}/${filterKeys.length}: ${filterKey}`, 
-                progress
-              );
-            }
+        for (let i = 0; i < stackedFilters.length; i++) {
+          const filterName = stackedFilters[i];
+          const filterOutputFilename = `filter_${i}_${randomId}_${path.basename(currentInputPath)}`;
+          
+          if (progressCallback) {
+            await progressCallback(
+              `Applying filter: ${filterName}`,
+              0
+            );
           }
-        };
-        
-        // Process the media with this single filter
-        const processedPath = await processMedia(
-          currentInputPath, 
-          filterOutputFilename, 
-          filterOptions
+          
+          // Create filter options for this single filter with a specific filter name
+          const filterOptions: ProcessOptions = {
+            filters: { __stacked_filters: [filterName] }, // Apply just this one filter
+            enforceDiscordLimit: false,
+            progressCallback: async (stage, progress) => {
+              if (progressCallback) {
+                await progressCallback(
+                  `Filter ${i + 1}/${stackedFilters.length}: ${filterName}`,
+                  progress
+                );
+              }
+            }
+          };
+          
+          // Process the media with this single filter
+          try {
+            const processedPath = await processMedia(
+              currentInputPath,
+              filterOutputFilename,
+              filterOptions
+            );
+            
+            // Update the current input path for the next filter
+            if (!isFirstStep) {
+              // Clean up the previous temporary file
+              try {
+                fs.unlinkSync(currentInputPath);
+              } catch (err) {
+                console.error('Error cleaning up temporary file:', err);
+              }
+            }
+            
+            currentInputPath = processedPath;
+            isFirstStep = false;
+          } catch (error) {
+            console.error(`Error applying filter '${filterName}':`, error);
+            throw new Error(`Failed to apply filter '${filterName}': ${error instanceof Error ? error.message : String(error)}`);
+          }
+        }
+      } else {
+        // Handle regular filters
+        const filterKeys = Object.keys(parsedFilters).filter(key => 
+          key !== '__stacked_filters' && 
+          key !== '__raw_complex_filter' && 
+          key !== '__overlay_path'
         );
         
-        // Update the current input path for the next filter
-        if (!isFirstStep) {
-          // Clean up the previous temporary file
-          try {
-            fs.unlinkSync(currentInputPath);
-          } catch (err) {
-            console.error('Error cleaning up temporary file:', err);
+        // Process each filter in sequence
+        for (let i = 0; i < filterKeys.length; i++) {
+          const filterKey = filterKeys[i];
+          const filterValue = parsedFilters[filterKey];
+          
+          // Apply this individual filter
+          const filterOutputFilename = `filter_${i}_${randomId}_${path.basename(currentInputPath)}`;
+          
+          if (progressCallback) {
+            await progressCallback(
+              `Applying filter: ${filterKey}${filterValue ? `=${filterValue}` : ''}`, 
+              0
+            );
           }
+          
+          // Create filter options for this single filter
+          const filterOptions: ProcessOptions = {
+            filters: { [filterKey]: filterValue },
+            enforceDiscordLimit: false,
+            progressCallback: async (stage, progress) => {
+              if (progressCallback) {
+                await progressCallback(
+                  `Filter ${i + 1}/${filterKeys.length}: ${filterKey}`, 
+                  progress
+                );
+              }
+            }
+          };
+          
+          // Process the media with this single filter
+          const processedPath = await processMedia(
+            currentInputPath, 
+            filterOutputFilename, 
+            filterOptions
+          );
+          
+          // Update the current input path for the next filter
+          if (!isFirstStep) {
+            // Clean up the previous temporary file
+            try {
+              fs.unlinkSync(currentInputPath);
+            } catch (err) {
+              console.error('Error cleaning up temporary file:', err);
+            }
+          }
+          
+          currentInputPath = processedPath;
+          isFirstStep = false;
         }
-        
-        currentInputPath = processedPath;
-        isFirstStep = false;
       }
     }
     
