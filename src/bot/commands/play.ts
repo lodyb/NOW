@@ -1,15 +1,14 @@
+// We'll keep the specialized playback modes but refactor the basic playback
 import { Message, AttachmentBuilder } from 'discord.js';
 import { findMediaBySearch, getRandomMedia, saveJumbleInfo } from '../../database/db';
-import { processMedia, parseFilterString, parseClipOptions, ProcessOptions, containsVideoFilters, isVideoFile, getMediaDuration, getMediaInfo } from '../../media/processor';
+import { parseClipOptions, parseFilterString, processMedia, isVideoFile, getMediaInfo, getMediaDuration, ProcessOptions } from '../../media/processor';
+import { processMediaCommand } from './mediaCommand';
 import { safeReply } from '../utils/helpers';
-import { logFFmpegCommand } from '../../utils/logger';
 import path from 'path';
 import fs from 'fs';
 import crypto from 'crypto';
-import ffmpeg from 'fluent-ffmpeg';
-import { promisify } from 'util';
 import { exec, execSync } from 'child_process';
-import fetch from 'node-fetch';
+import ffmpeg from 'fluent-ffmpeg';
 
 // Function type declarations for forward references
 interface StereoSplitPlaybackHandler {
@@ -65,182 +64,13 @@ export const handlePlayCommand = async (
       return;
     }
 
-    // Original single media playback code
-    let media;
-    
-    if (!searchTerm) {
-      // Get random media when no search term provided
-      const randomResults = await getRandomMedia(1);
-      if (randomResults.length === 0) {
-        await safeReply(message, 'No media found in the database');
-        return;
-      }
-      media = randomResults[0];
-    } else {
-      // Check if filters require video-only content
-      let requireVideo = false;
-      
-      if (filterString) {
-        try {
-          const parsedFilters = parseFilterString(filterString);
-          requireVideo = containsVideoFilters(parsedFilters) || 'overlay' in parsedFilters;
-          
-          if (requireVideo) {
-            console.log(`Video filters detected, searching for video files only`);
-          }
-        } catch (err) {
-          console.error('Error parsing filters:', err);
-        }
-      }
-      
-      const results = await findMediaBySearch(searchTerm, requireVideo);
-      
-      if (results.length === 0) {
-        if (requireVideo) {
-          await safeReply(message, `No video files found for "${searchTerm}" with those video filters. Try a different search or filters compatible with audio files.`);
-        } else {
-          await safeReply(message, `No media found for "${searchTerm}"`);
-        }
-        return;
-      }
-      media = results[0];
-    }
-
-    // Send initial status message
-    const statusMessage = await message.reply(`Processing request${filterString ? ' with filters' : ''}... ⏳`);
-
-    // Determine the file path by standardizing the normalized path format
-    let filePath;
-    
-    if (media.normalizedPath) {
-      const filename = path.basename(media.normalizedPath);
-      // Ensure normalized path starts with 'norm_'
-      const normalizedFilename = filename.startsWith('norm_') ? filename : `norm_${filename}`;
-      filePath = path.join(process.cwd(), 'normalized', normalizedFilename);
-    } else {
-      filePath = media.filePath;
-    }
-    
-    // Apply filters or clip options if provided
-    if (filterString || (clipOptions && Object.keys(clipOptions).length > 0)) {
-      try {
-        // Update status message
-        await statusMessage.edit(`Applying filters... ⚙️`);
-        
-        const randomId = crypto.randomBytes(4).toString('hex');
-        const outputFilename = `temp_${randomId}_${path.basename(filePath)}`;
-        const options: ProcessOptions = {};
-        
-        // Check for overlay filter and attached files
-        let overlayPath: string | undefined;
-        if (filterString && filterString.toLowerCase().includes('overlay') && message.attachments.size > 0) {
-          await statusMessage.edit(`Downloading attachment for overlay... ⏳`);
-          
-          const attachment = message.attachments.first();
-          if (attachment) {
-            try {
-              // Download the attachment
-              const response = await fetch(attachment.url);
-              const buffer = await response.arrayBuffer();
-              
-              // Save to temp file
-              const ext = path.extname(attachment.name || '.png').toLowerCase();
-              const supportedExts = ['.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp'];
-              
-              if (!supportedExts.includes(ext)) {
-                await statusMessage.edit(`Unsupported overlay file format. Supported formats: ${supportedExts.join(', ')}`);
-                return;
-              }
-              
-              overlayPath = path.join(process.cwd(), 'temp', `overlay_${randomId}${ext}`);
-              fs.writeFileSync(overlayPath, Buffer.from(buffer));
-              
-              await statusMessage.edit(`Attachment downloaded, applying overlay... ⏳`);
-            } catch (err) {
-              console.error('Error downloading attachment:', err);
-              await statusMessage.edit(`Error downloading attachment: ${(err as Error).message}`);
-              return;
-            }
-          }
-        }
-        
-        if (filterString) {
-          options.filters = parseFilterString(filterString);
-          
-          // Set overlay path if we have one
-          if (overlayPath) {
-            options.filters.__overlay_path = overlayPath;
-          }
-        }
-        
-        if (clipOptions) {
-          options.clip = clipOptions;
-        }
-        
-        // Always enforce Discord limit when posting in a text channel
-        options.enforceDiscordLimit = true;
-        
-        // Add progress callback function
-        options.progressCallback = async (stage, progress) => {
-          try {
-            await statusMessage.edit(`${stage} (${Math.round(progress * 100)}%)... ⏳`);
-          } catch (err) {
-            console.error('Error updating status message:', err);
-          }
-        };
-        
-        logFFmpegCommand(`Processing with options ${JSON.stringify(options)} for Discord message`);
-        try {
-          filePath = await processMedia(filePath, outputFilename, options);
-          
-          // Update status message when processing is complete
-          await statusMessage.edit(`Processing complete! Uploading... 📤`);
-        } catch (error) {
-          console.error('Error processing media:', error);
-          
-          // Handle different types of errors with user-friendly messages
-          let errorMessage = `Error applying filters: ${(error as Error).message} ❌`;
-          
-          // Special handling for unknown filter errors
-          if ((error as Error).message.includes('Unknown filter') || 
-              (error as Error).message.includes('Invalid argument')) {
-            errorMessage = `Invalid filter: "${filterString}" isn't a supported filter. Try a valid filter like volume, bass, treble, reverse, etc. ❌`;
-          } 
-          // Special handling for timeout errors
-          else if ((error as Error).message.includes('timeout')) {
-            errorMessage = `Processing timeout: Your filter is too complex or resource-intensive. Try a simpler filter. ❌`;
-          }
-          
-          await statusMessage.edit(errorMessage);
-          return;
-        }
-        
-        // Clean up overlay file if it exists
-        if (overlayPath && fs.existsSync(overlayPath)) {
-          try {
-            fs.unlinkSync(overlayPath);
-          } catch (err) {
-            console.error('Error cleaning up overlay file:', err);
-          }
-        }
-      } catch (error) {
-        console.error('Error processing media:', error);
-        await statusMessage.edit(`Error applying filters: ${(error as Error).message} ❌`);
-        return;
-      }
-    }
-    
-    if (!fs.existsSync(filePath)) {
-      console.error(`File not found: ${filePath}`);
-      await statusMessage.edit('Error: Media file not found ❌');
-      return;
-    }
-    
-    // Final update: delete status message since we're about to send the actual file
-    await statusMessage.delete().catch(err => console.error('Failed to delete status message:', err));
-    
-    const attachment = new AttachmentBuilder(filePath);
-    await safeReply(message, { files: [attachment] });
+    // Use the unified media command handler for standard playback
+    await processMediaCommand(message, {
+      searchTerm,
+      filterString,
+      clipOptions,
+      fromReply: false
+    });
   } catch (error) {
     console.error('Error handling play command:', error);
     await safeReply(message, `An error occurred: ${(error as Error).message}`);
@@ -1877,4 +1707,4 @@ const cleanupTempFiles = (filePaths: string[], outputPath?: string): void => {
   } catch (err) {
     console.error('Error cleaning up temporary files:', err);
   }
-};
+}

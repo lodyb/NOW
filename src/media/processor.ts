@@ -46,6 +46,9 @@ export interface ProcessOptions {
   overlayAttachment?: Buffer; // Added to support message attachments for overlay
 }
 
+// Export the MediaFilter type as ParsedFilter for external use
+export type ParsedFilter = MediaFilter;
+
 // Define interface for media row from database
 interface MediaRow {
   id: number;
@@ -2003,9 +2006,9 @@ const videoEffects: VideoEffects = {
   'vmirror': () => 'vflip', // Simple vertical mirror
   
   // Mirror effects
-  'haah': () => 'split[a][b];[a]crop=iw/2:ih:0:0,hflip[a1];[b]crop=iw/2:ih:iw/2:0,vflip[b1];[a1][b1]hstack[top];[top][top]vstack', // Mirror left side to right
+  'haah': () => 'split[a][b];[a]crop=iw/2:ih:0:0,hflip[a1];[b]crop=iw/2:ih/2:0,vflip[b1];[a1][b1]hstack[top];[top][top]vstack', // Mirror left side to right
   
-  'waaw': () => 'split[a][b];[a]crop=iw/2:ih:iw/2:0,hflip[left];[b][left]overlay=0:0', // Mirror right side to left
+  'waaw': () => 'split[a][b];[a]crop=iw/2:ih/2:0,halfrate[left];[b][left]overlay=0:0', // Mirror right side to left
   
   'hooh': () => 'split[a][b];[a]crop=iw:ih/2:0:0[top];[top]vflip[bottom];[b][bottom]overlay=0:H/2', // Mirror top to bottom
 

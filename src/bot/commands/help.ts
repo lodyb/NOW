@@ -154,3 +154,186 @@ export const handleHelpCommand = async (message: Message, helpTopic?: string) =>
     await safeReply(message, `Error displaying help: ${(error as Error).message}`);
   }
 };
+
+// New help command file for filter chaining capabilities
+export const handleFilterHelpCommand = async (message: Message, topic?: string) => {
+  try {
+    if (topic) {
+      switch (topic.toLowerCase()) {
+        case 'play':
+          await sendPlayHelp(message);
+          break;
+        case 'remix':
+          await sendRemixHelp(message);
+          break;
+        case 'filters':
+          await sendFilterHelp(message);
+          break;
+        case 'special':
+          await sendSpecialModesHelp(message);
+          break;
+        default:
+          await sendGeneralHelp(message);
+      }
+    } else {
+      await sendGeneralHelp(message);
+    }
+  } catch (error) {
+    console.error('Error in help command:', error);
+    await safeReply(message, 'An error occurred while displaying help');
+  }
+};
+
+const sendGeneralHelp = async (message: Message) => {
+  const helpText = `
+**NOW Bot Help**
+
+**Basic Commands:**
+• \`NOW play [search term]\` - Play media from the database
+• \`NOW remix\` - Process media from a message or reply with filters
+• \`NOW quiz\` - Start a quiz game in your voice channel
+
+**Detailed Help:**
+• \`NOW help play\` - Show detailed play command help
+• \`NOW help remix\` - Show detailed remix command help
+• \`NOW help filters\` - Show available filters and effects
+• \`NOW help special\` - Show special playback modes
+
+Need more help? Use \`NOW help [topic]\` for specific information.
+`;
+  await safeReply(message, helpText);
+};
+
+const sendPlayHelp = async (message: Message) => {
+  const helpText = `
+**NOW Play Command Help**
+
+**Basic Usage:**
+• \`NOW play [search term]\` - Play media matching the search term
+• \`NOW play\` - Play random media from database
+
+**With Filters:**
+• \`NOW play [search] {filter1=value1,filter2=value2}\` - Apply filters to media
+• \`NOW play [search] {reverse,bass=10,volume=2}\` - Chain multiple filters
+• \`NOW play imperial march {chipmunk+reverb}\` - Apply effect combinations
+
+**With Clipping:**
+• \`NOW play [search] clip=5s\` - Play a 5-second clip
+• \`NOW play [search] start=10s clip=5s\` - Play a 5-second clip starting at 10s
+• \`NOW play [search] start=1:30 clip=10s\` - Start at 1 minute, 30 seconds
+
+**Special Modes:**
+• \`NOW play concat\` - Combine random clips
+• \`NOW play [search] {stereo}\` - Create stereo split with two media sources
+• \`NOW play [search] {jumble}\` - Mix video from one source with audio from another
+• \`NOW play [search] multi=4\` - Create a grid of multiple videos
+
+You can combine clip options with filters: \`NOW play theme clip=10s {reverse}\`
+`;
+  await safeReply(message, helpText);
+};
+
+const sendRemixHelp = async (message: Message) => {
+  const helpText = `
+**NOW Remix Command Help**
+
+The remix command processes media from messages or replies.
+
+**Usage:**
+• Reply to a message with media and type \`NOW remix\` - Basic processing
+• Reply and add filters: \`NOW remix {bass=10,reverse}\` - Chain multiple filters
+• Include clip options: \`NOW remix clip=5s start=10s\` - Create a specific clip
+• Combine both: \`NOW remix clip=5s {bass=10,reverse}\` - Clip with filters
+
+**Works With:**
+• Message attachments (video, audio, gifs)
+• Embedded media in messages
+• Direct links to media files (.mp4, .mp3, .ogg, etc.)
+
+**Example Filter Chains:**
+• \`NOW remix {bass=10,volume=2}\` - Boost bass and volume
+• \`NOW remix {reverse,echo}\` - Reverse audio and add echo effect
+• \`NOW remix {chipmunk+reverb}\` - Apply chipmunk and reverb effects together
+• \`NOW remix {vhs,huerotate=2}\` - Add VHS effect and rotating hue
+
+Use \`NOW help filters\` to see all available filters and effects.
+`;
+  await safeReply(message, helpText);
+};
+
+const sendFilterHelp = async (message: Message) => {
+  const helpText = `
+**NOW Filter Help**
+
+Filters can be chained together with commas. Example: \`{reverse,bass=10,volume=2}\`
+Effect combinations can be created with plus signs. Example: \`{chipmunk+reverb}\`
+
+**Basic Audio Filters:**
+• \`volume=2\` - Change volume (0.1 to 5)
+• \`bass=10\` - Boost bass (1 to 20)
+• \`treble=5\` - Boost treble (1 to 20)
+• \`speed=0.5\` - Change speed (0.5 = slower, 2 = faster)
+• \`reverse\` - Reverse audio/video
+
+**Audio Effects:**
+• \`echo\` or \`aecho\` - Add echo
+• \`reverb\` - Add reverb effect
+• \`chipmunk\` - High-pitched voice
+• \`demon\` - Low-pitched voice
+• \`robot\` or \`robotize\` - Robot voice
+• \`telephone\` - Old phone effect
+• \`bitcrush\` - Lo-fi effect
+• \`phaser\`, \`flanger\`, \`tremolo\`, \`chorus\` - Audio effects
+• \`bassboosted\`, \`earrape\`, \`nuked\` - Extreme audio
+
+**Video Effects:**
+• \`huerotate\` - Rainbow color cycle effect
+• \`pixelize\` - Pixelate the video
+• \`vhs\` - Old VHS tape look
+• \`oldfilm\` - Vintage film effect
+• \`kaleidoscope\` - Mirror effect
+• \`dreameffect\` - Dreamy blur look
+• \`hmirror\` - Horizontal mirror
+• \`vmirror\` - Vertical mirror
+
+**Special Combinations:**
+• \`destroy8bit+chipmunk\` - 8-bit destruction with chipmunk voice
+• \`vhs+reverse\` - Reversed VHS tape look
+• \`vaporwave\` - Vaporwave aesthetic effect
+• \`phonk\` - Phonk music style effect
+
+There are 50+ filters available! Experiment with combinations.
+`;
+  await safeReply(message, helpText);
+};
+
+const sendSpecialModesHelp = async (message: Message) => {
+  const helpText = `
+**NOW Special Playback Modes Help**
+
+**Multi-Media Grid:**
+• \`NOW play [search] multi=4\` - Create 2x2 grid with 4 videos
+• \`NOW play [search] multi=9\` - Create 3x3 grid with 9 videos
+• With advanced options:
+  - \`NOW play [search] multi=4 {mdelay=500}\` - 500ms delay between videos
+  - \`NOW play [search] multi=4 {mspeed=1.2}\` - Speed progression between videos
+  - \`NOW play [search] multi=4 {msync}\` - Sync all videos to same duration
+
+**Concat (Clip Montage):**
+• \`NOW play concat\` - Create montage of random clips
+• \`NOW play concat {count=6}\` - Specify number of clips (2-10)
+• \`NOW play concat clip=3s\` - Set duration for each clip
+
+**Stereo Split:**
+• \`NOW play [search] {stereo}\` or \`NOW play [search] {split}\` - Separate audio channels
+  Creates a side-by-side video with different media in left/right audio channels
+
+**Jumble:**
+• \`NOW play [search] {jumble}\` - Mix video from one source with audio from another
+  Creates unpredictable combinations, often with funny results
+
+You can add other filters to these special modes too!
+\`NOW play [search] multi=4 {vhs,msync}\` - Create a synced VHS-style grid
+`;
+  await safeReply(message, helpText);
+};
