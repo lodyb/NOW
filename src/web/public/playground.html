@@ -843,7 +843,14 @@
         // Get media URL
         const getMediaUrl = (mediaItem) => {
           if (!mediaItem || !mediaItem.normalizedPath) return '';
-          return `/media/normalized/${mediaItem.normalizedPath}`;
+          
+          // Handle paths that might already start with /media/normalized
+          const path = mediaItem.normalizedPath;
+          if (path.startsWith('/media/') || path.startsWith('http')) {
+            return path;
+          }
+          
+          return `/media/normalized/${path}`;
         };
         
         // Computed Properties
