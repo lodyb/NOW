@@ -1306,7 +1306,7 @@ export const getMediaInfo = async (filePath: string): Promise<{
 };
 
 // Audio and video effects definitions
-const audioEffects: Record<string, string> = {
+export const audioEffects: Record<string, string> = {
   chipmunk: 'asetrate=44100*1.5,aresample=44100,atempo=0.75',
   echo: 'aecho=0.8:0.9:1000:0.3',
   bass: 'bass=g=10:f=110:w=0.7',
@@ -1371,7 +1371,7 @@ const audioEffects: Record<string, string> = {
   crystalizer: 'crystalizer=i=5'
 };
 
-const videoEffects: Record<string, string> = {
+export const videoEffects: Record<string, string> = {
   invert: 'negate',
   mirror: 'hflip',
   flip: 'vflip',

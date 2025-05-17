@@ -70,11 +70,17 @@ const upload = multer({
 router.use('/media/normalized', express.static(NORMALIZED_DIR));
 router.use('/media/uploads', express.static(UPLOADS_DIR));
 router.use('/media/thumbnails', express.static(THUMBNAILS_DIR));
+router.use('/media/processed', express.static(PROCESSED_DIR));
 router.use('/gallery', express.static(path.join(process.cwd(), 'gallery')));
 
 // Serve SPA from root
 router.get('/', (req, res) => {
   res.sendFile(path.join(process.cwd(), 'src/web/public/index.html'));
+});
+
+// Serve playground page
+router.get('/playground', (req, res) => {
+  res.sendFile(path.join(process.cwd(), 'src/web/public/playground.html'));
 });
 
 // Serve gallery page
@@ -325,6 +331,91 @@ router.post('/api/generate-thumbnails', async (req, res) => {
   try {
     generateThumbnailsForExistingMedia();
     res.json({ success: true, message: 'Thumbnail generation started for existing media' });
+  } catch (error) {
+    res.status(500).json({ error: (error as Error).message });
+  }
+});
+
+// Playground API endpoint to process media with filters
+router.post('/api/playground/process', express.json(), async (req, res) => {
+  try {
+    const { mediaId, filterString, clipOptions } = req.body;
+    
+    if (!mediaId) {
+      return res.status(400).json({ error: 'Media ID is required' });
+    }
+    
+    // Get the media file path
+    const media = await getMediaById(mediaId);
+    if (!media || !media.normalizedPath) {
+      return res.status(404).json({ error: 'Media not found or not processed yet' });
+    }
+    
+    const inputPath = path.join(NORMALIZED_DIR, media.normalizedPath);
+    if (!fs.existsSync(inputPath)) {
+      return res.status(404).json({ error: 'Media file not found' });
+    }
+    
+    // Generate a unique output filename
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    const ext = path.extname(media.normalizedPath);
+    const outputFilename = `playground_${uniqueSuffix}${ext}`;
+    
+    // Import the filter chain processor
+    const { processFilterChain } = require('../media/chainProcessor');
+    
+    // Send initial processing status
+    sendMediaStatusUpdate(mediaId, 'processing', { type: 'playground' });
+    
+    // Process the media with the requested filters
+    const outputPath = await processFilterChain(
+      inputPath,
+      outputFilename,
+      filterString,
+      clipOptions,
+      async (stage: string, progress: number) => {
+        // Send progress updates via SSE
+        sseClients.forEach(client => {
+          client.write(`data: ${JSON.stringify({
+            type: 'playgroundProgress',
+            mediaId,
+            stage,
+            progress
+          })}\n\n`);
+        });
+      },
+      true // enforce Discord limit
+    );
+    
+    // Get the relative path for the web URL
+    const relativePath = '/media/processed/' + path.basename(outputPath);
+    
+    // Send completion status
+    sendMediaStatusUpdate(mediaId, 'complete', { 
+      type: 'playground',
+      resultPath: relativePath
+    });
+    
+    res.json({ 
+      success: true, 
+      resultPath: relativePath
+    });
+    
+  } catch (error) {
+    console.error('Playground processing error:', error);
+    res.status(500).json({ error: (error as Error).message });
+  }
+});
+
+// API endpoint to get all available filters
+router.get('/api/playground/filters', (req, res) => {
+  try {
+    const { audioEffects, videoEffects } = require('../media/processor');
+    
+    res.json({
+      audio: Object.keys(audioEffects),
+      video: Object.keys(videoEffects)
+    });
   } catch (error) {
     res.status(500).json({ error: (error as Error).message });
   }
