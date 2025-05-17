@@ -933,13 +933,9 @@
         const getMediaUrl = (mediaItem) => {
           if (!mediaItem || !mediaItem.normalizedPath) return '';
           
-          // Handle paths that might already start with /media/normalized
-          const path = mediaItem.normalizedPath;
-          if (path.startsWith('/media/') || path.startsWith('http')) {
-            return path;
-          }
-          
-          return `/media/normalized/${path}`;
+          // Extract just the filename without any path prefixes
+          const filename = mediaItem.normalizedPath.split('/').pop();
+          return `/media/normalized/${filename}`;
         };
         
         // Computed Properties
