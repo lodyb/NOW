@@ -666,15 +666,16 @@
             try {
               const data = JSON.parse(event.data);
               
-              if (data.type === 'mediaStatus' && data.status) {
-                if (data.type === 'playground' && data.status === 'complete' && data.resultPath) {
-                  processedMediaUrl.value = data.resultPath;
-                  isProcessing.value = false;
-                  showMessage('Media processing complete!', 'success');
+              if (data.type === 'mediaStatus') {
+                if (data.mediaId === selectedMedia.value?.id && data.status === 'complete') {
+                  // If this is a playground result
+                  if (data.resultPath) {
+                    processedMediaUrl.value = data.resultPath;
+                    isProcessing.value = false;
+                    showMessage('Media processing complete!', 'success');
+                  }
                 }
-              }
-              
-              if (data.type === 'playgroundProgress') {
+              } else if (data.type === 'playgroundProgress') {
                 processingStatus.value = `${data.stage}: ${Math.round(data.progress * 100)}%`;
                 processingProgress.value = data.progress;
               }
