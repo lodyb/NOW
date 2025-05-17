@@ -122,8 +122,14 @@ async function testFilter(
             command.videoFilters('geq=r=X/W:g=Y/H:b=1-((X-W/2)*(X-W/2)+(Y-H/2)*(Y-H/2))/(W*W/4)');
             break;
           case 'oscilloscope':
-            // Simple visualization for testing
-            command.videoFilters('rgbtestsrc=size=640x480');
+            // Using lavfi input for test pattern that works with oscilloscope
+            command
+              .input('sine=frequency=440:duration=3')
+              .inputFormat('lavfi')
+              .outputOptions('-vf rgbtestsrc=rate=30:size=640x480[v];[v]oscilloscope=s=640x480:r=1')
+              .outputOptions('-t 3')
+              .outputOptions('-c:v libx264')
+              .outputOptions('-pix_fmt yuv420p');
             break;
         }
       } else if (isVideo) {
