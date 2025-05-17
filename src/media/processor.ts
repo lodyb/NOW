@@ -1552,34 +1552,12 @@ const applyFilters = (
         console.log(`Applying video effect: ${filterNameLower}`);
         
         // Special handling for filters that need complex filtering
-        if (filterNameLower === 'haah') {
-          command.complexFilter('split[a][b];[a]crop=iw/2:ih:0:0,hflip[a1];[b]crop=iw/2:ih:iw/2:0[b1];[a1][b1]hstack');
-        } else if (filterNameLower === 'waaw') {
-          command.complexFilter('split[a][b];[a]crop=iw:ih/2:0:0,hflip[a1];[b]crop=iw:ih/2:0:ih/2[b1];[a1][b1]vstack');
-        } else if (filterNameLower === 'kaleidoscope') {
-          command.complexFilter('split[a][b];[a]crop=iw/2:ih/2:0:0,hflip[a1];[b]crop=iw/2:ih/2:iw/2:0,vflip[b1];[a1][b1]hstack[top];[top]split[t1][t2];[t1][t2]vstack');
-        } else if (filterNameLower === 'v360_cube' || filterNameLower === 'v360_fisheye' || 
-                  filterNameLower === 'planet' || filterNameLower === 'tiny_planet') {
-          // These 360 filters need special handling to work properly
-          switch(filterNameLower) {
-            case 'v360_cube':
-              command.complexFilter('v360=input=equirect:output=cube:w=1080:h=720');
-              break;
-            case 'v360_fisheye':
-              command.complexFilter('v360=input=equirect:output=fisheye:w=720:h=720');
-              break;
-            case 'planet':
-              command.complexFilter('v360=input=equirect:output=stereographic:w=720:h=720');
-              break;
-            case 'tiny_planet':
-              command.complexFilter('v360=input=equirect:output=stereographic:w=720:h=720:pitch=-90');
-              break;
-          }
-        } else if (filterNameLower === 'oscilloscope') {
-          command.complexFilter('oscilloscope=s=1:r=1');
-        } else {
-          command.videoFilters(videoEffects[filterNameLower]);
+        if (applyComplexVideoFilter(command, filterNameLower)) {
+          // Filter was handled by the complex filter function
+          return;
         }
+        
+        command.videoFilters(videoEffects[filterNameLower]);
       }
     });
     return;
@@ -1840,3 +1818,74 @@ export const generateAudioWaveform = async (audioPath: string): Promise<string[]
     throw error;
   }
 };
+
+/**
+ * Handle complex video filters that require special treatment
+ * These filters can't be applied using regular videoFilters and need complexFilter with specific configs
+ */
+function applyComplexVideoFilter(
+  command: ffmpeg.FfmpegCommand,
+  filterName: string
+): boolean {
+  switch (filterName.toLowerCase()) {
+    case 'haah':
+      command.complexFilter([
+        { filter: 'split', options: '', outputs: ['a', 'b'] },
+        { filter: 'crop', options: 'iw/2:ih:0:0', inputs: 'a', outputs: 'a1' },
+        { filter: 'hflip', inputs: 'a1', outputs: 'a2' },
+        { filter: 'crop', options: 'iw/2:ih:iw/2:0', inputs: 'b', outputs: 'b1' },
+        { filter: 'hstack', inputs: ['a2', 'b1'] }
+      ]);
+      return true;
+      
+    case 'waaw':
+      command.complexFilter([
+        { filter: 'split', options: '', outputs: ['a', 'b'] },
+        { filter: 'crop', options: 'iw:ih/2:0:0', inputs: 'a', outputs: 'a1' },
+        { filter: 'hflip', inputs: 'a1', outputs: 'a2' },
+        { filter: 'crop', options: 'iw:ih/2:0:ih/2', inputs: 'b', outputs: 'b1' },
+        { filter: 'vstack', inputs: ['a2', 'b1'] }
+      ]);
+      return true;
+      
+    case 'kaleidoscope':
+      command.complexFilter([
+        { filter: 'split', options: '', outputs: ['a', 'b'] },
+        { filter: 'crop', options: 'iw/2:ih/2:0:0', inputs: 'a', outputs: 'a1' },
+        { filter: 'hflip', inputs: 'a1', outputs: 'a2' },
+        { filter: 'crop', options: 'iw/2:ih/2:iw/2:0', inputs: 'b', outputs: 'b1' },
+        { filter: 'vflip', inputs: 'b1', outputs: 'b2' },
+        { filter: 'hstack', inputs: ['a2', 'b2'], outputs: 'top' },
+        { filter: 'split', inputs: 'top', outputs: ['t1', 't2'] },
+        { filter: 'vstack', inputs: ['t1', 't2'] }
+      ]);
+      return true;
+      
+    case 'v360_cube':
+      command.complexFilter([
+        { filter: 'v360', options: 'input=equirect:output=cube:w=1080:h=720' }
+      ]);
+      return true;
+      
+    case 'planet':
+      command.complexFilter([
+        { filter: 'v360', options: 'input=equirect:output=stereographic:w=720:h=720' }
+      ]);
+      return true;
+      
+    case 'tiny_planet':
+      command.complexFilter([
+        { filter: 'v360', options: 'input=equirect:output=stereographic:w=720:h=720:pitch=-90' }
+      ]);
+      return true;
+      
+    case 'oscilloscope':
+      command.complexFilter([
+        { filter: 'oscilloscope', options: 'size=720x480:rate=1:zoom=1' }
+      ]);
+      return true;
+      
+    default:
+      return false;
+  }
+}
