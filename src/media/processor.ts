@@ -1538,28 +1538,54 @@ const applyFilters = (
   // Handle stacked filters
   if (filters.__stacked_filters && filters.__stacked_filters.length > 0) {
     console.log(`Processing stacked filters: ${filters.__stacked_filters.join(', ')}`);
+    
+    // Group filters by type (audio/video) for proper chaining
+    const audioFilterStrings: string[] = [];
+    const videoFilterStrings: string[] = [];
+    
+    // Collect filter strings by type
     filters.__stacked_filters.forEach(filterName => {
       const filterNameLower = filterName.toLowerCase();
       
-      // Apply built-in audio effects
+      // Collect audio filter strings
       if (filterNameLower in audioEffects) {
-        console.log(`Applying audio effect: ${filterNameLower}`);
-        command.audioFilters(audioEffects[filterNameLower]);
+        audioFilterStrings.push(audioEffects[filterNameLower]);
       }
       
-      // Apply built-in video effects (only if this is a video)
+      // Collect video filter strings (only if this is a video)
       if (isVideo && filterNameLower in videoEffects) {
-        console.log(`Applying video effect: ${filterNameLower}`);
-        
         // Special handling for filters that need complex filtering
-        if (applyComplexVideoFilter(command, filterNameLower)) {
-          // Filter was handled by the complex filter function
-          return;
+        if (!['haah', 'waaw', 'kaleidoscope', 'v360_cube', 'planet', 'tiny_planet', 'oscilloscope'].includes(filterNameLower)) {
+          videoFilterStrings.push(videoEffects[filterNameLower]);
         }
-        
-        command.videoFilters(videoEffects[filterNameLower]);
       }
     });
+    
+    // Apply special complex video filters separately
+    if (isVideo) {
+      for (const filterName of filters.__stacked_filters) {
+        const filterNameLower = filterName.toLowerCase();
+        if (['haah', 'waaw', 'kaleidoscope', 'v360_cube', 'planet', 'tiny_planet', 'oscilloscope'].includes(filterNameLower)) {
+          console.log(`Applying complex video effect: ${filterNameLower}`);
+          applyComplexVideoFilter(command, filterNameLower);
+        }
+      }
+    }
+    
+    // Apply combined audio filters as a single chain
+    if (audioFilterStrings.length > 0) {
+      const combinedAudioFilters = audioFilterStrings.join(',');
+      console.log(`Applying chained audio filters: ${combinedAudioFilters}`);
+      command.audioFilters(combinedAudioFilters);
+    }
+    
+    // Apply combined video filters as a single chain (for non-complex ones)
+    if (isVideo && videoFilterStrings.length > 0) {
+      const combinedVideoFilters = videoFilterStrings.join(',');
+      console.log(`Applying chained video filters: ${combinedVideoFilters}`);
+      command.videoFilters(combinedVideoFilters);
+    }
+    
     return;
   }
   

@@ -55,7 +55,6 @@ export const processFilterChain = async (
     // 1. Apply clip options first if provided
     if (clipOptions && Object.keys(clipOptions).length > 0) {
       const clipOutputFilename = `clip_${randomId}_${path.basename(inputPath)}`;
-      const clipOutputPath = path.join(TEMP_DIR, clipOutputFilename);
       
       if (progressCallback) {
         await progressCallback('Applying clip options', 0);
@@ -79,59 +78,55 @@ export const processFilterChain = async (
     if (filterString && filterString !== '{}') {
       const parsedFilters = parseFilterString(filterString);
       
-      // Handle stacked filters - process them one by one
+      // Handle stacked filters - apply all filters at once for better chaining
       if (parsedFilters.__stacked_filters && parsedFilters.__stacked_filters.length > 0) {
         const stackedFilters = parsedFilters.__stacked_filters;
+        const filterOutputFilename = `filter_combined_${randomId}_${path.basename(currentInputPath)}`;
         
-        for (let i = 0; i < stackedFilters.length; i++) {
-          const filterName = stackedFilters[i];
-          const filterOutputFilename = `filter_${i}_${randomId}_${path.basename(currentInputPath)}`;
+        if (progressCallback) {
+          await progressCallback(
+            `Applying filters: ${stackedFilters.join(', ')}`,
+            0
+          );
+        }
+        
+        // Create filter options with ALL filters combined
+        const filterOptions: ProcessOptions = {
+          filters: { __stacked_filters: stackedFilters }, // Apply all filters at once
+          enforceDiscordLimit: false,
+          progressCallback: async (stage, progress) => {
+            if (progressCallback) {
+              await progressCallback(
+                `Applying ${stackedFilters.length} filters`,
+                progress
+              );
+            }
+          }
+        };
+        
+        // Process the media with all filters at once
+        try {
+          const processedPath = await processMedia(
+            currentInputPath,
+            filterOutputFilename,
+            filterOptions
+          );
           
-          if (progressCallback) {
-            await progressCallback(
-              `Applying filter: ${filterName}`,
-              0
-            );
+          // Update the current input path for the next step
+          if (!isFirstStep) {
+            // Clean up the previous temporary file
+            try {
+              fs.unlinkSync(currentInputPath);
+            } catch (err) {
+              console.error('Error cleaning up temporary file:', err);
+            }
           }
           
-          // Create filter options for this single filter with a specific filter name
-          const filterOptions: ProcessOptions = {
-            filters: { __stacked_filters: [filterName] }, // Apply just this one filter
-            enforceDiscordLimit: false,
-            progressCallback: async (stage, progress) => {
-              if (progressCallback) {
-                await progressCallback(
-                  `Filter ${i + 1}/${stackedFilters.length}: ${filterName}`,
-                  progress
-                );
-              }
-            }
-          };
-          
-          // Process the media with this single filter
-          try {
-            const processedPath = await processMedia(
-              currentInputPath,
-              filterOutputFilename,
-              filterOptions
-            );
-            
-            // Update the current input path for the next filter
-            if (!isFirstStep) {
-              // Clean up the previous temporary file
-              try {
-                fs.unlinkSync(currentInputPath);
-              } catch (err) {
-                console.error('Error cleaning up temporary file:', err);
-              }
-            }
-            
-            currentInputPath = processedPath;
-            isFirstStep = false;
-          } catch (error) {
-            console.error(`Error applying filter '${filterName}':`, error);
-            throw new Error(`Failed to apply filter '${filterName}': ${error instanceof Error ? error.message : String(error)}`);
-          }
+          currentInputPath = processedPath;
+          isFirstStep = false;
+        } catch (error) {
+          console.error(`Error applying filters: ${stackedFilters.join(', ')}`, error);
+          throw new Error(`Failed to apply filters: ${error instanceof Error ? error.message : String(error)}`);
         }
       } else {
         // Handle regular filters

@@ -448,3 +448,120 @@ export async function testSpecificFilters(
   console.log(`Filter testing complete. Results saved to ${reportPath}`);
   return reportPath;
 }
+
+// New function to test chained audio filters
+/**
+ * Test a chain of audio filters to verify they're properly applied together
+ * @param filterNames Array of filter names to chain together
+ * @returns Test result with success/failure info
+ */
+export async function testAudioFilterChain(
+  filterNames: string[]
+): Promise<FilterTestResult> {
+  // Create test directory if it doesn't exist
+  if (!fs.existsSync(TEST_DIR)) {
+    fs.mkdirSync(TEST_DIR, { recursive: true });
+  }
+  
+  const startTime = Date.now();
+  const testSample = await createTestSample(false); // Audio sample
+  const filterChainName = filterNames.join('_');
+  const outputPath = path.join(TEST_DIR, `chain_${filterChainName}_${crypto.randomBytes(4).toString('hex')}.ogg`);
+  
+  return new Promise((resolve) => {
+    // Set up timeout for the test
+    const timeoutId = setTimeout(() => {
+      console.log(`Filter chain test for ${filterChainName} timed out after 15 seconds`);
+      try {
+        fs.unlinkSync(testSample);
+      } catch (err) {
+        console.error(`Error cleaning up test sample: ${err}`);
+      }
+      
+      resolve({
+        filterName: filterChainName,
+        filterType: 'audio',
+        success: false,
+        error: 'Timeout after 15 seconds',
+        duration: 15.0
+      });
+    }, 15000);
+    
+    try {
+      const command = ffmpeg(testSample);
+      
+      // Build complex filter chain by concatenating filter strings
+      let combinedFilterString = '';
+      
+      filterNames.forEach((name, index) => {
+        if (name in audioEffects) {
+          // Append filter expressions with commas
+          if (combinedFilterString) {
+            combinedFilterString += ',';
+          }
+          combinedFilterString += audioEffects[name];
+        }
+      });
+      
+      // Apply the combined filter string as a single filter
+      if (combinedFilterString) {
+        console.log(`Testing audio filter chain: ${combinedFilterString}`);
+        command.audioFilters(combinedFilterString);
+      }
+      
+      command.outputOptions('-c:a libopus')
+        .save(outputPath)
+        .on('end', () => {
+          clearTimeout(timeoutId);
+          const duration = (Date.now() - startTime) / 1000;
+          try {
+            fs.unlinkSync(testSample);
+          } catch (err) {
+            console.error(`Error cleaning up test sample: ${err}`);
+          }
+          
+          console.log(`Filter chain test complete: ${duration.toFixed(2)}s`);
+          resolve({
+            filterName: filterChainName,
+            filterType: 'audio',
+            success: true,
+            duration,
+            outputPath
+          });
+        })
+        .on('error', (err) => {
+          clearTimeout(timeoutId);
+          try {
+            fs.unlinkSync(testSample);
+          } catch (cleanupErr) {
+            console.error(`Error cleaning up test sample: ${cleanupErr}`);
+          }
+          
+          console.log(`Filter chain test failed: ${err.message}`);
+          resolve({
+            filterName: filterChainName,
+            filterType: 'audio',
+            success: false,
+            error: err.message,
+            duration: (Date.now() - startTime) / 1000
+          });
+        });
+    } catch (err) {
+      clearTimeout(timeoutId);
+      try {
+        fs.unlinkSync(testSample);
+      } catch (cleanupErr) {
+        console.error(`Error cleaning up test sample: ${cleanupErr}`);
+      }
+      
+      console.log(`Filter chain setup failed: ${err instanceof Error ? err.message : String(err)}`);
+      resolve({
+        filterName: filterChainName,
+        filterType: 'audio',
+        success: false,
+        error: err instanceof Error ? err.message : String(err),
+        duration: (Date.now() - startTime) / 1000
+      });
+    }
+  });
+}
