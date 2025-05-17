@@ -464,7 +464,7 @@ async function init() {
       console.log('Starting scan for unprocessed media...');
       scanAndProcessUnprocessedMedia()
         .then(() => console.log('Media processing scan completed'))
-        .catch(error => console.error('Error processing media files:', error));
+        .catch((error: Error) => console.error('Error processing media files:', error));
       
       // Generate thumbnails for existing videos without them
       generateThumbnailsForExistingMedia()

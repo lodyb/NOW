@@ -291,8 +291,6 @@ export const processMedia = async (
       await options.progressCallback?.("Processing media", 0.3);
       
       return await new Promise((resolve, reject) => {
-        let progressTracker = { percent: 0 };
-        
         executeWithTimeout(
           command
             .outputOptions('-c:a libopus')
@@ -300,9 +298,8 @@ export const processMedia = async (
             .save(outputPath),
           MAX_PROCESSING_TIME_MS,
           (progress) => {
-            progressTracker = progress;
-            if (progress.percent) {
-              const progressValue = 0.3 + (progress.percent / 100 * 0.6);
+            if (progress.percent !== undefined) {
+              const progressValue = 0.3 + ((progress.percent || 0) / 100 * 0.6);
               options.progressCallback?.("Processing", progressValue);
             }
           }
@@ -559,7 +556,7 @@ export const encodeMediaWithAttempts = async (
   }
   
   // All attempts failed
-  console.error(`Failed to encode ${path.basename(inputPath)} under ${MAX_FILE_SIZE_MB}MB after all attempts`);
+  console.error(`Failed to encode ${path.basename(inputPath)}`);
   return null;
 };
 
@@ -928,6 +925,14 @@ export const parseFilterString = (filterString: string): MediaFilter => {
   const content = filterString.substring(1, filterString.length - 1);
   const filters: MediaFilter = {};
   
+  // Handle comma-separated list of filters without key-value pairs
+  // This handles cases like {jumble,nuked,waaw} which should be treated as an array of filters
+  if (content.includes(',') && !content.includes('=')) {
+    // Split by comma and trim each filter name
+    filters.__stacked_filters = content.split(',').map(f => f.trim());
+    return filters;
+  }
+  
   // Check if this is a raw complex filter string (no key=value format)
   if (!content.includes('=') && !content.includes('+')) {
     // Before assuming it's a raw filter, check if it's a known custom effect
@@ -1005,9 +1010,9 @@ export const parseClipOptions = (args: string[]): ClipOptions => {
   
   args.forEach(arg => {
     if (arg.startsWith('clip=')) {
-      options.duration = arg.substring(5);
+      options.duration = arg.substring(arg.indexOf('=') + 1);
     } else if (arg.startsWith('start=')) {
-      options.start = arg.substring(6);
+      options.start = arg.substring(arg.indexOf('=') + 1);
     }
   });
   
@@ -1015,91 +1020,105 @@ export const parseClipOptions = (args: string[]): ClipOptions => {
 };
 
 /**
- * Generate waveform thumbnail for audio files
+ * Execute a command with timeout
  */
-export const generateAudioWaveform = async (audioPath: string): Promise<string> => {
-  if (!fs.existsSync(audioPath)) {
-    throw new Error(`Audio file not found: ${audioPath}`);
-  }
+const executeWithTimeout = <T>(
+  command: any, 
+  timeout: number, 
+  onProgress?: (progress: { percent: number | undefined }) => void
+): Promise<T> => {
+  let timer: NodeJS.Timeout;
   
-  try {
-    const baseFilename = path.basename(audioPath, path.extname(audioPath));
-    const waveformPath = path.join(THUMBNAILS_DIR, `${baseFilename}_waveform.png`);
-    const spectrogramPath = path.join(THUMBNAILS_DIR, `${baseFilename}_spectrogram.png`);
-    
-    // Save paths to database
-    const normalizedFilename = path.basename(audioPath);
-    const waveformUrl = `/media/thumbnails/${baseFilename}_waveform.png`;
-    const spectrogramUrl = `/media/thumbnails/${baseFilename}_spectrogram.png`;
-    
-    try {
-      // Generate waveform with improved colors and contrast
-      await new Promise<void>((resolve) => {
-        ffmpeg(audioPath)
-          .outputOptions([
-            '-filter_complex', 'compand,showwavespic=s=640x480',
-          ])
-          .output(waveformPath)
-          .on('end', () => {
-            console.log(`Waveform generation complete for ${baseFilename}`);
-            resolve();
-          })
-          .on('error', (err) => {
-            console.error(`Waveform generation error for ${baseFilename}:`, err);
-            resolve(); // Continue despite error
-          })
-          .run();
-      });
+  return new Promise<T>((resolve, reject) => {
+    if (typeof command.on === 'function') {
+      // Handle FFmpeg commands
+      command
+        .on('progress', (progress: { percent?: number }) => {
+          if (onProgress && typeof progress.percent !== 'undefined') {
+            onProgress({ percent: progress.percent });
+          }
+        })
+        .on('end', () => {
+          clearTimeout(timer);
+          resolve({} as T);
+        })
+        .on('error', (error: Error) => {
+          clearTimeout(timer);
+          reject(error);
+        });
       
-      // Generate spectrogram with improved colors and contrast
-      await new Promise<void>((resolve) => {
-        ffmpeg(audioPath)
-          .outputOptions([
-            '-lavfi', 'showspectrumpic=s=640x480',
-          ])
-          .output(spectrogramPath)
-          .on('end', () => {
-            console.log(`Spectrogram generation complete for ${baseFilename}`);
-            resolve();
-          })
-          .on('error', (err) => {
-            console.error(`Spectrogram generation error for ${baseFilename}:`, err);
-            resolve(); // Continue despite error
-          })
-          .run();
-      });
+      // Set up timeout for FFmpeg commands
+      timer = setTimeout(() => {
+        try {
+          // Using any to access internal property
+          const cmd = command as any;
+          if (cmd._ffmpegProc) {
+            cmd._ffmpegProc.kill('SIGTERM');
+          }
+        } catch (e) {
+          console.error('Failed to kill FFmpeg process:', e);
+        }
+        reject(new Error('timeout'));
+      }, timeout);
       
-      console.log(`Generated waveform and spectrogram for ${baseFilename}`);
-    } catch (err) {
-      console.error(`Error generating audio visualizations for ${audioPath}:`, err);
-      // Continue execution despite visualization error
+    } else if (command instanceof Promise) {
+      // Handle regular promises
+      command
+        .then((result) => {
+          clearTimeout(timer);
+          resolve(result);
+        })
+        .catch((error) => {
+          clearTimeout(timer);
+          reject(error);
+        });
+      
+      // Set up the timeout for promises
+      timer = setTimeout(() => {
+        reject(new Error('timeout'));
+      }, timeout);
+    } else {
+      reject(new Error('Invalid command type passed to executeWithTimeout'));
     }
-    
-    // Always update the database record whether visualizations succeeded or not
-    updateMediaWaveform(normalizedFilename, [waveformUrl, spectrogramUrl]);
-    
-    return waveformUrl;
-  } catch (err) {
-    console.error(`Error in generateAudioWaveform for ${audioPath}:`, err);
-    // Return empty string but don't throw error to prevent stopping the media processing
-    return '';
-  }
+  });
 };
 
-// Update waveform in database
-const updateMediaWaveform = (normalizedFilename: string, waveformPaths: string[]) => {
-  const waveformJson = JSON.stringify(waveformPaths);
-  db.run(
-    `UPDATE media SET thumbnails = ? WHERE normalizedPath LIKE ? AND (thumbnails IS NULL OR thumbnails = '')`,
-    [waveformJson, `%${normalizedFilename}`],
-    (err) => {
-      if (err) {
-        console.error(`Error updating waveform for ${normalizedFilename}:`, err);
-      } else {
-        console.log(`Updated thumbnails for ${normalizedFilename} with waveform and spectrogram`);
+/**
+ * Execute a command with timeout and progress reporting
+ */
+const executeWithTimeoutAndProgress = <T>(
+  command: ffmpeg.FfmpegCommand,
+  timeout: number,
+  onProgress: (progress: { percent: number | undefined }) => void
+): Promise<T> => {
+  return new Promise<T>((resolve, reject) => {
+    let timer: NodeJS.Timeout;
+    
+    // Monitor the command
+    command
+      .on('progress', (progress) => {
+        onProgress({ percent: progress.percent });
+      })
+      .on('end', () => {
+        clearTimeout(timer);
+        resolve({} as T);
+      })
+      .on('error', (error) => {
+        clearTimeout(timer);
+        reject(error);
+      })
+      .run();
+    
+    // Set up the timeout
+    timer = setTimeout(() => {
+      // Using any to access internal property
+      const cmd = command as any;
+      if (cmd._ffmpegProc) {
+        cmd._ffmpegProc.kill('SIGTERM'); // Terminate the ffmpeg process
       }
-    }
-  );
+      reject(new Error('timeout'));
+    }, timeout);
+  });
 };
 
 /**
@@ -1235,1179 +1254,437 @@ const updateNormalizedPathInDatabase = (mediaId: number, normalizedPath: string)
   });
 };
 
-interface BitrateCalculation {
-  audioBitrateKbps: number;
-  videoBitrateKbps: number | null;
-  trimDurationSeconds: number | null;
-}
-
 /**
- * Calculate optimal bitrates to fit under MAX_FILE_SIZE_BYTES
+ * Get detailed media information using ffprobe
  */
-const calculateBitrates = (
-  durationSeconds: number,
-  isVideo: boolean,
-  preferredAudioKbps = 160,
-  minAcceptableVideoKbps = 150
-): BitrateCalculation => {
-  const totalBits = MAX_FILE_SIZE_BYTES * 8 * 0.97; // 3% buffer for container overhead
-  let audioBitrateKbps = preferredAudioKbps;
-  let videoBitrateKbps: number | null = null;
-  let trimDurationSeconds: number | null = null;
-
-  // Calculate total available bitrate
-  const totalBitrateKbps = totalBits / durationSeconds / 1000;
-  
-  if (!isVideo) {
-    // For audio files, we can use all bitrate for audio
-    audioBitrateKbps = Math.min(192, totalBitrateKbps);
-    
-    // If even audio-only is too big, we need to trim
-    if (audioBitrateKbps < 64) {
-      // Minimum acceptable audio quality
-      audioBitrateKbps = 64;
-      trimDurationSeconds = Math.floor(totalBits / (audioBitrateKbps * 1000));
-    }
-    
-    return { audioBitrateKbps, videoBitrateKbps: null, trimDurationSeconds };
-  }
-  
-  // For video files, only reduce audio if needed
-  if (totalBitrateKbps < audioBitrateKbps + minAcceptableVideoKbps) {
-    audioBitrateKbps = Math.max(64, totalBitrateKbps - minAcceptableVideoKbps);
-  }
-
-  videoBitrateKbps = totalBitrateKbps - audioBitrateKbps;
-
-  // If video bitrate still too low, calculate how much to trim
-  if (videoBitrateKbps < minAcceptableVideoKbps) {
-    const requiredBitrate = audioBitrateKbps + minAcceptableVideoKbps;
-    const newMaxDuration = totalBits / (requiredBitrate * 1000);
-    trimDurationSeconds = Math.floor(newMaxDuration);
-    videoBitrateKbps = minAcceptableVideoKbps;
-  }
-
-  return { audioBitrateKbps, videoBitrateKbps, trimDurationSeconds };
-};
-
-/**
- * Apply ffmpeg filters to a command
- */
-const applyFilters = (command: ffmpeg.FfmpegCommand, filters: MediaFilter, isVideo: boolean): void => {
-  try {
-    // Log filter application attempt
-    logFFmpegCommand(`Applying filters to ${isVideo ? 'video' : 'audio'} file: ${JSON.stringify(filters)}`);
-    
-    // Track speed changes for sync
-    let speedChanges: { type: string; value: number }[] = [];
-    
-    // Handle stacked filters
-    if (filters.__stacked_filters && Array.isArray(filters.__stacked_filters)) {
-      logFFmpegCommand(`Applying stacked filters: ${filters.__stacked_filters.join('+')}`);
-      
-      for (const filterName of filters.__stacked_filters) {
-        const [name, valueStr] = filterName.split('=');
-        const value = valueStr ? parseFloat(valueStr) : 1;
-        
-        if (isVideo) {
-          // Track speed-affecting filters for later sync
-          if (name === 'chipmunk') {
-            speedChanges.push({ type: 'pitch', value: value });
-          } else if (name === 'demon') {
-            speedChanges.push({ type: 'pitch', value: value });
-          } else if (name === 'vaporwave') {
-            speedChanges.push({ type: 'asetrate', value: Math.max(0.7, 0.9 - value * 0.1) });
-          } else if (name === 'phonk') {
-            speedChanges.push({ type: 'atempo', value: 0.85 });
-            speedChanges.push({ type: 'asetrate', value: Math.max(0.85, 1 - value * 0.1) });
-          }
-        }
-        
-        // Apply this individual filter
-        applyCustomEffect(command, name, value, isVideo);
-      }
-      
-      // Apply final sync if video has speed changes
-      if (isVideo && speedChanges.length > 0) {
-        syncAudioVideoSpeed(command, speedChanges);
-      }
-      
-      return; // Exit after processing stacked filters
-    }
-    
-    // Check for overlay filter
-    if ('overlay' in filters || filters.__raw_complex_filter === 'overlay') {
-      if (filters.__overlay_path) {
-        const overlayPath = filters.__overlay_path;
-        
-        if (!fs.existsSync(overlayPath)) {
-          throw new Error(`Overlay file not found: ${overlayPath}`);
-        }
-        
-        // Use a unique output label for overlay to avoid conflicts
-        const outputVideoLabel = 'v_overlay';
-        const outputAudioLabel = 'a_out';
-        
-        // Apply overlay with FFmpeg input and complex filter
-        command.input(overlayPath);
-        command.complexFilter(
-          `[0:v][1:v]overlay=0:0[${outputVideoLabel}];[0:a]acopy[${outputAudioLabel}]`,
-          [outputVideoLabel, outputAudioLabel]
-        );
-        
-        // Use the standard outputOptions method with each mapping
-        command.outputOptions(`-map [${outputVideoLabel}]`);
-        command.outputOptions(`-map [${outputAudioLabel}]`);
-        
-        logFFmpegCommand(`Applied overlay filter with file: ${path.basename(overlayPath)}`);
-        
-        // Remove processed filters
-        delete filters.overlay;
-        delete filters.__raw_complex_filter;
-        delete filters.__overlay_path;
-        return; // Exit after processing overlay
-      } else {
-        throw new Error('Overlay file path not provided. Please attach an image to your message.');
-      }
-    }
-    
-    // Handle filter aliases (map user-friendly names to actual filter names)
-    Object.keys(filters).forEach(key => {
-      if (key in filterAliases) {
-        const actualFilterName = filterAliases[key];
-        filters[actualFilterName] = filters[key];
-        delete filters[key];
-        logFFmpegCommand(`Mapped filter alias '${key}' to '${actualFilterName}'`);
-      }
-    });
-    
-    // Handle macroblock effect
-    if ('macroblock' in filters) {
-      const strength = Number(filters.macroblock) || 1;
-      const qValue = Math.min(300000, Math.max(2, Math.floor(2 + (strength * 3))));
-      
-      if (isVideo) {
-        // Apply noise filter first
-        command.videoFilters('noise=alls=12:allf=t');
-        
-        // Use the right codec and settings for macroblock effect
-        command.outputOptions('-c:v mpeg2video');
-        command.outputOptions(`-q:v ${qValue}`);
-        
-        // If high strength, add bitstream noise filter
-        if (strength > 5) {
-          command.outputOptions(`-bsf:v noise=${Math.max(100, 1000000/strength)}`);
-        }
-      }
-      
-      logFFmpegCommand(`Applied macroblock effect with q:v=${qValue}`);
-      delete filters.macroblock;
-      // Don't return - allow filter combinations
-    }
-
-    // Handle datamosh/glitch effects with more reliable method
-    if ('datamosh' in filters || 'glitch' in filters) {
-      const glitchLevel = Number(filters.datamosh || filters.glitch) || 1;
-      
-      if (isVideo) {
-        // Use simple video filter for glitch/datamosh on video - more reliable than bitstream filter
-        const amount = Math.max(1, Math.min(40, Math.floor(glitchLevel * 5)));
-        command.videoFilters(`noise=c0s=${amount}:c1s=${amount}:c2s=${amount}:all_seed=${Math.floor(Math.random() * 10000)}`);
-      } else {
-        // For audio-only files, use a more reliable audio distortion
-        command.audioFilters(`afftdn=nf=-${Math.min(30, glitchLevel * 5)}`);
-      }
-      
-      logFFmpegCommand(`Applied datamosh/glitch effect with level ${glitchLevel}`);
-      delete filters.datamosh;
-      delete filters.glitch;
-      // Don't return - allow filter combinations
-    }
-    
-    // Handle noise generation
-    if ('noise' in filters) {
-      const type = String(filters.noise).toLowerCase();
-      
-      if (isVideo) {
-        if (type === 'mono' || type === 'bw') {
-          // Black and white noise using standard filter
-          command.videoFilters(`noise=c0s=20:c1s=0:c2s=0:all_seed=${Math.floor(Math.random() * 10000)}`);
-        } else {
-          // Colored noise using standard filter
-          command.videoFilters(`noise=c0s=20:c1s=20:c2s=20:all_seed=${Math.floor(Math.random() * 10000)}`);
-        }
-        
-        // Add audio white noise
-        command.audioFilters(`aeval=0.05*random(0)`);
-      } else {
-        // Audio only noise
-        command.audioFilters(`aeval=0.05*random(0)`);
-      }
-      
-      logFFmpegCommand(`Applied ${type === 'mono' || type === 'bw' ? 'monochrome' : 'color'} noise filter`);
-      delete filters.noise;
-      // Don't return - allow filter combinations
-    }
-    
-    // Handle pixelshift effect (forcing different pixel format)
-    if ('pixelshift' in filters) {
-      if (!isVideo) {
-        logFFmpegCommand('Pixelshift only works with video files, skipping');
-        delete filters.pixelshift;
-      } else {
-        const mode = String(filters.pixelshift).toLowerCase();
-        // Different pixel formats to create interesting corruption effects
-        const pixelFormats: Record<string, string> = {
-          'rgb': 'rgb24',
-          'yuv': 'yuv422p16le',
-          'gray': 'gray16le',
-          'bgr': 'bgr444le',
-          'gbr': 'gbrp10le',
-          'yuv10': 'yuv420p10le',
-          'yuv16': 'yuv420p16le'
-        };
-        
-        // Default to yuv16 if not specified
-        const pixFormat = pixelFormats[mode] || 'yuv420p16le';
-        
-        // Use a filter to interpret the video in a different colorspace
-        command.videoFilters(`format=${pixFormat},format=yuv420p`);
-        
-        logFFmpegCommand(`Applied pixelshift using ${pixFormat} colorspace`);
-        delete filters.pixelshift;
-      }
-    }
-    
-    // Handle overlay filter
-    if ('overlay' in filters && isVideo) {
-      if (!filters.__overlay_path) {
-        throw new Error('Overlay file path not provided. Please attach an image to your message.');
-      }
-      
-      // Get overlay path from the special property
-      const overlayPath = filters.__overlay_path;
-      
-      if (!fs.existsSync(overlayPath)) {
-        throw new Error(`Overlay file not found: ${overlayPath}`);
-      }
-      
-      // Apply overlay filter with complex filtergraph
-      // Format: [0:v][1:v]overlay=0:0[v]
-      // This places the overlay (input 1) on top of the base video (input 0)
-      command.input(overlayPath);
-      command.complexFilter('[0:v][1:v]overlay=0:0[v];[0:a]acopy[a]', ['v', 'a']);
-      
-      logFFmpegCommand(`Applied overlay filter with file: ${path.basename(overlayPath)}`);
-      delete filters.overlay; // Remove the filter so it's not processed again
-    }
-
-    // Detect if we're trying to apply video filters to audio
-    if (!isVideo) {
-      const videoFiltersRequested = Object.keys(filters).filter(key => 
-        filterTypes.video.has(key) && !filterTypes.audio.has(key)
-      );
-      
-      if (videoFiltersRequested.length > 0) {
-        const err = new Error(
-          `Cannot apply video filters to audio file: ${videoFiltersRequested.join(', ')}. ` +
-          `This file is audio-only and doesn't support video filters.`
-        );
-        logFFmpegError('Filter type mismatch', err);
-        throw err;
-      }
-    }
-    
-    // Check for any filters that need special handling
-    const specialFilters = [...filterTypes.complex].filter(key => key in filters);
-    
-    // Handle special filters first
-    if (specialFilters.includes('reverse')) {
-      if (isVideo) {
-        // For video, reverse both audio and video streams
-        command.complexFilter('[0:v]reverse[v];[0:a]areverse[a]', ['v', 'a']);
-        logFFmpegCommand('Applied complex filter: reverse for video+audio');
-      } else {
-        // For audio, just reverse the audio stream
-        command.audioFilters('areverse');
-        logFFmpegCommand('Applied audio filter: areverse');
-      }
-      // Remove the special filter so it's not processed again
-      delete filters.reverse;
-    }
-
-    // Handle speed filter (affects both audio and video timing)
-    if ('speed' in filters) {
-      const speedValue = Number(filters.speed);
-      if (isNaN(speedValue) || speedValue <= 0) {
-        throw new Error('Speed filter must be a positive number (e.g., 0.5 for half speed, 2 for double speed)');
-      }
-
-      // For video: setpts=1/speed*PTS (e.g., setpts=2*PTS for half speed)
-      if (isVideo) {
-        // Apply video speed filter
-        command.videoFilters(`setpts=${1/speedValue}*PTS`);
-        logFFmpegCommand(`Applied video speed filter: setpts=${1/speedValue}*PTS`);
-
-        // Apply audio speed filter
-        applyAudioSpeedFilter(command, speedValue);
-      } else {
-        // Audio-only file
-        applyAudioSpeedFilter(command, speedValue);
-      }
-
-      // Remove the speed filter so it's not processed again
-      delete filters.speed;
-    }
-    
-    // Check that filters are appropriate for media type
-    if (!isVideo) {
-      // For audio files, only apply known audio filters
-      Object.keys(filters).forEach(key => {
-        if (filterTypes.video.has(key) && !filterTypes.audio.has(key)) {
-          throw new Error(`Cannot apply video filter '${key}' to audio-only file.`);
-        }
-      });
-    } 
-
-    // Filter keys by type
-    const audioFilters: string[] = [];
-    const videoFilters: string[] = [];
-    
-    // Process remaining filters
-    Object.entries(filters).forEach(([key, value]) => {
-      const filterValue = typeof value === 'number' ? value.toString() : value;
-      const filterStr = `${key}=${filterValue}`;
-      
-      // Skip filters that don't exist in our defined sets to avoid errors
-      if (filterTypes.audio.has(key)) {
-        audioFilters.push(filterStr);
-      } else if (isVideo && filterTypes.video.has(key)) {
-        videoFilters.push(filterStr);
-      } else if (!filterTypes.audio.has(key) && !filterTypes.video.has(key)) {
-        console.log(`Warning: ignoring unknown filter "${key}"`);
-      }
-    });
-    
-    // Apply standard filters
-    if (audioFilters.length > 0) {
-      const audioFilterStr = audioFilters.join(',');
-      command.audioFilters(audioFilterStr);
-      logFFmpegCommand(`Applied audio filters: ${audioFilterStr}`);
-    }
-    
-    if (videoFilters.length > 0 && isVideo) {
-      const videoFilterStr = videoFilters.join(',');
-      command.videoFilters(videoFilterStr);
-      logFFmpegCommand(`Applied video filters: ${videoFilterStr}`);
-    }
-
-    // Add custom effects to the filter system
-    const customEffectKeys = Object.keys(filters).filter(key => 
-      audioEffects[key.toLowerCase() as keyof typeof audioEffects] || 
-      (isVideo && videoEffects[key.toLowerCase() as keyof typeof videoEffects])
-    );
-
-    if (customEffectKeys.some(key => {
-      // Make sure we pass a string or number to applyCustomEffect, not an array
-      const value = filters[key];
-      // Handle case where value is an array by using the first element or a default
-      const effectValue = Array.isArray(value) ? (value[0] || 1) : (value || 0);
-      return applyCustomEffect(command, key, effectValue, isVideo);
-    })) {
-      // If any custom effects were applied, remove them from filters object
-      customEffectKeys.forEach(key => {
-        delete filters[key];
-      });
-    }
-  } catch (error) {
-    console.error(`Error in applyFilters: ${error}`);
-    throw new Error(`Error applying filters: ${error instanceof Error ? error.message : String(error)}`);
-  }
-};
-
-/**
- * Apply audio speed filter, handling the atempo limitations
- * atempo only works in the range of 0.5 to 2.0, so we need to chain
- * multiple atempo filters for more extreme speed changes
- */
-const applyAudioSpeedFilter = (command: ffmpeg.FfmpegCommand, speedValue: number): void => {
-  // Audio speed with atempo (has 0.5-2.0 limitation, so chain for extreme values)
-  if (speedValue >= 0.5 && speedValue <= 2.0) {
-    // Simple case - within atempo range
-    command.audioFilters(`atempo=${speedValue}`);
-    logFFmpegCommand(`Applied audio speed filter: atempo=${speedValue}`);
-  } else if (speedValue < 0.5) {
-    // Slower than 0.5x - chain multiple atempo filters
-    // Example: 0.25x speed = atempo=0.5,atempo=0.5
-    const filterValues = [];
-    let remainingSpeed = speedValue;
-    
-    while (remainingSpeed < 0.5) {
-      filterValues.push('atempo=0.5');
-      remainingSpeed /= 0.5;
-    }
-    
-    if (remainingSpeed < 1.0) {
-      filterValues.push(`atempo=${remainingSpeed}`);
-    }
-    
-    const filterStr = filterValues.join(',');
-    command.audioFilters(filterStr);
-    logFFmpegCommand(`Applied chained audio speed filter: ${filterStr}`);
-  } else {
-    // Faster than 2.0x - chain multiple atempo filters
-    // Example: 4x speed = atempo=2.0,atempo=2.0
-    const filterValues = [];
-    let remainingSpeed = speedValue;
-    
-    while (remainingSpeed > 2.0) {
-      filterValues.push('atempo=2.0');
-      remainingSpeed /= 2.0;
-    }
-    
-    if (remainingSpeed > 1.0) {
-      filterValues.push(`atempo=${remainingSpeed}`);
-    }
-    
-    const filterStr = filterValues.join(',');
-    command.audioFilters(filterStr);
-    logFFmpegCommand(`Applied chained audio speed filter: ${filterStr}`);
-  }
-};
-
-// Filter categorization based on FFmpeg documentation
-const filterTypes = {
-  audio: new Set([
-    'abench', 'acompressor', 'acontrast', 'acopy', 'acue', 'acrossfade', 'acrossover', 'acrusher', 
-    'adeclick', 'adeclip', 'adelay', 'adenorm', 'aderivative', 'aecho', 'aemphasis', 'aeval', 
-    'aexciter', 'afade', 'afftdn', 'afftfilt', 'afir', 'aformat', 'afreqshift', 'agate', 'aiir', 
-    'aintegral', 'ainterleave', 'alimiter', 'allpass', 'aloop', 'amerge', 'ametadata', 'amix', 
-    'amultiply', 'anequalizer', 'anlmdn', 'anlms', 'anull', 'apad', 'aperms', 'aphaser', 
-    'aphaseshift', 'apulsator', 'arealtime', 'aresample', 'areverse', 'arnndn', 'aselect', 
-    'asendcmd', 'asetnsamples', 'asetpts', 'asetrate', 'asettb', 'ashowinfo', 'asidedata', 
-    'asoftclip', 'asplit', 'asr', 'astats', 'astreamselect', 'asubboost', 'asubcut', 'asupercut', 
-    'asuperpass', 'asuperstop', 'atempo', 'atrim', 'axcorrelate', 'azmq', 'bandpass', 'bandreject', 
-    'bass', 'biquad', 'bs2b', 'channelmap', 'channelsplit', 'chorus', 'compand', 'compensationdelay', 
-    'crossfeed', 'crystalizer', 'dcshift', 'deesser', 'drmeter', 'dynaudnorm', 'earwax', 'ebur128', 
-    'equalizer', 'extrastereo', 'firequalizer', 'flanger', 'haas', 'hdcd', 'headphone', 'highpass', 
-    'highshelf', 'join', 'ladspa', 'loudnorm', 'lowpass', 'lowshelf', 'lv2', 'mcompand', 'pan', 
-    'replaygain', 'rubberband', 'sidechaincompress', 'sidechaingate', 'silencedetect', 'silenceremove', 
-    'sofalizer', 'speechnorm', 'stereotools', 'stereowiden', 'superequalizer', 'surround', 'treble', 
-    'tremolo', 'vibrato', 'volume', 'volumedetect', 'amplify', 'pitch'
-  ]),
-  
-  video: new Set([
-    'addroi', 'alphaextract', 'alphamerge', 'amplify', 'ass', 'atadenoise', 'avgblur', 'avgblur_opencl', 
-    'bbox', 'bench', 'bilateral', 'bitplanenoise', 'blackdetect', 'blackframe', 'blend', 'bm3d', 
-    'boxblur', 'boxblur_opencl', 'bwdif', 'cas', 'chromahold', 'chromakey', 'chromanr', 'chromashift', 
-    'ciescope', 'codecview', 'colorbalance', 'colorchannelmixer', 'colorcontrast', 'colorcorrect', 
-    'colorize', 'colorkey', 'colorkey_opencl', 'colorhold', 'colorlevels', 'colormatrix', 'colorspace', 
-    'colortemperature', 'convolution', 'convolution_opencl', 'convolve', 'copy', 'cover_rect', 'crop', 
-    'cropdetect', 'cue', 'curves', 'datascope', 'dblur', 'dctdnoiz', 'deband', 'deblock', 'decimate', 
-    'deconvolve', 'dedot', 'deflate', 'deflicker', 'deinterlace_qsv', 'deinterlace_vaapi', 'dejudder', 
-    'delogo', 'denoise_vaapi', 'derain', 'deshake', 'deshake_opencl', 'despill', 'detelecine', 
-    'dilation', 'dilation_opencl', 'displace', 'dnn_processing', 'doubleweave', 'drawbox', 'drawgraph', 
-    'drawgrid', 'drawtext', 'edgedetect', 'elbg', 'entropy', 'epx', 'eq', 'erosion', 'erosion_opencl', 
-    'estdif', 'exposure', 'extractplanes', 'fade', 'fftdnoiz', 'fftfilt', 'field', 'fieldhint', 
-    'fieldmatch', 'fieldorder', 'fillborders', 'find_rect', 'floodfill', 'format', 'fps', 'framepack', 
-    'framerate', 'framestep', 'freezedetect', 'freezeframes', 'frei0r', 'fspp', 'gblur', 'geq', 
-    'gradfun', 'graphmonitor', 'greyedge', 'haldclut', 'hflip', 'histeq', 'histogram', 'hqdn3d', 'hqx', 
-    'hstack', 'hue', 'hwdownload', 'hwmap', 'hwupload', 'hwupload_cuda', 'hysteresis', 'identity', 
-    'idet', 'il', 'inflate', 'interlace', 'interleave', 'kerndeint', 'kirsch', 'lagfun', 'lenscorrection', 
-    'limiter', 'loop', 'lumakey', 'lut', 'lut1d', 'lut2', 'lut3d', 'lutrgb', 'lutyuv', 'maskedclamp', 
-    'maskedmax', 'maskedmerge', 'maskedmin', 'maskedthreshold', 'maskfun', 'mcdeint', 'median', 
-    'mergeplanes', 'mestimate', 'metadata', 'midequalizer', 'minterpolate', 'mix', 'monochrome', 
-    'mpdecimate', 'msad', 'negate', 'nlmeans', 'nlmeans_opencl', 'nnedi', 'noformat', 'noise', 
-    'normalize', 'null', 'oscilloscope', 'overlay', 'overlay_opencl', 'overlay_qsv', 'overlay_cuda', 
-    'owdenoise', 'pad', 'pad_opencl', 'palettegen', 'paletteuse', 'perms', 'perspective', 'phase', 
-    'photosensitivity', 'pixdesctest', 'pixscope', 'pp', 'pp7', 'premultiply', 'prewitt', 'prewitt_opencl', 
-    'procamp_vaapi', 'program_opencl', 'pseudocolor', 'psnr', 'pullup', 'qp', 'random', 'readeia608', 
-    'readvitc', 'realtime', 'remap', 'removegrain', 'removelogo', 'repeatfields', 'reverse', 'rgbashift', 
-    'roberts', 'roberts_opencl', 'rotate', 'sab', 'scale', 'scale_cuda', 'scale_qsv', 'scale_vaapi', 
-    'scale2ref', 'scdet', 'scroll', 'select', 'selectivecolor', 'sendcmd', 'separatefields', 'setdar', 
-    'setfield', 'setparams', 'setpts', 'setrange', 'setsar', 'settb', 'sharpness_vaapi', 'shear', 
-    'showinfo', 'showpalette', 'shuffleframes', 'shufflepixels', 'shuffleplanes', 'sidedata', 
-    'signalstats', 'signature', 'smartblur', 'sobel', 'sobel_opencl', 'split', 'spp', 'sr', 'ssim', 
-    'stereo3d', 'streamselect', 'subtitles', 'super2xsai', 'swaprect', 'swapuv', 'tblend', 'telecine', 
-    'thistogram', 'threshold', 'thumbnail', 'thumbnail_cuda', 'tile', 'tinterlace', 'tlut2', 'tmedian', 
-    'tmidequalizer', 'tmix', 'tonemap', 'tonemap_opencl', 'tonemap_vaapi', 'tpad', 'transpose', 
-    'transpose_opencl', 'transpose_vaapi', 'trim', 'unpremultiply', 'unsharp', 'unsharp_opencl', 
-    'untile', 'uspp', 'v360', 'vaguedenoiser', 'vectorscope', 'vflip', 'vfrdet', 'vibrance', 
-    'vidstabdetect', 'vidstabtransform', 'vif', 'vignette', 'vmafmotion', 'vpp_qsv', 'vstack', 
-    'w3fdif', 'waveform', 'weave', 'xbr', 'xfade', 'xfade_opencl', 'xmedian', 'xstack', 'yadif', 
-    'yadif_cuda', 'yaepblur', 'zmq', 'zoompan', 'zscale'
-  ]),
-  
-  // Filters requiring special handling (complex filter syntax)
-  complex: new Set(['reverse', 'speed'])
-};
-
-// Filter aliases for user-friendly alternative names
-const filterAliases: Record<string, string> = {
-  'fast': 'speed',
-  'slow': 'speed',
-  'echo': 'aecho',
-  'robot': 'robotize',
-  'phone': 'telephone',
-  'tv': 'vhs',
-  'retro': 'vhs',
-  'old': 'oldfilm',
-  'mirror': 'hmirror',
-  'flip': 'vmirror',
-  'rainbow': 'huerotate',
-  'pixelate': 'pixelize',
-  'dream': 'dreameffect',
-  'acid': 'psychedelic',
-  'wave': 'waves',
-  '8bit': 'retroaudio'
-};
-
-/**
- * Execute an ffmpeg command with a timeout
- * @returns Promise that resolves when command completes or rejects if timeout/error occurs
- */
-const executeWithTimeout = <T>(
-  command: ffmpeg.FfmpegCommand, 
-  timeoutMs: number = MAX_PROCESSING_TIME_MS,
-  progressCallback?: (progress: any) => void
-): Promise<T> => {
-  return new Promise<T>((resolve, reject) => {
-    let timeoutId: NodeJS.Timeout;
-    let hasCompleted = false;
-    
-    // Keep track of the ffmpeg process ID for cleanup on timeout
-    let ffmpegProcess: any = null;
-    
-    command.on('start', (cmdline) => {
-      // Access the process more safely using type assertion
-      // This is accessing a private internal property, but it's necessary for killing hung processes
-      const anyCommand = command as any;
-      if (anyCommand._currentOutput?.streams?.[0]?.proc) {
-        ffmpegProcess = anyCommand._currentOutput.streams[0].proc;
-      }
-      console.log(`Started FFmpeg process with command: ${cmdline}`);
-    });
-    
-    if (progressCallback) {
-      command.on('progress', progressCallback);
-    }
-    
-    // Set timeout to kill the process if it takes too long
-    timeoutId = setTimeout(() => {
-      if (!hasCompleted && ffmpegProcess) {
-        // Attempt to kill the ffmpeg process
-        try {
-          console.error(`FFmpeg process exceeded timeout of ${timeoutMs}ms, killing process`);
-          
-          if (ffmpegProcess.kill) {
-            // Kill the direct process if available
-            ffmpegProcess.kill('SIGKILL');
-          } else {
-            // Fallback to command's kill method
-            command.kill('SIGKILL');
-          }
-        } catch (err) {
-          console.error('Error killing ffmpeg process:', err);
-        }
-        
-        hasCompleted = true;
-        reject(new Error(`Processing timeout: operation took longer than ${timeoutMs/1000} seconds`));
-      }
-    }, timeoutMs);
-    
-    // Setup event handlers
-    command
-      .on('end', () => {
-        clearTimeout(timeoutId);
-        if (!hasCompleted) {
-          hasCompleted = true;
-          resolve(null as unknown as T);
-        }
-      })
-      .on('error', (err) => {
-        clearTimeout(timeoutId);
-        if (!hasCompleted) {
-          hasCompleted = true;
-          reject(err);
-        }
-      });
-  });
-};
-
-/**
- * Check if filters contain any video-only filters
- * @returns true if filters contain any video-only filters
- */
-export const containsVideoFilters = (filters: MediaFilter): boolean => {
-  // Check for special raw complex filter case
-  if (filters.__raw_complex_filter) {
-    // Most complex filters require video, so assume true
-    return true;
-  }
-  
-  return Object.keys(filters).some(key => 
-    filterTypes.video.has(key) && !filterTypes.audio.has(key)
-  );
-};
-
-// Define additional filters for audio and video effects
-interface AudioEffectFunction {
-  (level?: number): string;
-}
-
-interface VideoEffectFunction {
-  (level?: number): string;
-}
-
-type AudioEffects = Record<string, AudioEffectFunction>;
-type VideoEffects = Record<string, VideoEffectFunction>;
-
-const audioEffects: AudioEffects = {
-  'aecho': (level = 0.6) => 
-    `aecho=0.8:0.8:${90 + level * 100}:0.6`, // Customizable echo effect
-  
-  'robotize': () => 
-    'asetrate=8000,vibrato=f=5:d=0.5,aresample=8000', // Robot voice effect
-  
-  'telephone': () => 
-    'highpass=600,lowpass=3000,equalizer=f=1200:t=q:g=10', // Telephone effect
-  
-  'retroaudio': () => 
-    'aresample=8000,aformat=sample_fmts=u8', // 8-bit retro game audio
-  
-  'stutter': (rate = 0.5) => 
-    `aevalsrc=0:d=${rate}:sample_rate=44100[silence];[0][silence]acrossfade=d=${rate}:c1=exp:c2=exp,atempo=1/${1-rate}`, // Stutter effect
-    
-  'phaser': (rate = 1) => 
-    `aphaser=type=t:speed=${Math.max(0.1, rate * 0.7)}:decay=0.5:depth=${Math.min(70, rate * 50)}`, // Enhanced phaser effect with depth control
-    
-  'flanger': (depth = 0.5) => 
-    `flanger=delay=${Math.max(1, depth * 10)}:depth=${Math.max(1, depth * 10)}`, // Flanger effect
-    
-  'tremolo': (rate = 4) => 
-    `tremolo=f=${Math.max(0.5, rate * 2)}:d=0.8`, // Tremolo effect
-    
-  'vibrato': (rate = 5) => 
-    `vibrato=f=${Math.max(1, rate * 2)}:d=0.5`, // Vibrato effect
-    
-  'chorus': (strength = 0.5) => 
-    `chorus=0.5:0.9:${50+strength*20}:0.4:0.25:2`, // Chorus effect
-
-  'bass': (gain = 10) => 
-    `bass=g=${Math.min(30, gain)}`, // Bass boost effect with gain limit
-    
-  // New audio filters
-  'underwater': () => 
-    'lowpass=f=800,highpass=f=80,atempo=0.9,aecho=0.6:0.6:1000:0.5', // Underwater effect
-    
-  'alien': (intensity = 1) => 
-    `vibrato=f=${Math.max(5, intensity * 8)}:d=1,asetrate=44100*${Math.max(0.5, 0.7 + intensity * 0.3)},aresample=44100`, // Alien voice effect
-    
-  'chipmunk': (pitch = 1.5) => 
-    `asetrate=44100*${Math.min(3, Math.max(1.1, pitch))},aresample=44100`, // Chipmunk effect (higher pitch)
-    
-  'demon': (pitch = 0.7) => 
-    `asetrate=44100*${Math.max(0.3, Math.min(0.9, pitch))},aresample=44100`, // Demon voice effect (lower pitch)
-    
-  'destroy': (intensity = 1) => 
-    `acrusher=bits=${Math.max(1, 8 - intensity * 6)}:mode=lin:samples=1:samplesInc=0,areverse`, // Audio destruction/corruption
-    
-  'bitcrush': (bits = 4) => 
-    `acrusher=bits=${Math.max(1, Math.min(16, bits))}:mode=log:aa=1`, // Bitcrusher effect
-    
-  'metallic': () => 
-    'afftfilt=real=\'hypot(re,im)*sin(0)\':imag=\'hypot(re,im)*cos(0)\':win_size=1024:overlap=0.75', // Metallic resonance effect
-    
-  'radio': () => 
-    'bandpass=f=1500:width_type=q:width=0.6,highpass=f=500,lowpass=f=5000,compand=0.3:0.8:2:4:-1:0:0.2', // AM Radio effect
-    
-  'drunk': (intensity = 1) => 
-    `vibrato=f=${Math.max(0.5, intensity * 3)}:d=${Math.min(1, intensity * 0.3)},atempo=${Math.max(0.5, 1 - intensity * 0.2)}`, // Drunk voice effect
-    
-  'autotune': (strength = 0.5) => 
-    `asetrate=44100,rubberband=pitch-ms=crisp:tempo=1:pitch-octaves=${strength * 0.1}`, // Simple autotune-like effect
-    
-  'distortion': (gain = 5) => 
-    `compand=${Math.min(10, gain)},0.3:1,0:0:-80:-80:-80:-80:0:0:0,highpass=f=1000,lowpass=f=5000`, // Audio distortion
-    
-  'haunted': () => 
-    'atempo=0.9,aecho=0.8:0.8:1000|1800|500:0.7|0.5|0.3,areverse,aecho=0.8:0.8:500|1000:0.5|0.3,areverse', // Haunted/ghost effect
-    
-  'corrupt': (level = 1) => 
-    `afftfilt=real='hypot(re,im)*sin((random(0)*${Math.min(4, level)})*3.14)':imag='hypot(re,im)*cos((random(1)*${Math.min(4, level)})*3.14)':win_size=256:overlap=0.6`, // Audio corruption
-    
-  'glitch': (rate = 0.5) => 
-    `acrusher=level_in=10:level_out=1:bits=8:mode=log:aa=0,atempo=1,asetrate=44100*${1 + rate/10},areverse,atempo=${Math.max(0.5, 1 - rate/10)},areverse`, // Glitchy effect with crackling
-    
-  'static': (amount = 0.2) => 
-    `afftfilt=real='re*0.9':imag='im*0.9',highpass=f=200,asendcmd=a,aeval=val(0)*(1-${Math.min(0.8, amount)})+${Math.min(0.8, amount)}*random(0)`, // Static noise overlay
-    
-  'backwards': () => 
-    'areverse', // Simple backwards audio
-    
-  'wobble': (intensity = 0.5) => 
-    `vibrato=f=${Math.max(0.1, intensity * 5)}:d=1,tremolo=f=${Math.max(0.1, intensity * 2)}:d=0.8`, // Wobble effect
-    
-  'hall': () => 
-    'aecho=0.8:0.9:1000|1800|2500:0.7|0.5|0.3', // Hall reverb simulation
-
-  // Bass boost variations
-  'bassboosted': (intensity = 1) => 
-    `bass=g=${Math.min(20, intensity * 15)}:f=110:width_type=h`,
-  
-  'extremebass': (intensity = 1) => 
-    `bass=g=${Math.min(30, intensity * 20)}:f=60:width_type=h,volume=${Math.min(6, intensity * 3)}dB`,
-  
-  'distortbass': (intensity = 1) => 
-    `bass=g=${Math.min(25, intensity * 18)}:f=80:width_type=h,volume=${Math.min(5, intensity * 3)}dB`,
-  
-  'earrape': (intensity = 1) => 
-    `bass=g=${Math.min(20, intensity * 15)}:f=60:width_type=h,treble=g=${Math.min(10, intensity * 5)},volume=${Math.min(8, intensity * 4)}dB`,
-  
-  'clippedbass': (intensity = 1) => 
-    `bass=g=${Math.min(25, intensity * 18)}:f=80:width_type=h,volume=${Math.min(4, intensity * 2.5)}dB`,
-  
-  // Audio destruction effects
-  'saturate': (intensity = 1) => 
-    `compand=0.3:0.8:${Math.min(6, intensity * 3)}:0:-90:-${Math.min(30, intensity * 20)}:0:0.2,volume=${Math.min(6, intensity * 3)}dB`,
-  
-  'crunch': (intensity = 1) => 
-    `acrusher=level_in=${Math.min(8, intensity * 4)}:level_out=1.5:bits=${Math.max(2, 8 - intensity * 4)}:mode=log:aa=0`,
-  
-  'lofi': (intensity = 1) => 
-    `aresample=${Math.max(4000, 16000 - intensity * 10000)}:filter_type=cubic,aresample=44100:filter_type=cubic`,
-  
-  'hardclip': (intensity = 1) => 
-    `compand=0.3:0.8:1:0:-90:-${Math.min(30, intensity * 15)}:0:0.1,bass=g=${Math.min(10, intensity * 7)}`,
-  
-  'crushcrush': (intensity = 1) => 
-    `acrusher=level_in=${Math.min(8, intensity * 4)}:level_out=1.5:bits=${Math.max(2, 6 - intensity * 3)}:mode=log:mix=${Math.min(0.7, intensity * 0.4)}`,
-  
-  'deepfried': (intensity = 1) => 
-    `bass=g=${Math.min(12, intensity * 8)}:f=100:width_type=h,acrusher=level_in=${Math.min(8, intensity * 4)}:level_out=1.5:bits=${Math.max(2, 5 - intensity * 2)}:mode=log:mix=1`,
-  
-  'destroy8bit': (intensity = 1) => 
-    `aresample=8000:filter_type=cubic,acrusher=level_in=${Math.min(8, intensity * 4)}:level_out=1.5:bits=${Math.max(1, 4 - intensity * 2)}:mode=log:aa=0,aresample=44100`,
-    
-  // Meme-worthy audio effects
-  'nuked': (intensity = 1) => 
-    `bass=g=${Math.min(20, intensity * 15)}:f=60:width_type=h,acrusher=level_in=${Math.min(8, intensity * 4)}:level_out=1.5:bits=${Math.max(2, 4 - intensity)}:mode=log:aa=0,volume=${Math.min(10, intensity * 6)}dB`,
-  
-  'phonk': (intensity = 1) => 
-    `bass=g=${Math.min(15, intensity * 10)}:f=70:width_type=h,atempo=0.85,asetrate=44100*${Math.max(0.85, 1 - intensity * 0.1)},aresample=44100`,
-  
-  'vaporwave': (intensity = 1) => 
-    `asetrate=44100*${Math.max(0.7, 0.9 - intensity * 0.1)},aresample=44100,bass=g=${Math.min(8, intensity * 5)}:f=150:width_type=h`,
-};
-
-const videoEffects: VideoEffects = {
-  'hmirror': () => 'hflip', // Simple horizontal mirror
-  
-  'vmirror': () => 'vflip', // Simple vertical mirror
-  
-  // Mirror effects
-  'haah': () => 'split[a][b];[a]crop=iw/2:ih:0:0,hflip[a1];[b]crop=iw/2:ih/2:0,vflip[b1];[a1][b1]hstack[top];[top][top]vstack', // Mirror left side to right
-  
-  'waaw': () => 'split[a][b];[a]crop=iw/2:ih/2:0,halfrate[left];[b][left]overlay=0:0', // Mirror right side to left
-  
-  'hooh': () => 'split[a][b];[a]crop=iw:ih/2:0:0[top];[top]vflip[bottom];[b][bottom]overlay=0:H/2', // Mirror top to bottom
-
-  'woow': () => 'split[a][b];[a]crop=iw:ih/2:0:ih/2[bottom];[bottom]vflip[top];[b][top]overlay=0:0', // Mirror bottom to top
-  
-  'vhs': () => 
-    'noise=alls=15:allf=t,curves=r=0.2:g=0.1:b=0.2,hue=h=5,colorbalance=rs=0.1:bs=-0.1,format=yuv420p,drawgrid=w=iw/24:h=2*ih:t=1:c=white@0.2', // VHS look
-  
-  'oldfilm': () => 
-    'curves=r=0.2:g=0.1:b=0.2,noise=alls=7:allf=t,hue=h=9,eq=brightness=0.05:saturation=0.5,vignette', // Old film look
-    
-  'huerotate': (speed = 1) => 
-    `hue=h=mod(t*${Math.max(10, speed*20)}\,360)`, // Rotating hue over time
-    
-  'kaleidoscope': () => 
-    'split[a][b];[a]crop=iw/2:ih/2:0:0,hflip[a1];[b]crop=iw/2:ih/2:iw/2:0,vflip[b1];[a1][b1]hstack[top];[top][top]vstack', // Basic kaleidoscope
-    
-  'dreameffect': () => 
-    'gblur=sigma=5,eq=brightness=0.1:saturation=1.5', // Dreamy blur effect
-    
-  'ascii': () => 
-    'format=gray,scale=iw*0.2:-1,eq=brightness=0.3,boxblur=1:1,scale=iw*5:-1:flags=neighbor', // ASCII-like effect
-    
-  'crt': () => 
-    'scale=iw:ih,pad=iw+6:ih+6:3:3:black,curves=r=0.2:g=0.1:b=0.28,drawgrid=w=iw/100:h=ih:t=1:c=black@0.4,drawgrid=w=iw:h=1:t=1:c=blue@0.2', // CRT monitor effect
-    
-  'psychedelic': () => 
-    'hue=h=mod(t*40\,360):b=0.4,eq=contrast=2:saturation=8,gblur=sigma=5:sigmaV=5', // Psychedelic effect
-    
-  'slowmo': (factor = 0.5) => 
-    `setpts=${Math.max(1, 1/factor)}*PTS`, // Simple slow motion effect
-    
-  'waves': () => 
-    'noise=alls=20:allf=t,eq=contrast=1.5:brightness=-0.1:saturation=1.2', // Simpler wave effect
-    
-  'pixelize': (pixelSize = 0.05) => 
-    `scale=iw*${Math.max(0.01, pixelSize)}:-1:flags=neighbor,scale=iw*${1/Math.max(0.01, pixelSize)}:-1:flags=neighbor`, // Pixelation effect
-
-  // 360-degree video transformation filters
-  'v360_fisheye': () => 
-    'v360=equirect:fisheye:w=720:h=720',
-  'v360_cube': () => 
-    'v360=equirect:cube:w=1080:h=720',
-  'planet': () => 
-    'v360=equirect:stereographic:w=720:h=720:in_stereo=0:out_stereo=0',
-  'tiny_planet': () => 
-    'v360=equirect:stereographic:w=720:h=720:in_stereo=0:out_stereo=0:yaw=0:pitch=-90',
-  
-  // Analysis/debug filters
-  'signalstats': () => 
-    'signalstats=stat=all:color=cyan',
-  'waveform': () => 
-    'waveform=filter=lowpass:mode=column:mirror=1:display=stack:components=7',
-
-  // Ported filters from previous implementation
-  'drunk': (frames = 8) => `tmix=frames=${Math.min(48, frames)}`,
-  'oscilloscope': () => 'oscilloscope=size=1:rate=1',
-  'vectorscope': () => 'vectorscope=mode=color:m=color3:intensity=0.89:i=0.54',
-  'mountains': () => 'aecho=0.8:0.9:500|1000:0.2|0.1',
-  'whisper': () => "afftfilt=real='hypot(re,im)*cos((random(0)*2-1)*2*3.14)':imag='hypot(re,im)*sin((random(1)*2-1)*2*3.14)':win_size=128:overlap=0.8",
-  'clipping': () => 'acrusher=.1:1:64:0:log',
-  'interlace': () => 'telecine',
-  'ess': () => 'deesser=i=1:s=e',
-  'bass': (gain = 10) => `bass=g=${Math.min(30, gain)}`,
-  'crystalizer': (intensity = 5) => `crystalizer=i=${Math.min(9.9, intensity)}`,
-  '360': () => 'v360=equirect:flat',
-};
-
-// Audio-only custom effects
-const audioOnlyEffects = new Set([
-  'bass', 'crystalizer', 'ess', 'clipping', 'whisper', 'mountains', 
-  'robotize', 'telephone', 'retroaudio', 'stutter', 'phaser', 
-  'flanger', 'tremolo', 'vibrato', 'chorus'
-]);
-
-// Video-only custom effects
-const videoOnlyEffects = new Set([
-  'drunk', 'oscilloscope', 'vectorscope', 'interlace', '360',
-  'hmirror', 'vmirror', 'vhs', 'oldfilm', 'huerotate', 'kaleidoscope',
-  'dreameffect', 'ascii', 'crt', 'psychedelic', 'slowmo', 'waves',
-  'pixelize', 'v360', 'v360_tiny', 'v360_fisheye', 'v360_cube',
-  'planet', 'tiny_planet', 'signalstats', 'waveform'
-]);
-
-// Apply special custom effects to media
-const applyCustomEffect = (command: ffmpeg.FfmpegCommand, effectName: string, value: string | number, isVideo: boolean): boolean => {
-  effectName = effectName.toLowerCase();
-  const numValue = typeof value === 'string' ? parseFloat(value) : value;
-  
-  // Handle trampoline effect (play forward then reverse)
-  if (effectName === 'trampoline') {
-    if (isVideo) {
-      // For video, we need to duplicate the input, reverse the second copy, and concat them
-      command.complexFilter(
-        '[0:v]split=2[v1][v2];[v2]reverse[vrev];[v1][vrev]concat=n=2:v=1:a=0[vout];' +
-        '[0:a]asplit=2[a1][a2];[a2]areverse[arev];[a1][arev]concat=n=2:v=0:a=1[aout]',
-        ['vout', 'aout']
-      );
-      logFFmpegCommand('Applied trampoline effect to video (forward + reverse)');
-      return true;
-    } else {
-      // For audio, we duplicate the input, reverse the second copy, and concat them
-      command.complexFilter(
-        '[0:a]asplit=2[a1][a2];[a2]areverse[arev];[a1][arev]concat=n=2:v=0:a=1[aout]',
-        ['aout']
-      );
-      logFFmpegCommand('Applied trampoline effect to audio (forward + reverse)');
-      return true;
-    }
-  }
-  
-  // Handle special audio effects - only apply to audio stream
-  if (audioOnlyEffects.has(effectName) || audioEffects[effectName as keyof typeof audioEffects]) {
-    if (audioEffects[effectName as keyof typeof audioEffects]) {
-      command.audioFilters(audioEffects[effectName as keyof typeof audioEffects](numValue));
-      logFFmpegCommand(`Applied custom audio effect: ${effectName}`);
-      return true;
-    }
-    return false;
-  }
-  
-  // Handle special video effects - only apply to video stream and only for video files
-  if (isVideo && (videoOnlyEffects.has(effectName) || videoEffects[effectName as keyof typeof videoEffects])) {
-    // Some effects need to use complexFilter instead of videoFilters
-    if (['mirror_x', 'mirror_y', 'kaleidoscope'].includes(effectName)) {
-      command.complexFilter(videoEffects[effectName as keyof typeof videoEffects]());
-    } else if (videoEffects[effectName as keyof typeof videoEffects]) {
-      command.videoFilters(videoEffects[effectName as keyof typeof videoEffects](numValue));
-    }
-    logFFmpegCommand(`Applied custom video effect: ${effectName}`);
-    return true;
-  }
-  
-  return false; // Effect not found or not applicable
-};
-
-/**
- * Get media information (duration, dimensions) using ffmpeg
- */
-export async function getMediaInfo(filePath: string): Promise<{ duration?: number; width?: number; height?: number }> {
+export const getMediaInfo = async (filePath: string): Promise<{
+  duration: number;
+  width?: number;
+  height?: number;
+  format?: string;
+  bitrate?: number;
+}> => {
   return new Promise((resolve, reject) => {
+    if (!fs.existsSync(filePath)) {
+      reject(new Error(`File not found: ${filePath}`));
+      return;
+    }
+
     ffmpeg.ffprobe(filePath, (err, metadata) => {
       if (err) {
+        console.error(`Error getting media info for ${filePath}:`, err);
         reject(err);
         return;
       }
       
-      // Extract duration and dimensions
-      const info: { duration?: number; width?: number; height?: number } = {};
+      const result: {
+        duration: number;
+        width?: number;
+        height?: number;
+        format?: string;
+        bitrate?: number;
+      } = {
+        duration: metadata.format.duration || 0
+      };
       
-      if (metadata.format && metadata.format.duration) {
-        info.duration = metadata.format.duration;
-      }
-      
-      // Find video stream if exists
-      const videoStream = metadata.streams?.find(stream => stream.codec_type === 'video');
+      // Get video stream info if it exists
+      const videoStream = metadata.streams.find(s => s.codec_type === 'video');
       if (videoStream) {
-        info.width = videoStream.width;
-        info.height = videoStream.height;
+        result.width = videoStream.width;
+        result.height = videoStream.height;
       }
       
-      resolve(info);
+      // Format info
+      result.format = metadata.format.format_name;
+      result.bitrate = metadata.format.bit_rate 
+        ? Number(metadata.format.bit_rate)
+        : undefined;
+      
+      resolve(result);
     });
   });
-}
+};
+
+// Audio and video effects definitions
+const audioEffects: Record<string, string> = {
+  // Audio effects will be populated here
+  chipmunk: 'asetrate=44100*1.5,aresample=44100,atempo=0.75',
+  vaporwave: 'asetrate=44100*0.8,aresample=44100,atempo=1.1',
+  echo: 'aecho=0.8:0.9:1000:0.3',
+  bass: 'bass=g=10:f=110:w=0.7',
+  distort: 'volume=2,vibrato=f=7:d=0.5',
+  telephone: 'highpass=f=500,lowpass=f=2000',
+  metallic: 'aecho=0.8:0.88:6:0.4',
+  reverb: 'areverse,aecho=0.8:0.9:1000:0.3,areverse',
+  nightcore: 'asetrate=44100*1.25,aresample=44100,atempo=0.85',
+  underwater: 'lowpass=f=800'
+};
+
+const videoEffects: Record<string, string> = {
+  // Video effects will be populated here
+  invert: 'negate',
+  mirror: 'hflip',
+  flip: 'vflip',
+  blur: 'boxblur=10:5',
+  shake: 'crop=in_w:in_h:sin(n/10)*40:sin(n/15)*40',
+  pixelate: 'scale=iw/20:ih/20,scale=iw*20:ih*20:flags=neighbor',
+  acid: 'hue=h=sin(n/10)*360',
+  crt: 'noise=c0s=13:c0f=t+u,vignette=0.2'
+};
 
 /**
- * Creates a video placeholder for audio files
- * This allows audio files to be used in grid layouts
+ * Calculate optimal bitrates based on content length and target file size
  */
-export const createAudioPlaceholderVideo = async (
-  audioPath: string,
-  outputPath: string,
-  progressCallback?: (progress: number) => Promise<void>
-): Promise<string> => {
-  return new Promise((resolve, reject) => {
-    if (!fs.existsSync(audioPath)) {
-      reject(new Error(`Audio file not found: ${audioPath}`));
-      return;
-    }
-    
-    // Get waveform image if it exists
-    const baseFilename = path.basename(audioPath, path.extname(audioPath));
-    const waveformPath = path.join(THUMBNAILS_DIR, `${baseFilename}_waveform.png`);
-    const spectrogramPath = path.join(THUMBNAILS_DIR, `${baseFilename}_spectrogram.png`);
-    
-    // Choose a background image - waveform, spectrogram, or generate a blank one
-    let backgroundImage: string;
-    
-    if (fs.existsSync(waveformPath)) {
-      backgroundImage = waveformPath;
-    } else if (fs.existsSync(spectrogramPath)) {
-      backgroundImage = spectrogramPath;
-    } else {
-      // Generate a blank image with audio name
-      const blankImagePath = path.join(TEMP_DIR, `blank_${baseFilename}.png`);
-      
-      // Use ffmpeg to create a blank image with text
-      const command = `ffmpeg -f lavfi -i color=c=black:s=640x360 -vf "drawtext=fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf:text='Audio: ${path.basename(audioPath, path.extname(audioPath))}':fontcolor=white:fontsize=24:x=(w-text_w)/2:y=(h-text_h)/2" -frames:v 1 "${blankImagePath}"`;
-      
-      try {
-        execSync(command);
-        backgroundImage = blankImagePath;
-      } catch (error) {
-        console.error('Error creating blank image:', error);
-        reject(new Error(`Failed to create placeholder image for audio: ${error}`));
-        return;
-      }
-    }
-    
-    // Now create a video with the audio
-    const ffmpegCommand = ffmpeg();
-    
-    // Add inputs
-    ffmpegCommand.input(backgroundImage);
-    ffmpegCommand.input(audioPath);
-    
-    // Set output options
-    ffmpegCommand
-      .outputOptions([
-        '-c:v libx264',         // Video codec
-        '-preset:v fast',        // Fast encoding preset
-        '-crf 23',              // Quality level
-        '-c:a aac',             // Audio codec
-        '-b:a 192k',            // Audio bitrate
-        '-shortest',            // End when audio ends
-        '-pix_fmt yuv420p'      // Compatible pixel format
-      ]);
-    
-    // Progress tracking
-    ffmpegCommand.on('progress', (progress) => {
-      if (progressCallback && progress.percent !== undefined) {
-        progressCallback(progress.percent / 100).catch(err => {
-          console.error('Error updating progress:', err);
-        });
-      }
-    });
-    
-    // Error handling
-    ffmpegCommand.on('error', (err) => {
-      console.error('Error creating audio placeholder video:', err);
-      reject(err);
-    });
-    
-    // Set output path and start processing
-    ffmpegCommand.save(outputPath)
-      .on('end', () => {
-        if (fs.existsSync(outputPath)) {
-          resolve(outputPath);
-        } else {
-          reject(new Error('Failed to create audio placeholder video'));
-        }
-      });
-  });
-}
-
-/**
- * Apply speed changes to video and audio streams, ensuring they stay in sync
- * @param command The ffmpeg command to modify
- * @param speedValue The speed factor (1.0 = normal, 0.5 = half speed, 2.0 = double speed)
- * @param isVideo Whether this is a video file (if false, apply only to audio)
- */
-const applySpeedTransformation = (
-  command: ffmpeg.FfmpegCommand, 
-  speedValue: number,
-  isVideo: boolean
-): void => {
-  if (speedValue === 1.0) return; // No change needed
+const calculateBitrates = (
+  durationSeconds: number,
+  isVideo: boolean,
+  audioQualityPriority: number = 128
+): { audioBitrateKbps: number; videoBitrateKbps: number | undefined; trimDurationSeconds: number | null } => {
+  // Target file size in kilobytes (slightly under Discord limit)
+  const targetKB = MAX_FILE_SIZE_MB * 1024 * 0.95;
   
-  if (isNaN(speedValue) || speedValue <= 0) {
-    throw new Error('Speed value must be positive');
+  // Get maximum duration
+  // For long files, we may need to trim
+  let trimDuration: number | null = null;
+  let duration = durationSeconds;
+  
+  // If the audio or video is longer than 8 minutes, trim it to optimize quality
+  if (duration > 480) {
+    trimDuration = 480;
+    duration = 480;
+    console.log(`Content too long, will trim to ${trimDuration}s`);
   }
   
-  // For video files, use complex filter to keep audio and video in sync
   if (isVideo) {
-    const videoFilter = `setpts=${1/speedValue}*PTS`;
+    // For video, allocate bitrate between audio and video
+    // We'll assign 70-80% to video and the rest to audio
+    // But ensure audio always gets at least the priority value
     
-    // Construct audio portion of filter
-    let audioFilter = '';
+    // Calculate total bitrate in kbps (8 bits per byte)
+    const totalBitrateKbps = Math.floor((targetKB * 8) / duration);
     
-    // Handle atempo limitations (0.5-2.0 range)
-    if (speedValue >= 0.5 && speedValue <= 2.0) {
-      audioFilter = `atempo=${speedValue}`;
-    } else if (speedValue < 0.5) {
-      // For slower speeds, chain multiple atempo filters
-      // Example: 0.25x speed = atempo=0.5,atempo=0.5
-      const filterValues = [];
-      let remainingSpeed = speedValue;
-      
-      while (remainingSpeed < 0.5) {
-        filterValues.push('atempo=0.5');
-        remainingSpeed /= 0.5;
-      }
-      
-      if (remainingSpeed < 1.0) {
-        filterValues.push(`atempo=${remainingSpeed}`);
-      }
-      
-      audioFilter = filterValues.join(',');
-    } else {
-      // For faster speeds, chain multiple atempo filters
-      // Example: 4x speed = atempo=2.0,atempo=2.0
-      const filterValues = [];
-      let remainingSpeed = speedValue;
-      
-      while (remainingSpeed > 2.0) {
-        filterValues.push('atempo=2.0');
-        remainingSpeed /= 2.0;
-      }
-      
-      if (remainingSpeed > 1.0) {
-        filterValues.push(`atempo=${remainingSpeed}`);
-      }
-      
-      audioFilter = filterValues.join(',');
+    // Calculate audio bitrate (10-20% of total, minimum audioQualityPriority kbps)
+    let audioBitrateKbps = Math.max(
+      audioQualityPriority,
+      Math.floor(totalBitrateKbps * 0.15)
+    );
+    
+    // Cap audio at 196 kbps (diminishing returns beyond this for most content)
+    audioBitrateKbps = Math.min(audioBitrateKbps, 196);
+    
+    // Remaining bitrate for video
+    let videoBitrateKbps = Math.max(300, totalBitrateKbps - audioBitrateKbps);
+    
+    // Cap video bitrate based on duration
+    // Longer videos get lower bitrates
+    if (duration > 240) {  // > 4 min
+      videoBitrateKbps = Math.min(videoBitrateKbps, 1500);
+    } else if (duration > 120) {  // > 2 min
+      videoBitrateKbps = Math.min(videoBitrateKbps, 2500);
+    } else {  // < 2 min
+      videoBitrateKbps = Math.min(videoBitrateKbps, 4000);
     }
     
-    // Apply complex filter to maintain sync
-    command.complexFilter(`[0:v]${videoFilter}[v];[0:a]${audioFilter}[a]`, ['v', 'a']);
-    logFFmpegCommand(`Applied synchronized speed transformation: video=${videoFilter}, audio=${audioFilter}`);
+    console.log(`Calculated bitrates for ${duration}s video: audio=${audioBitrateKbps}kbps, video=${videoBitrateKbps}kbps`);
+    
+    return {
+      audioBitrateKbps,
+      videoBitrateKbps,
+      trimDurationSeconds: trimDuration
+    };
   } else {
-    // Audio-only, use standard audio filter chain
-    applyAudioSpeedFilter(command, speedValue);
+    // For audio-only, use a higher bitrate
+    let audioBitrateKbps = Math.floor((targetKB * 8) / duration);
+    
+    // Cap audio based on duration
+    if (duration > 240) {  // > 4 min
+      audioBitrateKbps = Math.min(audioBitrateKbps, 128);
+    } else if (duration > 120) {  // > 2 min
+      audioBitrateKbps = Math.min(audioBitrateKbps, 160);
+    } else {  // < 2 min
+      audioBitrateKbps = Math.min(audioBitrateKbps, 192);
+    }
+    
+    // Ensure minimum quality
+    audioBitrateKbps = Math.max(audioBitrateKbps, 96);
+    
+    console.log(`Calculated bitrate for ${duration}s audio: ${audioBitrateKbps}kbps`);
+    
+    return {
+      audioBitrateKbps,
+      videoBitrateKbps: undefined,
+      trimDurationSeconds: trimDuration
+    };
   }
 };
 
 /**
- * Synchronize audio and video streams when multiple speed-changing filters are applied
- * @param command The ffmpeg command to modify
- * @param speedChanges Array of speed changes to apply
+ * Apply audio/video filters to an ffmpeg command
  */
-const syncAudioVideoSpeed = (
+const applyFilters = (
   command: ffmpeg.FfmpegCommand,
-  speedChanges: Array<{ type: string; value: number }>
+  filters: MediaFilter,
+  isVideo: boolean
 ): void => {
-  if (speedChanges.length === 0) return;
+  // Handle stacked filters
+  if (filters.__stacked_filters && filters.__stacked_filters.length > 0) {
+    filters.__stacked_filters.forEach(filterName => {
+      const filterNameLower = filterName.toLowerCase();
+      
+      // Apply built-in audio effects
+      if (filterNameLower in audioEffects) {
+        command.audioFilters(audioEffects[filterNameLower]);
+        console.log(`Applied audio effect: ${filterNameLower}`);
+      }
+      
+      // Apply built-in video effects (only if this is a video)
+      if (isVideo && filterNameLower in videoEffects) {
+        command.videoFilters(videoEffects[filterNameLower]);
+        console.log(`Applied video effect: ${filterNameLower}`);
+      }
+    });
+    return;
+  }
+
+  // Handle raw complex filter
+  if (filters.__raw_complex_filter) {
+    const rawFilter = filters.__raw_complex_filter.trim();
+    if (rawFilter) {
+      // Apply as video or audio filter based on content
+      if (isAudioFilterString(rawFilter)) {
+        command.audioFilters(rawFilter);
+      } else {
+        command.videoFilters(rawFilter);
+      }
+    }
+    return;
+  }
+
+  // Skip special properties
+  const skipProps = ['__raw_complex_filter', '__stacked_filters', '__overlay_path'];
   
-  // Calculate total speed factor
-  let totalSpeedFactor = 1.0;
-  
-  for (const change of speedChanges) {
-    switch (change.type) {
-      case 'atempo':
-        totalSpeedFactor *= change.value;
-        break;
-      case 'pitch':
-      case 'asetrate':
-        // For pitch/rate changes, we need to adjust video timing to match
-        totalSpeedFactor *= change.value;
-        break;
-      default:
-        console.warn(`Unknown speed change type: ${change.type}`);
+  // Apply regular filters
+  for (const [key, value] of Object.entries(filters)) {
+    if (skipProps.includes(key) || value === undefined) continue;
+    
+    // Apply standard audio filters
+    if (isAudioFilter(key)) {
+      switch (key) {
+        case 'reverse':
+          command.audioFilters('areverse');
+          break;
+        case 'speed':
+        case 'tempo':
+          const speed = Number(value);
+          if (!isNaN(speed) && speed > 0.5 && speed < 2.0) {
+            command.audioFilters(`atempo=${speed}`);
+          }
+          break;
+        case 'pitch':
+          const pitch = Number(value);
+          if (!isNaN(pitch) && pitch > 0.5 && pitch < 2.0) {
+            command.audioFilters(`asetrate=44100*${pitch},aresample=44100`);
+          }
+          break;
+        case 'volume':
+        case 'vol':
+        case 'amplify':
+          const vol = Number(value);
+          if (!isNaN(vol) && vol > 0 && vol <= 5) {
+            command.audioFilters(`volume=${vol}`);
+          }
+          break;
+        case 'bass':
+          const bassGain = Number(value);
+          if (!isNaN(bassGain) && bassGain >= -20 && bassGain <= 20) {
+            command.audioFilters(`bass=g=${bassGain}`);
+          }
+          break;
+        case 'treble':
+          const trebleGain = Number(value);
+          if (!isNaN(trebleGain) && trebleGain >= -20 && trebleGain <= 20) {
+            command.audioFilters(`treble=g=${trebleGain}`);
+          }
+          break;
+        case 'fade':
+          const fade = Number(value);
+          if (!isNaN(fade) && fade > 0) {
+            command.audioFilters(`afade=t=in:st=0:d=${fade},afade=t=out:st=${Math.max(0, 30-fade)}:d=${fade}`);
+          }
+          break;
+        case 'echo':
+          command.audioFilters('aecho=0.8:0.9:1000:0.3');
+          break;
+        default:
+          // For any other audio filter, pass it directly if it's a string
+          if (typeof value === 'string') {
+            command.audioFilters(`${key}=${value}`);
+          }
+      }
+    }
+    // Apply standard video filters (only if this is a video)
+    else if (isVideo && isVideoFilter(key)) {
+      switch (key) {
+        case 'rotate':
+          const rotation = Number(value);
+          if (!isNaN(rotation)) {
+            const normalizedRotation = ((rotation % 360) + 360) % 360; // Normalize to 0-359
+            command.videoFilters(`rotate=${normalizedRotation}*PI/180`);
+          }
+          break;
+        case 'flip':
+          // Handle various input formats for boolean values
+          const shouldFlip = typeof value === 'boolean' ? value :
+                          value === 1 || value === '1' || 
+                          String(value).toLowerCase() === 'true' ||
+                          String(value).toLowerCase() === 'yes';
+          if (shouldFlip) {
+            command.videoFilters('vflip');
+          }
+          break;
+        case 'mirror':
+          // Handle various input formats for boolean values
+          const shouldMirror = typeof value === 'boolean' ? value :
+                            value === 1 || value === '1' || 
+                            String(value).toLowerCase() === 'true' ||
+                            String(value).toLowerCase() === 'yes';
+          if (shouldMirror) {
+            command.videoFilters('hflip');
+          }
+          break;
+        case 'contrast':
+          const contrast = Number(value);
+          if (!isNaN(contrast) && contrast >= -2 && contrast <= 2) {
+            command.videoFilters(`eq=contrast=${contrast}`);
+          }
+          break;
+        case 'brightness':
+          const brightness = Number(value);
+          if (!isNaN(brightness) && brightness >= -1 && brightness <= 1) {
+            command.videoFilters(`eq=brightness=${brightness}`);
+          }
+          break;
+        case 'saturation':
+          const saturation = Number(value);
+          if (!isNaN(saturation) && saturation >= 0 && saturation <= 3) {
+            command.videoFilters(`eq=saturation=${saturation}`);
+          }
+          break;
+        case 'blur':
+          const blurAmount = Number(value);
+          if (!isNaN(blurAmount) && blurAmount > 0 && blurAmount <= 10) {
+            command.videoFilters(`boxblur=${blurAmount}:${Math.max(1, Math.floor(blurAmount/2))}`);
+          }
+          break;
+        case 'speed':
+          const videoSpeed = Number(value);
+          if (!isNaN(videoSpeed) && videoSpeed > 0.5 && videoSpeed < 2.0) {
+            command.videoFilters(`setpts=${1/videoSpeed}*PTS`);
+            // We also need to adjust audio to match
+            command.audioFilters(`atempo=${videoSpeed}`);
+          }
+          break;
+        default:
+          // For any other video filter, pass it directly if it's a string
+          if (typeof value === 'string') {
+            command.videoFilters(`${key}=${value}`);
+          }
+      }
+    }
+    // Handle special filters
+    else if (key === 'complexFilter' && typeof value === 'string') {
+      command.complexFilter(value);
     }
   }
-  
-  // Skip if no effective change
-  if (totalSpeedFactor === 1.0) return;
-  
-  // Apply video timing adjustment to match audio speed
-  const videoFilter = `setpts=${1/totalSpeedFactor}*PTS`;
-  
-  // Apply as complex filter to ensure sync between streams
-  command.complexFilter(`[0:v]${videoFilter}[v];[0:a]acopy[a]`, ['v', 'a']);
-  
-  logFFmpegCommand(`Applied audio/video sync with total speed factor: ${totalSpeedFactor}`);
-}
+};
 
 /**
- * Apply filters from a stacked filter string like 'clippedbass+destroy8bit'
+ * Check if a filter name is for audio
  */
-const applyStackedFilters = (command: ffmpeg.FfmpegCommand, filterNames: string[], isVideo: boolean): boolean => {
+const isAudioFilter = (filterName: string): boolean => {
+  const audioFilters = [
+    'reverse', 'speed', 'tempo', 'pitch', 'volume', 'vol', 'amplify',
+    'bass', 'treble', 'fade', 'echo', 'loudnorm', 'highpass', 'lowpass',
+    'atempo', 'aecho', 'areverse', 'vibrato', 'chorus', 'asetrate',
+    'aresample', 'pan'
+  ];
+  return audioFilters.includes(filterName.toLowerCase()) || filterName.startsWith('a');
+};
+
+/**
+ * Check if a filter name is for video
+ */
+const isVideoFilter = (filterName: string): boolean => {
+  const videoFilters = [
+    'rotate', 'flip', 'mirror', 'contrast', 'brightness', 'saturation',
+    'blur', 'speed', 'crop', 'scale', 'overlay', 'fade', 'setpts',
+    'hue', 'eq', 'boxblur', 'unsharp', 'drawtext', 'pad', 'transpose',
+    'vflip', 'hflip', 'negate'
+  ];
+  return videoFilters.includes(filterName.toLowerCase()) || filterName.startsWith('v');
+};
+
+/**
+ * Check if a filter string is for audio
+ */
+const isAudioFilterString = (filterString: string): boolean => {
+  const audioFilterPrefixes = ['a', 'volume', 'bass', 'treble', 'loudnorm'];
+  return audioFilterPrefixes.some(prefix => filterString.startsWith(prefix));
+};
+
+/**
+ * Generate audio waveform image
+ */
+export const generateAudioWaveform = async (audioPath: string): Promise<string[]> => {
+  if (!fs.existsSync(audioPath)) {
+    throw new Error(`Audio file not found: ${audioPath}`);
+  }
+  
+  const baseFilename = path.basename(audioPath, path.extname(audioPath));
+  const waveformPath = path.join(THUMBNAILS_DIR, `${baseFilename}_waveform.png`);
+  const spectrogramPath = path.join(THUMBNAILS_DIR, `${baseFilename}_spectrogram.png`);
+  const results: string[] = [];
+  
   try {
-    logFFmpegCommand(`Applying stacked filters: ${filterNames.join('+')}`);
+    // Generate waveform
+    await new Promise<void>((resolve, reject) => {
+      ffmpeg(audioPath)
+        .outputOptions([
+          '-filter_complex', 'showwavespic=s=640x240:colors=#3498db',
+          '-frames:v', '1'
+        ])
+        .save(waveformPath)
+        .on('end', () => {
+          results.push(`/media/thumbnails/${baseFilename}_waveform.png`);
+          resolve();
+        })
+        .on('error', (err) => reject(err));
+    });
     
-    // Process each filter individually
-    for (const filterName of filterNames) {
-      const [name, valueStr] = filterName.split('=');
-      const value = valueStr ? parseFloat(valueStr) : 1;
-      
-      // For audio effects
-      if (audioEffects[name]) {
-        const filterStr = audioEffects[name](value);
-        command.audioFilters(filterStr);
-        logFFmpegCommand(`Applied stacked audio effect: ${name}=${value} (${filterStr})`);
-      } 
-      // For video effects (only if this is a video)
-      else if (isVideo && videoEffects[name]) {
-        const filterStr = videoEffects[name](value);
-        command.videoFilters(filterStr);
-        logFFmpegCommand(`Applied stacked video effect: ${name}=${value} (${filterStr})`);
-      }
-      else {
-        logFFmpegCommand(`Unknown effect in stack: ${name}`);
-      }
+    // Generate spectrogram
+    await new Promise<void>((resolve, reject) => {
+      ffmpeg(audioPath)
+        .outputOptions([
+          '-filter_complex', 'showspectrumpic=s=640x240:mode=combined:color=rainbow',
+          '-frames:v', '1'
+        ])
+        .save(spectrogramPath)
+        .on('end', () => {
+          results.push(`/media/thumbnails/${baseFilename}_spectrogram.png`);
+          resolve();
+        })
+        .on('error', (err) => reject(err));
+    });
+    
+    // Save waveform/spectrogram paths to database
+    if (results.length > 0) {
+      const normalizedFilename = path.basename(audioPath);
+      updateMediaThumbnails(normalizedFilename, results);
     }
     
-    return true;
+    return results;
   } catch (error) {
-    console.error(`Error applying stacked filters: ${error}`);
-    return false;
+    console.error(`Error generating audio visualizations: ${error}`);
+    throw error;
   }
 };
