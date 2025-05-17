@@ -1512,34 +1512,75 @@ const applyFilters = (
   isVideo: boolean
 ): void => {
   // Handle macroblock effect (needs special handling before other filters)
+  let hasMacroblock = false;
+  let macroBlockStrength = 0;
+  
   if ('macroblock' in filters) {
-    const strength = Number(filters.macroblock) || 1;
-    const qValue = Math.min(300000, Math.max(2, Math.floor(2 + (strength * 3))));
+    hasMacroblock = true;
+    macroBlockStrength = Number(filters.macroblock) || 1;
     
     if (isVideo) {
-      console.log(`Applying macroblock effect (strength: ${strength})`);
+      console.log(`Applying macroblock effect (strength: ${macroBlockStrength})`);
       // Apply noise filter first
       command.videoFilters('noise=alls=12:allf=t');
       
       // Use the right codec and settings for macroblock effect
       command.outputOptions('-c:v mpeg2video');
-      command.outputOptions(`-q:v ${qValue}`);
+      command.outputOptions(`-q:v ${Math.min(300000, Math.max(2, Math.floor(2 + (macroBlockStrength * 3))))}`);
       
       // If high strength, add bitstream noise filter
-      if (strength > 5) {
-        command.outputOptions(`-bsf:v noise=${Math.max(100, 1000000/strength)}`);
+      if (macroBlockStrength > 5) {
+        command.outputOptions(`-bsf:v noise=${Math.max(100, 1000000/macroBlockStrength)}`);
       }
+      
+      console.log(`Applied macroblock effect with q:v=${Math.min(300000, Math.max(2, Math.floor(2 + (macroBlockStrength * 3))))}`);
     }
     
-    console.log(`Applied macroblock effect with q:v=${qValue}`);
-    delete filters.macroblock;
+    // Don't delete the macroblock filter here, it will be removed after all processing
   }
 
   // Handle stacked filters
   if (filters.__stacked_filters && filters.__stacked_filters.length > 0) {
     console.log(`Processing stacked filters: ${filters.__stacked_filters.join(', ')}`);
     
-    // Group filters by type (audio/video) for proper chaining
+    // Check for duplicated filters - if the same filter appears multiple times,
+    // we need to apply them sequentially instead of grouping by category
+    const filterOccurrences: Record<string, number> = {};
+    const hasDuplicateFilters = filters.__stacked_filters.some(filter => {
+      filterOccurrences[filter] = (filterOccurrences[filter] || 0) + 1;
+      return filterOccurrences[filter] > 1;
+    });
+    
+    // If we have duplicate filters, apply them one by one in sequence
+    if (hasDuplicateFilters) {
+      console.log(`Detected repeated filters, applying sequentially: ${JSON.stringify(filterOccurrences)}`);
+      
+      filters.__stacked_filters.forEach((filterName, index) => {
+        const filterNameLower = filterName.toLowerCase();
+        
+        // Apply audio filters
+        if (filterNameLower in audioEffects) {
+          console.log(`Applying audio filter ${index + 1}/${filters.__stacked_filters!.length}: ${filterNameLower}`);
+          command.audioFilters(audioEffects[filterNameLower]);
+        }
+        
+        // Apply video filters (if this is video)
+        if (isVideo && filterNameLower in videoEffects) {
+          // Handle special complex filters separately
+          if (['haah', 'waaw', 'kaleidoscope', 'v360_cube', 'planet', 'tiny_planet', 'oscilloscope'].includes(filterNameLower)) {
+            console.log(`Applying complex video effect: ${filterNameLower}`);
+            applyComplexVideoFilter(command, filterNameLower);
+          } else {
+            console.log(`Applying video filter ${index + 1}/${filters.__stacked_filters!.length}: ${filterNameLower}`);
+            command.videoFilters(videoEffects[filterNameLower]);
+          }
+        }
+      });
+      
+      return;
+    }
+    
+    // Standard grouping approach for non-duplicated filters
     const audioFilterNames: string[] = [];
     const videoFilterNames: string[] = [];
 
@@ -1634,7 +1675,7 @@ const applyFilters = (
   }
 
   // Skip special properties
-  const skipProps = ['__raw_complex_filter', '__stacked_filters', '__overlay_path'];
+  const skipProps = ['__raw_complex_filter', '__stacked_filters', '__overlay_path', 'macroblock'];
   
   // Apply regular filters
   const filterKeys = Object.keys(filters).filter(key => !skipProps.includes(key) && filters[key] !== undefined);
