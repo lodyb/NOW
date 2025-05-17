@@ -78,8 +78,56 @@ export const processFilterChain = async (
     if (filterString && filterString !== '{}') {
       const parsedFilters = parseFilterString(filterString);
       
-      // Process individual filters one by one in sequence
-      if (parsedFilters.__stacked_filters && parsedFilters.__stacked_filters.length > 0) {
+      // Special handling when macroblock is involved
+      if (parsedFilters.__stacked_filters && 
+          parsedFilters.__stacked_filters.some(f => f.startsWith('macroblock'))) {
+        
+        // When macroblock is present, process all filters in a single step
+        // This ensures the codec settings from macroblock are preserved
+        const filterOutputFilename = `filter_combined_${randomId}_${path.basename(currentInputPath)}`;
+        
+        if (progressCallback) {
+          await progressCallback(
+            `Applying filters with macroblock: ${parsedFilters.__stacked_filters.join(', ')}`, 
+            0.5
+          );
+        }
+        
+        const filterOptions: ProcessOptions = {
+          filters: parsedFilters,
+          enforceDiscordLimit: false,
+          progressCallback: async (stage, progress) => {
+            if (progressCallback) {
+              await progressCallback('Processing with macroblock', 0.5 + progress * 0.4);
+            }
+          }
+        };
+        
+        try {
+          const processedPath = await processMedia(
+            currentInputPath,
+            filterOutputFilename,
+            filterOptions
+          );
+          
+          // Clean up the previous temporary file
+          if (!isFirstStep) {
+            try {
+              fs.unlinkSync(currentInputPath);
+            } catch (err) {
+              console.error('Error cleaning up temporary file:', err);
+            }
+          }
+          
+          currentInputPath = processedPath;
+          isFirstStep = false;
+        } catch (error) {
+          console.error(`Error applying filters with macroblock:`, error);
+          throw new Error(`Failed to apply filters: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
+      // Normal processing without macroblock - process filters one by one
+      else if (parsedFilters.__stacked_filters && parsedFilters.__stacked_filters.length > 0) {
         const stackedFilters = parsedFilters.__stacked_filters;
         const totalFilters = stackedFilters.length;
         
@@ -140,31 +188,26 @@ export const processFilterChain = async (
           key !== '__overlay_path'
         );
         
-        const totalFilters = filterKeys.length;
+        // Check if macroblock is present in key-value filters
+        const hasMacroblock = filterKeys.includes('macroblock');
         
-        for (let i = 0; i < totalFilters; i++) {
-          const filterKey = filterKeys[i];
-          const filterValue = parsedFilters[filterKey];
-          const filterOutputFilename = `filter_${i}_${randomId}_${path.basename(currentInputPath)}`;
+        if (hasMacroblock) {
+          // When macroblock is present, process all filters in a single step
+          const filterOutputFilename = `filter_combined_${randomId}_${path.basename(currentInputPath)}`;
           
           if (progressCallback) {
             await progressCallback(
-              `Filter ${i + 1}/${totalFilters}: ${filterKey}${filterValue ? `=${filterValue}` : ''}`,
-              i / totalFilters
+              `Applying filters with macroblock`, 
+              0.5
             );
           }
           
-          // Create filter options for this single filter
           const filterOptions: ProcessOptions = {
-            filters: { [filterKey]: filterValue },
+            filters: parsedFilters,
             enforceDiscordLimit: false,
             progressCallback: async (stage, progress) => {
               if (progressCallback) {
-                const overallProgress = (i + progress) / totalFilters;
-                await progressCallback(
-                  `Filter ${i + 1}/${totalFilters}: ${filterKey}`,
-                  overallProgress
-                );
+                await progressCallback('Processing with macroblock', 0.5 + progress * 0.4);
               }
             }
           };
@@ -188,8 +231,62 @@ export const processFilterChain = async (
             currentInputPath = processedPath;
             isFirstStep = false;
           } catch (error) {
-            console.error(`Error applying filter '${filterKey}':`, error);
-            throw new Error(`Failed to apply filter '${filterKey}': ${error instanceof Error ? error.message : String(error)}`);
+            console.error(`Error applying filters with macroblock:`, error);
+            throw new Error(`Failed to apply filters: ${error instanceof Error ? error.message : String(error)}`);
+          }
+        } else {
+          // Process filters one by one (original logic)
+          const totalFilters = filterKeys.length;
+          
+          for (let i = 0; i < totalFilters; i++) {
+            const filterKey = filterKeys[i];
+            const filterValue = parsedFilters[filterKey];
+            const filterOutputFilename = `filter_${i}_${randomId}_${path.basename(currentInputPath)}`;
+            
+            if (progressCallback) {
+              await progressCallback(
+                `Filter ${i + 1}/${totalFilters}: ${filterKey}${filterValue ? `=${filterValue}` : ''}`,
+                i / totalFilters
+              );
+            }
+            
+            // Create filter options for this single filter
+            const filterOptions: ProcessOptions = {
+              filters: { [filterKey]: filterValue },
+              enforceDiscordLimit: false,
+              progressCallback: async (stage, progress) => {
+                if (progressCallback) {
+                  const overallProgress = (i + progress) / totalFilters;
+                  await progressCallback(
+                    `Filter ${i + 1}/${totalFilters}: ${filterKey}`,
+                    overallProgress
+                  );
+                }
+              }
+            };
+            
+            try {
+              const processedPath = await processMedia(
+                currentInputPath,
+                filterOutputFilename,
+                filterOptions
+              );
+              
+              // Clean up the previous temporary file
+              if (!isFirstStep) {
+                try {
+                  fs.unlinkSync(currentInputPath);
+                } catch (err) {
+                  console.error('Error cleaning up temporary file:', err);
+                }
+              }
+              
+              currentInputPath = processedPath;
+              isFirstStep = false;
+            } catch (error) {
+              console.error(`Error applying filter '${filterKey}':`, error);
+              throw new Error(`Failed to apply filter '${filterKey}': ${error instanceof Error ? error.message : String(error)}`);
+            }
           }
         }
       }
