@@ -123,8 +123,8 @@ async function testFilter(
             break;
           case 'oscilloscope':
             // Use a simpler approach that works reliably for testing
-            command = ffmpeg();
-            command
+            const oscilloscopeCommand = ffmpeg();
+            oscilloscopeCommand
               .input('sine=frequency=440:beep_factor=2:duration=3')
               .inputFormat('lavfi')
               .outputOptions('-filter_complex', 'ahistogram=s=640x480[out]')
@@ -132,6 +132,45 @@ async function testFilter(
               .outputOptions('-t', '3')
               .outputOptions('-c:v', 'libx264')
               .outputOptions('-pix_fmt', 'yuv420p');
+            
+            // Replace the original command with our new one
+            return new Promise((resolveFilter) => {
+              oscilloscopeCommand
+                .save(outputPath)
+                .on('end', () => {
+                  const duration = (Date.now() - startTime) / 1000;
+                  // Clean up the test sample
+                  try {
+                    fs.unlinkSync(testSample);
+                  } catch (err) {
+                    console.error(`Error cleaning up test sample: ${err}`);
+                  }
+                  
+                  resolveFilter({
+                    filterName,
+                    filterType: 'video',
+                    success: true,
+                    duration,
+                    outputPath
+                  });
+                })
+                .on('error', (err) => {
+                  // Clean up the test sample
+                  try {
+                    fs.unlinkSync(testSample);
+                  } catch (cleanupErr) {
+                    console.error(`Error cleaning up test sample: ${cleanupErr}`);
+                  }
+                  
+                  resolveFilter({
+                    filterName,
+                    filterType: 'video',
+                    success: false,
+                    error: err.message,
+                    duration: (Date.now() - startTime) / 1000
+                  });
+                });
+            });
             break;
         }
       } else if (isVideo) {
