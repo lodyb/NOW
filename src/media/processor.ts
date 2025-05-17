@@ -1540,50 +1540,78 @@ const applyFilters = (
     console.log(`Processing stacked filters: ${filters.__stacked_filters.join(', ')}`);
     
     // Group filters by type (audio/video) for proper chaining
-    const audioFilterStrings: string[] = [];
-    const videoFilterStrings: string[] = [];
-    
-    // Collect filter strings by type
+    const audioFilterNames: string[] = [];
+    const videoFilterNames: string[] = [];
+
+    // Organize filters by type
     filters.__stacked_filters.forEach(filterName => {
       const filterNameLower = filterName.toLowerCase();
       
-      // Collect audio filter strings
       if (filterNameLower in audioEffects) {
-        audioFilterStrings.push(audioEffects[filterNameLower]);
+        audioFilterNames.push(filterNameLower);
       }
       
-      // Collect video filter strings (only if this is a video)
       if (isVideo && filterNameLower in videoEffects) {
-        // Special handling for filters that need complex filtering
-        if (!['haah', 'waaw', 'kaleidoscope', 'v360_cube', 'planet', 'tiny_planet', 'oscilloscope'].includes(filterNameLower)) {
-          videoFilterStrings.push(videoEffects[filterNameLower]);
-        }
+        videoFilterNames.push(filterNameLower);
       }
     });
     
+    // Handle audio filters in compatible groups to avoid filter graph errors
+    if (audioFilterNames.length > 0) {
+      console.log(`Processing ${audioFilterNames.length} audio filters in batches`);
+      
+      // Group audio filters by category to prevent conflicts
+      const filterGroups = {
+        pitch: audioFilterNames.filter(name => 
+          ['chipmunk', 'demon', 'nightcore', 'vaporwave', 'phonk'].includes(name)).slice(0, 1),
+        bass: audioFilterNames.filter(name => 
+          ['bass', 'bassboosted', 'extremebass', 'distortbass', 'earrape', 'nuked'].includes(name)).slice(0, 1),
+        distort: audioFilterNames.filter(name => 
+          ['corrupt', 'bitcrush', 'crunch', 'crushcrush', 'deepfried', 'distortion', 'hardclip'].includes(name)).slice(0, 1),
+        echo: audioFilterNames.filter(name => 
+          ['echo', 'aecho', 'reverb', 'metallic', 'hall', 'mountains'].includes(name)).slice(0, 2),
+        robot: audioFilterNames.filter(name => 
+          ['robotize', 'telephone', 'alien'].includes(name)).slice(0, 1),
+        other: audioFilterNames.filter(name => 
+          !['chipmunk', 'demon', 'nightcore', 'vaporwave', 'phonk', 
+            'bass', 'bassboosted', 'extremebass', 'distortbass', 'earrape', 'nuked',
+            'corrupt', 'bitcrush', 'crunch', 'crushcrush', 'deepfried', 'distortion', 'hardclip',
+            'echo', 'aecho', 'reverb', 'metallic', 'hall', 'mountains',
+            'robotize', 'telephone', 'alien'].includes(name)).slice(0, 2)
+      };
+      
+      // Build filter strings for each compatible group
+      Object.entries(filterGroups).forEach(([groupName, filterNames]) => {
+        if (filterNames.length === 0) return;
+        
+        const groupFilterStrings = filterNames.map(name => audioEffects[name]);
+        if (groupFilterStrings.length > 0) {
+          const combinedFilters = groupFilterStrings.join(',');
+          console.log(`Applying ${groupName} audio filters: ${filterNames.join(', ')}`);
+          command.audioFilters(combinedFilters);
+        }
+      });
+    }
+    
     // Apply special complex video filters separately
     if (isVideo) {
-      for (const filterName of filters.__stacked_filters) {
-        const filterNameLower = filterName.toLowerCase();
-        if (['haah', 'waaw', 'kaleidoscope', 'v360_cube', 'planet', 'tiny_planet', 'oscilloscope'].includes(filterNameLower)) {
-          console.log(`Applying complex video effect: ${filterNameLower}`);
-          applyComplexVideoFilter(command, filterNameLower);
+      for (const filterName of videoFilterNames) {
+        if (['haah', 'waaw', 'kaleidoscope', 'v360_cube', 'planet', 'tiny_planet', 'oscilloscope'].includes(filterName)) {
+          console.log(`Applying complex video effect: ${filterName}`);
+          applyComplexVideoFilter(command, filterName);
         }
       }
-    }
-    
-    // Apply combined audio filters as a single chain
-    if (audioFilterStrings.length > 0) {
-      const combinedAudioFilters = audioFilterStrings.join(',');
-      console.log(`Applying chained audio filters: ${combinedAudioFilters}`);
-      command.audioFilters(combinedAudioFilters);
-    }
-    
-    // Apply combined video filters as a single chain (for non-complex ones)
-    if (isVideo && videoFilterStrings.length > 0) {
-      const combinedVideoFilters = videoFilterStrings.join(',');
-      console.log(`Applying chained video filters: ${combinedVideoFilters}`);
-      command.videoFilters(combinedVideoFilters);
+      
+      // Apply regular video filters as a combined chain
+      const regularVideoFilters = videoFilterNames.filter(name => 
+        !['haah', 'waaw', 'kaleidoscope', 'v360_cube', 'planet', 'tiny_planet', 'oscilloscope'].includes(name));
+      
+      if (regularVideoFilters.length > 0) {
+        const videoFilterStrings = regularVideoFilters.map(name => videoEffects[name]);
+        const combinedVideoFilters = videoFilterStrings.join(',');
+        console.log(`Applying chained video filters: ${combinedVideoFilters}`);
+        command.videoFilters(combinedVideoFilters);
+      }
     }
     
     return;

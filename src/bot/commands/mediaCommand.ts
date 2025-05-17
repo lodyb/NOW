@@ -51,42 +51,57 @@ export const processMediaCommand = async (
       return;
     }
     
-    // Prepare filter string for processing
-    let parsedFilterString = filterString;
-    if (filterString && !filterString.startsWith('{')) {
-      parsedFilterString = `{${filterString}}`;
-    }
-    
     try {
-      // Update status message based on filter presence
-      if (parsedFilterString) {
-        await statusMessage.edit(`Processing media with filters... ⏳`);
+      let processedPath: string;
+      let needsCleanup = false;
+      
+      // Skip processing if no filters or clip options are specified and the media is from database
+      const hasFilters = !!filterString;
+      const hasClipOptions = !!(clipOptions && (clipOptions.duration || clipOptions.start));
+      
+      if (!hasFilters && !hasClipOptions && !fromReply && !mediaSource.isTemporary) {
+        // Just use the existing normalized file directly
+        processedPath = mediaSource.filePath;
+        await statusMessage.edit(`Found ${searchTerm ? `"${searchTerm}"` : 'media'}, uploading... 📤`);
       } else {
-        await statusMessage.edit(`Processing media... ⏳`);
+        // Prepare filter string for processing
+        let parsedFilterString = filterString;
+        if (filterString && !filterString.startsWith('{')) {
+          parsedFilterString = `{${filterString}}`;
+        }
+        
+        // Update status message based on filter presence
+        if (parsedFilterString) {
+          await statusMessage.edit(`Processing media with filters... ⏳`);
+        } else {
+          await statusMessage.edit(`Processing media... ⏳`);
+        }
+        
+        // Generate random ID for output filename
+        const randomId = crypto.randomBytes(4).toString('hex');
+        const outputFilename = `processed_${randomId}${path.extname(mediaSource.filePath)}`;
+        
+        // Process the media with filter chain
+        processedPath = await processFilterChain(
+          mediaSource.filePath,
+          outputFilename,
+          parsedFilterString,
+          clipOptions,
+          async (stage, progress) => {
+            try {
+              await statusMessage.edit(`${stage} (${Math.round(progress * 100)}%)... ⏳`);
+            } catch (err) {
+              console.error('Error updating status message:', err);
+            }
+          },
+          true // Always enforce Discord's file size limits
+        );
+        
+        needsCleanup = true;
       }
       
-      // Generate random ID for output filename
-      const randomId = crypto.randomBytes(4).toString('hex');
-      const outputFilename = `processed_${randomId}${path.extname(mediaSource.filePath)}`;
-      
-      // Process the media with filter chain
-      const processedPath = await processFilterChain(
-        mediaSource.filePath,
-        outputFilename,
-        parsedFilterString,
-        clipOptions,
-        async (stage, progress) => {
-          try {
-            await statusMessage.edit(`${stage} (${Math.round(progress * 100)}%)... ⏳`);
-          } catch (err) {
-            console.error('Error updating status message:', err);
-          }
-        },
-        true // Always enforce Discord's file size limits
-      );
-      
       // Upload the processed file
-      await statusMessage.edit(`Processing complete! Uploading... 📤`);
+      await statusMessage.edit(`Uploading... 📤`);
       const attachment = new AttachmentBuilder(processedPath);
       await safeReply(message, { files: [attachment] });
       
@@ -94,16 +109,23 @@ export const processMediaCommand = async (
       await statusMessage.delete().catch(err => console.error('Failed to delete status message:', err));
       
       // Clean up temporary files
-      try {
-        if (fs.existsSync(processedPath)) {
-          fs.unlinkSync(processedPath);
+      if (needsCleanup) {
+        try {
+          if (fs.existsSync(processedPath)) {
+            fs.unlinkSync(processedPath);
+          }
+        } catch (error) {
+          console.error('Error cleaning up processed file:', error);
         }
-        // If this was a downloaded file (not from database), clean it up too
-        if (fromReply && mediaSource.isTemporary && fs.existsSync(mediaSource.filePath)) {
+      }
+      
+      // If this was a downloaded file (not from database), clean it up too
+      if (fromReply && mediaSource.isTemporary && fs.existsSync(mediaSource.filePath)) {
+        try {
           fs.unlinkSync(mediaSource.filePath);
+        } catch (error) {
+          console.error('Error cleaning up temporary file:', error);
         }
-      } catch (error) {
-        console.error('Error cleaning up temporary files:', error);
       }
       
     } catch (error) {

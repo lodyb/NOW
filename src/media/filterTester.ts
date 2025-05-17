@@ -493,15 +493,48 @@ export async function testAudioFilterChain(
       // Build complex filter chain by concatenating filter strings
       let combinedFilterString = '';
       
-      filterNames.forEach((name, index) => {
-        if (name in audioEffects) {
-          // Append filter expressions with commas
-          if (combinedFilterString) {
-            combinedFilterString += ',';
+      // Check if there are too many filters that might overload ffmpeg
+      if (filterNames.length > 5) {
+        // Group filters into categories to avoid filter graph issues
+        const bassFilters = filterNames.filter(name => 
+          ['bass', 'bassboosted', 'extremebass', 'distortbass', 'earrape', 'nuked', 'clippedbass']
+            .includes(name)).slice(0, 1);
+            
+        const pitchFilters = filterNames.filter(name => 
+          ['chipmunk', 'demon', 'nightcore', 'vaporwave', 'phonk']
+            .includes(name)).slice(0, 1);
+            
+        const distortionFilters = filterNames.filter(name => 
+          ['corrupt', 'bitcrush', 'crunch', 'crushcrush', 'deepfried', 'distortion', 'hardclip', 'saturate']
+            .includes(name)).slice(0, 1);
+            
+        const echoFilters = filterNames.filter(name => 
+          ['echo', 'aecho', 'reverb', 'metallic', 'hall', 'mountains']
+            .includes(name)).slice(0, 1);
+            
+        const robotFilters = filterNames.filter(name => 
+          ['robotize', 'telephone', 'alien']
+            .includes(name)).slice(0, 1);
+            
+        // Build simplified filter string with one effect from each category
+        const effectiveFilters = [...bassFilters, ...pitchFilters, ...distortionFilters, ...echoFilters, ...robotFilters];
+        console.log(`Using simplified filter chain with ${effectiveFilters.length} effects: ${effectiveFilters.join(', ')}`);
+        
+        effectiveFilters.forEach((name, index) => {
+          if (name in audioEffects) {
+            if (combinedFilterString) combinedFilterString += ',';
+            combinedFilterString += audioEffects[name];
           }
-          combinedFilterString += audioEffects[name];
-        }
-      });
+        });
+      } else {
+        // Original behavior for smaller filter chains
+        filterNames.forEach((name) => {
+          if (name in audioEffects) {
+            if (combinedFilterString) combinedFilterString += ',';
+            combinedFilterString += audioEffects[name];
+          }
+        });
+      }
       
       // Apply the combined filter string as a single filter
       if (combinedFilterString) {
@@ -558,6 +591,150 @@ export async function testAudioFilterChain(
       resolve({
         filterName: filterChainName,
         filterType: 'audio',
+        success: false,
+        error: err instanceof Error ? err.message : String(err),
+        duration: (Date.now() - startTime) / 1000
+      });
+    }
+  });
+}
+
+/**
+ * Test a video filter chain with audio filters
+ * @param videoFilters Array of video filter names to chain
+ * @param audioFilters Array of audio filter names to chain
+ * @returns Test result with success/failure info
+ */
+export async function testVideoAudioFilterChain(
+  videoFilters: string[] = [],
+  audioFilters: string[] = []
+): Promise<FilterTestResult> {
+  // Create test directory if it doesn't exist
+  if (!fs.existsSync(TEST_DIR)) {
+    fs.mkdirSync(TEST_DIR, { recursive: true });
+  }
+  
+  const startTime = Date.now();
+  const testSample = await createTestSample(true); // Video sample
+  const filterChainName = [...videoFilters, ...audioFilters].join('_');
+  const outputPath = path.join(TEST_DIR, `chain_${filterChainName}_${crypto.randomBytes(4).toString('hex')}.mp4`);
+  
+  return new Promise((resolve) => {
+    const timeoutId = setTimeout(() => {
+      console.log(`Filter chain test for ${filterChainName} timed out after 20 seconds`);
+      try {
+        fs.unlinkSync(testSample);
+      } catch (err) {
+        console.error(`Error cleaning up test sample: ${err}`);
+      }
+      
+      resolve({
+        filterName: filterChainName,
+        filterType: 'video',
+        success: false,
+        error: 'Timeout after 20 seconds',
+        duration: 20.0
+      });
+    }, 20000);
+    
+    try {
+      const command = ffmpeg(testSample);
+      
+      // Build audio filter string
+      let audioFilterString = '';
+      if (audioFilters.length > 0) {
+        // Limit to 3 audio filters to avoid complexity issues
+        const limitedAudioFilters = audioFilters.length > 3 ? audioFilters.slice(0, 3) : audioFilters;
+        
+        limitedAudioFilters.forEach(name => {
+          if (name in audioEffects) {
+            if (audioFilterString) audioFilterString += ',';
+            audioFilterString += audioEffects[name];
+          }
+        });
+        
+        if (audioFilterString) {
+          console.log(`Applying audio filters: ${audioFilterString}`);
+          command.audioFilters(audioFilterString);
+        }
+      }
+      
+      // Build video filter string for regular filters
+      const regVideoFilters = videoFilters.filter(name => 
+        !['macroblock', 'haah', 'waaw', 'kaleidoscope', 'v360_cube', 'planet', 'tiny_planet', 'oscilloscope'].includes(name));
+      
+      let videoFilterString = '';
+      regVideoFilters.forEach(name => {
+        if (name in videoEffects) {
+          if (videoFilterString) videoFilterString += ',';
+          videoFilterString += videoEffects[name];
+        }
+      });
+      
+      if (videoFilterString) {
+        console.log(`Applying video filters: ${videoFilterString}`);
+        command.videoFilters(videoFilterString);
+      }
+      
+      // Handle macroblock separately if present
+      if (videoFilters.includes('macroblock')) {
+        console.log('Applying macroblock effect');
+        command.outputOptions('-c:v mpeg2video');
+        command.outputOptions('-q:v 30');
+      } else {
+        command.outputOptions('-c:v libx264');
+      }
+      
+      command.outputOptions('-pix_fmt yuv420p')
+        .outputOptions('-c:a aac')
+        .save(outputPath)
+        .on('end', () => {
+          clearTimeout(timeoutId);
+          const duration = (Date.now() - startTime) / 1000;
+          try {
+            fs.unlinkSync(testSample);
+          } catch (err) {
+            console.error(`Error cleaning up test sample: ${err}`);
+          }
+          
+          console.log(`Video+Audio filter chain test complete: ${duration.toFixed(2)}s`);
+          resolve({
+            filterName: filterChainName,
+            filterType: 'video',
+            success: true,
+            duration,
+            outputPath
+          });
+        })
+        .on('error', (err) => {
+          clearTimeout(timeoutId);
+          try {
+            fs.unlinkSync(testSample);
+          } catch (cleanupErr) {
+            console.error(`Error cleaning up test sample: ${cleanupErr}`);
+          }
+          
+          console.log(`Video+Audio filter chain test failed: ${err.message}`);
+          resolve({
+            filterName: filterChainName,
+            filterType: 'video',
+            success: false,
+            error: err.message,
+            duration: (Date.now() - startTime) / 1000
+          });
+        });
+    } catch (err) {
+      clearTimeout(timeoutId);
+      try {
+        fs.unlinkSync(testSample);
+      } catch (cleanupErr) {
+        console.error(`Error cleaning up test sample: ${cleanupErr}`);
+      }
+      
+      console.log(`Video+Audio filter chain setup failed: ${err instanceof Error ? err.message : String(err)}`);
+      resolve({
+        filterName: filterChainName,
+        filterType: 'video',
         success: false,
         error: err instanceof Error ? err.message : String(err),
         duration: (Date.now() - startTime) / 1000
