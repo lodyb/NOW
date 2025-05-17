@@ -232,10 +232,10 @@ client.on(Events.MessageCreate, async (message) => {
   // Parse the command - returns null if not a NOW command
   const commandArgs = parseCommand(message);
   
-  console.log(`After all checks - Command args: ${commandArgs ? JSON.stringify(commandArgs) : 'null'}`);
-  
-  // Handle different commands
+  // Only log when we actually have a command to process
   if (commandArgs) {
+    console.log(`Command detected: ${commandArgs.command}`, commandArgs);
+  
     try {
       console.log(`Command received: ${commandArgs.command}`, commandArgs);
       
