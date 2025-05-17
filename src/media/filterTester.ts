@@ -85,8 +85,8 @@ async function testFilter(
               { filter: 'crop', options: 'iw/2:ih:0:0', inputs: 'a', outputs: 'a1' },
               { filter: 'hflip', inputs: 'a1', outputs: 'a2' },
               { filter: 'crop', options: 'iw/2:ih:iw/2:0', inputs: 'b', outputs: 'b1' },
-              { filter: 'hstack', inputs: ['a2', 'b1'] }
-            ]);
+              { filter: 'hstack', inputs: ['a2', 'b1'], outputs: 'out' }
+            ], ['out']);
             break;
           case 'waaw':
             command.complexFilter([
@@ -94,8 +94,8 @@ async function testFilter(
               { filter: 'crop', options: 'iw:ih/2:0:0', inputs: 'a', outputs: 'a1' },
               { filter: 'hflip', inputs: 'a1', outputs: 'a2' },
               { filter: 'crop', options: 'iw:ih/2:0:ih/2', inputs: 'b', outputs: 'b1' },
-              { filter: 'vstack', inputs: ['a2', 'b1'] }
-            ]);
+              { filter: 'vstack', inputs: ['a2', 'b1'], outputs: 'out' }
+            ], ['out']);
             break;
           case 'kaleidoscope':
             command.complexFilter([
@@ -106,20 +106,35 @@ async function testFilter(
               { filter: 'vflip', inputs: 'b1', outputs: 'b2' },
               { filter: 'hstack', inputs: ['a2', 'b2'], outputs: 'top' },
               { filter: 'split', inputs: 'top', outputs: ['t1', 't2'] },
-              { filter: 'vstack', inputs: ['t1', 't2'] }
-            ]);
+              { filter: 'vstack', inputs: ['t1', 't2'], outputs: 'out' }
+            ], ['out']);
             break;
           case 'v360_cube':
-            command.complexFilter('v360=input=equirect:output=cube:w=640:h=480');
+            // First create equirectangular test pattern
+            command.input('testsrc=duration=3:size=1920x960:rate=30')
+              .inputFormat('lavfi')
+              .complexFilter([
+                { filter: 'v360', options: 'input=equirect:output=cube:w=640:h=480', outputs: 'out' }
+              ], ['out']);
             break;
           case 'planet':
-            command.complexFilter('v360=input=equirect:output=stereographic:w=640:h=480');
+            command.input('testsrc=duration=3:size=1920x960:rate=30')
+              .inputFormat('lavfi')
+              .complexFilter([
+                { filter: 'v360', options: 'input=equirect:output=stereographic:w=640:h=480', outputs: 'out' }
+              ], ['out']);
             break;
           case 'tiny_planet':
-            command.complexFilter('v360=input=equirect:output=stereographic:w=640:h=480:pitch=-90');
+            command.input('testsrc=duration=3:size=1920x960:rate=30')
+              .inputFormat('lavfi')
+              .complexFilter([
+                { filter: 'v360', options: 'input=equirect:output=stereographic:w=640:h=480:pitch=-90', outputs: 'out' }
+              ], ['out']);
             break;
           case 'oscilloscope':
-            command.complexFilter('oscilloscope=size=640x480:rate=1:zoom=1');
+            command.complexFilter([
+              { filter: 'oscilloscope', options: 'size=640x480:rate=30:zoom=2', outputs: 'out' }
+            ], ['out']);
             break;
         }
       } else if (isVideo) {
