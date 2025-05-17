@@ -110,31 +110,28 @@ async function testFilter(
             ], ['out']);
             break;
           case 'v360_cube':
-            // First create equirectangular test pattern
-            command.input('testsrc=duration=3:size=1920x960:rate=30')
-              .inputFormat('lavfi')
-              .complexFilter([
-                { filter: 'v360', options: 'input=equirect:output=cube:w=640:h=480', outputs: 'out' }
-              ], ['out']);
+            // Create specific filtergraph for cube map conversion
+            command.outputOptions([
+              '-vf', 'v360=input=flat:output=cube:h_fov=90:v_fov=90'
+            ]);
             break;
           case 'planet':
-            command.input('testsrc=duration=3:size=1920x960:rate=30')
-              .inputFormat('lavfi')
-              .complexFilter([
-                { filter: 'v360', options: 'input=equirect:output=stereographic:w=640:h=480', outputs: 'out' }
-              ], ['out']);
+            // Create specific filtergraph for planet effect
+            command.outputOptions([
+              '-vf', 'v360=input=flat:output=stereographic'
+            ]);
             break;
           case 'tiny_planet':
-            command.input('testsrc=duration=3:size=1920x960:rate=30')
-              .inputFormat('lavfi')
-              .complexFilter([
-                { filter: 'v360', options: 'input=equirect:output=stereographic:w=640:h=480:pitch=-90', outputs: 'out' }
-              ], ['out']);
+            // Create specific filtergraph for tiny planet effect
+            command.outputOptions([
+              '-vf', 'v360=input=flat:output=stereographic:pitch=-90'
+            ]);
             break;
           case 'oscilloscope':
-            command.complexFilter([
-              { filter: 'oscilloscope', options: 'size=640x480:rate=30:zoom=2', outputs: 'out' }
-            ], ['out']);
+            // Use simpler oscilloscope parameters
+            command.outputOptions([
+              '-vf', 'oscilloscope=x=1:y=1:s=512x256'
+            ]);
             break;
         }
       } else if (isVideo) {
