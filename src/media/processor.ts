@@ -1541,51 +1541,33 @@ const applyFilters = (
 
   // Handle stacked filters
   if (filters.__stacked_filters && filters.__stacked_filters.length > 0) {
-    console.log(`Processing stacked filters: ${filters.__stacked_filters.join(', ')}`);
+    const stackedFilters = filters.__stacked_filters;
+    console.log(`Processing stacked filters: ${stackedFilters.join(', ')}`);
     
-    // Check for duplicated filters - if the same filter appears multiple times,
-    // we need to apply them sequentially instead of grouping by category
-    const filterOccurrences: Record<string, number> = {};
-    const hasDuplicateFilters = filters.__stacked_filters.some(filter => {
-      filterOccurrences[filter] = (filterOccurrences[filter] || 0) + 1;
-      return filterOccurrences[filter] > 1;
+    // Check if macroblock is among the stacked filters (special case)
+    // If so, remember it but remove it to process separately
+    let hasMacroblock = false;
+    let macroBlockStrength = 0;
+    const nonMacroblockFilters = stackedFilters.filter(filter => {
+      const isMacroblock = filter.startsWith('macroblock');
+      if (isMacroblock) {
+        hasMacroblock = true;
+        const strengthMatch = filter.match(/macroblock=(\d+)/);
+        if (strengthMatch && strengthMatch[1]) {
+          macroBlockStrength = Number(strengthMatch[1]) || 1;
+        } else {
+          macroBlockStrength = 1;
+        }
+      }
+      return !isMacroblock;
     });
     
-    // If we have duplicate filters, apply them one by one in sequence
-    if (hasDuplicateFilters) {
-      console.log(`Detected repeated filters, applying sequentially: ${JSON.stringify(filterOccurrences)}`);
-      
-      filters.__stacked_filters.forEach((filterName, index) => {
-        const filterNameLower = filterName.toLowerCase();
-        
-        // Apply audio filters
-        if (filterNameLower in audioEffects) {
-          console.log(`Applying audio filter ${index + 1}/${filters.__stacked_filters!.length}: ${filterNameLower}`);
-          command.audioFilters(audioEffects[filterNameLower]);
-        }
-        
-        // Apply video filters (if this is video)
-        if (isVideo && filterNameLower in videoEffects) {
-          // Handle special complex filters separately
-          if (['haah', 'waaw', 'kaleidoscope', 'v360_cube', 'planet', 'tiny_planet', 'oscilloscope'].includes(filterNameLower)) {
-            console.log(`Applying complex video effect: ${filterNameLower}`);
-            applyComplexVideoFilter(command, filterNameLower);
-          } else {
-            console.log(`Applying video filter ${index + 1}/${filters.__stacked_filters!.length}: ${filterNameLower}`);
-            command.videoFilters(videoEffects[filterNameLower]);
-          }
-        }
-      });
-      
-      return;
-    }
-    
-    // Standard grouping approach for non-duplicated filters
+    // Group filters by type (audio/video) for proper chaining
     const audioFilterNames: string[] = [];
     const videoFilterNames: string[] = [];
 
     // Organize filters by type
-    filters.__stacked_filters.forEach(filterName => {
+    nonMacroblockFilters.forEach(filterName => {
       const filterNameLower = filterName.toLowerCase();
       
       if (filterNameLower in audioEffects) {
@@ -1596,6 +1578,23 @@ const applyFilters = (
         videoFilterNames.push(filterNameLower);
       }
     });
+    
+    // Apply video noise for macroblock if needed
+    if (hasMacroblock && isVideo) {
+      console.log(`Applying macroblock effect (strength: ${macroBlockStrength})`);
+      // Apply noise filter first
+      command.videoFilters('noise=alls=12:allf=t');
+      
+      // Use the right codec and settings for macroblock effect
+      command.outputOptions('-c:v mpeg2video');
+      command.outputOptions(`-q:v ${Math.min(300000, Math.max(2, Math.floor(2 + (macroBlockStrength * 3))))}`);
+      
+      // If high strength, add bitstream noise filter
+      if (macroBlockStrength > 5) {
+        command.outputOptions(`-bsf:v noise=${Math.max(100, 1000000/macroBlockStrength)}`);
+      }
+      console.log(`Applied macroblock effect with q:v=${Math.min(300000, Math.max(2, Math.floor(2 + (macroBlockStrength * 3))))}`);
+    }
     
     // Handle audio filters in compatible groups to avoid filter graph errors
     if (audioFilterNames.length > 0) {
