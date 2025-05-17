@@ -640,6 +640,7 @@
         const toast = ref({ message: '', type: 'success' });
         let eventSource = null;
         let toastTimeout = null;
+        let processingCheckInterval = null; // Add interval for checking file existence
         
         // Fetch media and filters on mount
         onMounted(() => {
@@ -655,6 +656,9 @@
           }
           if (toastTimeout) {
             clearTimeout(toastTimeout);
+          }
+          if (processingCheckInterval) {
+            clearInterval(processingCheckInterval);
           }
         });
         
@@ -672,12 +676,23 @@
                   if (data.resultPath) {
                     processedMediaUrl.value = data.resultPath;
                     isProcessing.value = false;
+                    processingProgress.value = 1;
                     showMessage('Media processing complete!', 'success');
+                    
+                    // Clear any existing interval
+                    if (processingCheckInterval) {
+                      clearInterval(processingCheckInterval);
+                    }
                   }
                 }
               } else if (data.type === 'playgroundProgress') {
                 processingStatus.value = `${data.stage}: ${Math.round(data.progress * 100)}%`;
                 processingProgress.value = data.progress;
+                
+                // If we're at 100%, start checking for the file
+                if (data.progress >= 0.99) {
+                  startFileExistenceCheck();
+                }
               }
             } catch (error) {
               console.error('Error parsing SSE message:', error);
@@ -692,6 +707,65 @@
           };
         };
         
+        // Check if the processed file exists
+        const startFileExistenceCheck = () => {
+          // Clear any existing interval
+          if (processingCheckInterval) {
+            clearInterval(processingCheckInterval);
+          }
+          
+          // When we get to 100% processing, start checking for the file existence
+          let attempts = 0;
+          processingCheckInterval = setInterval(() => {
+            attempts++;
+            
+            // Try directly completing if we have a result URL from the backend
+            if (selectedMedia.value && processedMediaUrl.value) {
+              console.log('File detected, processing complete');
+              isProcessing.value = false;
+              clearInterval(processingCheckInterval);
+              showMessage('Media processing complete!', 'success');
+              return;
+            }
+            
+            // If we don't have a result URL and have tried too many times, force complete
+            if (attempts >= 5) {
+              console.log('No file detected after max attempts, forcing completion');
+              isProcessing.value = false;
+              clearInterval(processingCheckInterval);
+              
+              // Make a direct check via API as a last resort
+              checkMediaStatus();
+            }
+          }, 1000);
+        };
+        
+        // Check media status via API as last resort
+        const checkMediaStatus = async () => {
+          if (!selectedMedia.value) return;
+          
+          try {
+            const response = await axios.get(`/api/media/${selectedMedia.value.id}`);
+            const mediaData = response.data;
+            
+            // Check if there are any processed files matching this media
+            const checkForProcessedFiles = await axios.get('/api/media/processed', { 
+              params: { mediaId: selectedMedia.value.id } 
+            }).catch(() => ({ data: { files: [] } }));
+            
+            if (checkForProcessedFiles.data.files && checkForProcessedFiles.data.files.length > 0) {
+              // We found a processed file, use the latest one
+              processedMediaUrl.value = `/media/processed/${checkForProcessedFiles.data.files[0]}`;
+              showMessage('Media processing complete!', 'success');
+            } else {
+              // Fallback - if the API doesn't support this endpoint, just show an error
+              showMessage('Processing completed, but unable to find result. Please try again.', 'warning');
+            }
+          } catch (error) {
+            console.error('Error checking media status:', error);
+          }
+        };
+
         // Fetch media files
         const fetchMedia = async () => {
           try {
@@ -778,6 +852,12 @@
             isProcessing.value = true;
             processingStatus.value = 'Preparing media...';
             processingProgress.value = 0.05;
+            processedMediaUrl.value = ''; // Clear any previous result
+            
+            // Clear any existing check interval
+            if (processingCheckInterval) {
+              clearInterval(processingCheckInterval);
+            }
             
             const response = await axios.post('/api/playground/process', {
               mediaId: selectedMedia.value.id,
@@ -785,7 +865,16 @@
               clipOptions: getClipOptions()
             });
             
-            // The actual completion will be handled by the SSE connection
+            // If the response already includes a result path, use it directly
+            if (response.data && response.data.resultPath) {
+              setTimeout(() => {
+                processedMediaUrl.value = response.data.resultPath;
+                isProcessing.value = false;
+                processingProgress.value = 1;
+                showMessage('Media processing complete!', 'success');
+              }, 500);
+            }
+            // Otherwise the completion will be handled by SSE
           } catch (error) {
             isProcessing.value = false;
             console.error('Error processing media:', error);
