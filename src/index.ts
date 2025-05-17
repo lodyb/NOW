@@ -18,6 +18,7 @@ import { handleMahjongCommand } from './bot/commands/mahjong';
 import { handleWhatWasThatCommand } from './bot/commands/whatWasThat';
 import { handleEffectsCommand } from './bot/commands';
 import { handleRemixCommand } from './bot/commands/remix';
+import { handleFilterTestCommand } from './bot/commands/filtertest';
 import { handleMention } from './llm/mentionHandler';
 import { handleGalleryCommand, handleGalleryReaction, handleGalleryReactionRemove } from './bot/commands/gallery';
 import apiRoutes from './web/api';
@@ -338,6 +339,11 @@ client.on(Events.MessageCreate, async (message) => {
             commandArgs.clipOptions
           );
           console.log(`Remix command processing completed`);
+          await saveUserLastCommand(message.author.id, message.author.username, message.content);
+          break;
+          
+        case 'filtertest':
+          await handleFilterTestCommand(message, commandArgs.searchTerm ? commandArgs.searchTerm.split(' ') : []);
           await saveUserLastCommand(message.author.id, message.author.username, message.content);
           break;
           
