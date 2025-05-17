@@ -76,7 +76,53 @@ async function testFilter(
     const command = ffmpeg(testSample);
     
     try {
-      if (isVideo) {
+      // Special handling for complex filters that need specific syntax
+      if (isVideo && ['haah', 'waaw', 'kaleidoscope', 'v360_cube', 'planet', 'tiny_planet', 'oscilloscope'].includes(filterName)) {
+        switch(filterName) {
+          case 'haah':
+            command.complexFilter([
+              { filter: 'split', options: '', outputs: ['a', 'b'] },
+              { filter: 'crop', options: 'iw/2:ih:0:0', inputs: 'a', outputs: 'a1' },
+              { filter: 'hflip', inputs: 'a1', outputs: 'a2' },
+              { filter: 'crop', options: 'iw/2:ih:iw/2:0', inputs: 'b', outputs: 'b1' },
+              { filter: 'hstack', inputs: ['a2', 'b1'] }
+            ]);
+            break;
+          case 'waaw':
+            command.complexFilter([
+              { filter: 'split', options: '', outputs: ['a', 'b'] },
+              { filter: 'crop', options: 'iw:ih/2:0:0', inputs: 'a', outputs: 'a1' },
+              { filter: 'hflip', inputs: 'a1', outputs: 'a2' },
+              { filter: 'crop', options: 'iw:ih/2:0:ih/2', inputs: 'b', outputs: 'b1' },
+              { filter: 'vstack', inputs: ['a2', 'b1'] }
+            ]);
+            break;
+          case 'kaleidoscope':
+            command.complexFilter([
+              { filter: 'split', options: '', outputs: ['a', 'b'] },
+              { filter: 'crop', options: 'iw/2:ih/2:0:0', inputs: 'a', outputs: 'a1' },
+              { filter: 'hflip', inputs: 'a1', outputs: 'a2' },
+              { filter: 'crop', options: 'iw/2:ih/2:iw/2:0', inputs: 'b', outputs: 'b1' },
+              { filter: 'vflip', inputs: 'b1', outputs: 'b2' },
+              { filter: 'hstack', inputs: ['a2', 'b2'], outputs: 'top' },
+              { filter: 'split', inputs: 'top', outputs: ['t1', 't2'] },
+              { filter: 'vstack', inputs: ['t1', 't2'] }
+            ]);
+            break;
+          case 'v360_cube':
+            command.complexFilter('v360=input=equirect:output=cube:w=640:h=480');
+            break;
+          case 'planet':
+            command.complexFilter('v360=input=equirect:output=stereographic:w=640:h=480');
+            break;
+          case 'tiny_planet':
+            command.complexFilter('v360=input=equirect:output=stereographic:w=640:h=480:pitch=-90');
+            break;
+          case 'oscilloscope':
+            command.complexFilter('oscilloscope=size=640x480:rate=1:zoom=1');
+            break;
+        }
+      } else if (isVideo) {
         command.videoFilters(filterValue);
         command.outputOptions('-c:v libx264');
         command.outputOptions('-pix_fmt yuv420p');
