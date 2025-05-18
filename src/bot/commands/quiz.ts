@@ -42,6 +42,11 @@ interface QuizSession {
 
 const activeSessions = new Map<string, QuizSession>();
 
+// Function to check if a quiz is active in a guild
+export const isQuizActiveInGuild = (guildId: string): boolean => {
+  return activeSessions.has(guildId) && activeSessions.get(guildId)!.isActive;
+};
+
 export const handleQuizCommand = async (
   message: Message, 
   filterString?: string, 
@@ -90,14 +95,14 @@ export const handleStopCommand = async (message: Message) => {
   await message.reply('Quiz stopped. Final scores:' + formatScores(session));
 };
 
-export const handleQuizAnswer = async (message: Message) => {
+export const handleQuizAnswer = async (message: Message): Promise<boolean> => {
   if (!message.guild || !activeSessions.has(message.guild.id)) {
-    return;
+    return false;
   }
   
   const session = activeSessions.get(message.guild.id)!;
   if (!session.isActive || session.channelId !== message.channelId) {
-    return;
+    return false;
   }
   
   // Get the lowercase content for comparison
@@ -109,7 +114,7 @@ export const handleQuizAnswer = async (message: Message) => {
   // First check exact match (case insensitive)
   if (session.correctAnswers.some(a => a.toLowerCase() === answer)) {
     await awardPoint(message, session);
-    return;
+    return true;
   }
   
   // Special case handling for number series (like "classics of game 072")
@@ -156,10 +161,12 @@ export const handleQuizAnswer = async (message: Message) => {
   
   if (correctMatch) {
     await awardPoint(message, session);
+    return true;
   }
+  
+  return false;
 };
 
-// Helper function to award points and move to next round
 const awardPoint = async (message: Message, session: QuizSession) => {
   // Prevent race condition by checking if round is already locked
   if (session.roundLocked) {

@@ -55,125 +55,84 @@ export const db = new sqlite3.Database(DB_PATH, (err) => {
   console.log('Connected to the SQLite database');
 });
 
-export const initDatabase = (): Promise<void> => {
+// Initialize the database
+export const initDatabase = async (): Promise<void> => {
   return new Promise((resolve, reject) => {
-    db.serialize(() => {
-      // Create tables if they don't exist
-      db.run(`CREATE TABLE IF NOT EXISTS media (
-        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
-        title VARCHAR NOT NULL,
-        filePath VARCHAR NOT NULL,
-        normalizedPath VARCHAR,
-        year INTEGER,
-        metadata JSON,
-        isDeleted BOOLEAN NOT NULL DEFAULT 0,
-        thumbnails TEXT,
-        createdAt DATETIME NOT NULL DEFAULT (datetime('now'))
-      )`);
-
-      db.run(`CREATE TABLE IF NOT EXISTS media_answers (
-        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
-        answer VARCHAR NOT NULL,
-        isPrimary BOOLEAN NOT NULL DEFAULT (0),
-        mediaId INTEGER,
-        CONSTRAINT FK_32cd05114984960f6e9ab4dba55 FOREIGN KEY (mediaId) 
-        REFERENCES media (id) ON DELETE CASCADE ON UPDATE NO ACTION
-      )`);
-
-      db.run(`CREATE TABLE IF NOT EXISTS game_sessions (
-        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
-        guildId VARCHAR NOT NULL,
-        channelId VARCHAR NOT NULL,
-        startedAt DATETIME NOT NULL DEFAULT (datetime('now')),
-        endedAt DATETIME,
-        rounds INTEGER NOT NULL DEFAULT (0),
-        currentRound INTEGER NOT NULL DEFAULT (1)
-      )`);
-
-      db.run(`CREATE TABLE IF NOT EXISTS users (
-        id VARCHAR PRIMARY KEY NOT NULL,
-        username VARCHAR NOT NULL,
-        correctAnswers INTEGER NOT NULL DEFAULT (0),
-        gamesPlayed INTEGER NOT NULL DEFAULT (0),
-        lastCommand TEXT
-      )`);
+    try {
+      // Create media table if not exists
+      db.run(`
+        CREATE TABLE IF NOT EXISTS media (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          title TEXT NOT NULL,
+          filePath TEXT NOT NULL,
+          normalizedPath TEXT,
+          year INTEGER,
+          metadata JSON,
+          createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
       
-      db.run(`CREATE TABLE IF NOT EXISTS prompt_templates (
-        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
-        name VARCHAR NOT NULL UNIQUE,
-        template TEXT NOT NULL,
-        createdAt DATETIME NOT NULL DEFAULT (datetime('now'))
-      )`);
+      // Create users table if not exists
+      db.run(`
+        CREATE TABLE IF NOT EXISTS users (
+          id TEXT PRIMARY KEY,
+          username TEXT NOT NULL,
+          correctAnswers INTEGER DEFAULT 0,
+          gamesPlayed INTEGER DEFAULT 0
+        )
+      `);
       
-      // Create gallery_items table
-      db.run(`CREATE TABLE IF NOT EXISTS gallery_items (
-        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
-        userId VARCHAR NOT NULL,
-        messageId VARCHAR NOT NULL,
-        guildId VARCHAR NOT NULL,
-        filePath VARCHAR NOT NULL,
-        mediaType VARCHAR NOT NULL,
-        sourceUrl VARCHAR,
-        createdAt DATETIME NOT NULL DEFAULT (datetime('now')),
-        CONSTRAINT FK_gallery_user FOREIGN KEY (userId) 
-        REFERENCES users (id) ON DELETE CASCADE ON UPDATE NO ACTION
-      )`);
+      // Create game sessions table if not exists
+      db.run(`
+        CREATE TABLE IF NOT EXISTS game_sessions (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          guildId TEXT NOT NULL,
+          channelId TEXT NOT NULL,
+          startedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+          endedAt DATETIME,
+          rounds INTEGER DEFAULT 0,
+          currentRound INTEGER DEFAULT 1
+        )
+      `);
       
-      // Initialize jumble history table
-      initializeJumbleTable()
-        .then(() => console.log('Jumble history table initialized'))
-        .catch(err => console.error('Error initializing jumble table:', err));
-
-      // Check and add missing columns if needed
-      db.all(`PRAGMA table_info(media)`, (err, rows) => {
+      // Create user_last_commands table if not exists
+      db.run(`
+        CREATE TABLE IF NOT EXISTS user_last_commands (
+          userId TEXT PRIMARY KEY,
+          username TEXT NOT NULL,
+          command TEXT NOT NULL,
+          timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+      
+      // Create emote_bindings table if not exists
+      db.run(`
+        CREATE TABLE IF NOT EXISTS emote_bindings (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          guildId TEXT NOT NULL,
+          userId TEXT NOT NULL,
+          emoteId TEXT NOT NULL,
+          emoteName TEXT NOT NULL, 
+          searchTerm TEXT NOT NULL,
+          filterString TEXT,
+          clipDuration TEXT,
+          clipStart TEXT,
+          audioPath TEXT,
+          createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+          UNIQUE(guildId, emoteId)
+        )
+      `, (err) => {
         if (err) {
-          console.error('Error checking table schema:', err);
+          console.error('Error creating emote_bindings table:', err);
           reject(err);
-          return;
+        } else {
+          resolve();
         }
-
-        const columns = rows.map((row: any) => row.name);
-        
-        // Check for isDeleted column
-        if (!columns.includes('isDeleted')) {
-          db.run(`ALTER TABLE media ADD COLUMN isDeleted BOOLEAN NOT NULL DEFAULT 0`, 
-            (err: Error | null) => {
-              if (err && !err.message.includes('duplicate column')) {
-                console.error('Error adding isDeleted column:', err);
-              }
-            });
-        }
-        
-        // Check for thumbnails column
-        if (!columns.includes('thumbnails')) {
-          db.run(`ALTER TABLE media ADD COLUMN thumbnails TEXT`, 
-            (err: Error | null) => {
-              if (err && !err.message.includes('duplicate column')) {
-                console.error('Error adding thumbnails column:', err);
-              }
-            });
-        }
-        
-        // Check for lastCommand column in users table
-        db.all(`PRAGMA table_info(users)`, (userErr, userRows) => {
-          if (userErr) {
-            console.error('Error checking users table schema:', userErr);
-          } else {
-            const userColumns = userRows.map((row: any) => row.name);
-            if (!userColumns.includes('lastCommand')) {
-              db.run(`ALTER TABLE users ADD COLUMN lastCommand TEXT`, 
-                (err: Error | null) => {
-                  if (err && !err.message.includes('duplicate column')) {
-                    console.error('Error adding lastCommand column:', err);
-                  }
-                });
-            }
-          }
-        });
-        
-        resolve();
       });
-    });
+    } catch (err) {
+      console.error('Error initializing database:', err);
+      reject(err);
+    }
   });
 };
 
@@ -912,6 +871,159 @@ export const checkGalleryItem = (userId: string, messageId: string): Promise<boo
         reject(err);
       } else {
         resolve(row.count > 0);
+      }
+    });
+  });
+};
+
+// Emote binding types
+export interface EmoteBinding {
+  id?: number;
+  guildId: string;
+  userId: string;
+  emoteId: string;
+  emoteName: string;
+  searchTerm: string;
+  filterString?: string;
+  clipDuration?: string;
+  clipStart?: string;
+  audioPath?: string;
+  createdAt?: string;
+}
+
+// Create emote_bindings table during initialization
+const createEmoteBindingsTable = () => {
+  return new Promise<void>((resolve, reject) => {
+    db.run(`
+      CREATE TABLE IF NOT EXISTS emote_bindings (
+        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+        guildId VARCHAR NOT NULL,
+        userId VARCHAR NOT NULL,
+        emoteId VARCHAR NOT NULL,
+        emoteName VARCHAR NOT NULL,
+        searchTerm VARCHAR NOT NULL,
+        filterString VARCHAR,
+        clipDuration VARCHAR,
+        clipStart VARCHAR,
+        audioPath VARCHAR,
+        createdAt DATETIME NOT NULL DEFAULT (datetime('now'))
+      )
+    `, (err) => {
+      if (err) {
+        reject(err);
+      } else {
+        resolve();
+      }
+    });
+  });
+};
+
+// Save an emote binding to the database
+export const saveEmoteBinding = (binding: EmoteBinding): Promise<number> => {
+  return new Promise((resolve, reject) => {
+    const query = `
+      INSERT INTO emote_bindings (
+        guildId, userId, emoteId, emoteName, searchTerm, 
+        filterString, clipDuration, clipStart
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `;
+    
+    db.run(
+      query, 
+      [
+        binding.guildId, 
+        binding.userId, 
+        binding.emoteId, 
+        binding.emoteName, 
+        binding.searchTerm, 
+        binding.filterString || null, 
+        binding.clipDuration || null, 
+        binding.clipStart || null
+      ],
+      function(err) {
+        if (err) {
+          reject(err);
+        } else {
+          resolve(this.lastID);
+        }
+      }
+    );
+  });
+};
+
+// Update the processed audio path for an emote binding
+export const updateEmoteBindingAudioPath = (
+  guildId: string, 
+  emoteId: string, 
+  audioPath: string
+): Promise<boolean> => {
+  return new Promise((resolve, reject) => {
+    const query = `
+      UPDATE emote_bindings
+      SET audioPath = ?
+      WHERE guildId = ? AND emoteId = ?
+    `;
+    
+    db.run(query, [audioPath, guildId, emoteId], function(err) {
+      if (err) {
+        reject(err);
+      } else {
+        resolve(this.changes > 0);
+      }
+    });
+  });
+};
+
+// Get an emote binding by guildId and emoteId
+export const getEmoteBinding = (guildId: string, emoteId: string): Promise<EmoteBinding | null> => {
+  return new Promise((resolve, reject) => {
+    const query = `
+      SELECT * FROM emote_bindings
+      WHERE guildId = ? AND emoteId = ?
+    `;
+    
+    db.get(query, [guildId, emoteId], (err, row: EmoteBinding | undefined) => {
+      if (err) {
+        reject(err);
+      } else {
+        resolve(row || null);
+      }
+    });
+  });
+};
+
+// Get all emote bindings for a guild
+export const getGuildEmoteBindings = (guildId: string): Promise<EmoteBinding[]> => {
+  return new Promise((resolve, reject) => {
+    const query = `
+      SELECT * FROM emote_bindings
+      WHERE guildId = ?
+      ORDER BY createdAt DESC
+    `;
+    
+    db.all(query, [guildId], (err, rows: EmoteBinding[]) => {
+      if (err) {
+        reject(err);
+      } else {
+        resolve(rows || []);
+      }
+    });
+  });
+};
+
+// Delete an emote binding
+export const deleteEmoteBinding = (guildId: string, emoteId: string): Promise<boolean> => {
+  return new Promise((resolve, reject) => {
+    const query = `
+      DELETE FROM emote_bindings
+      WHERE guildId = ? AND emoteId = ?
+    `;
+    
+    db.run(query, [guildId, emoteId], function(err) {
+      if (err) {
+        reject(err);
+      } else {
+        resolve(this.changes > 0);
       }
     });
   });

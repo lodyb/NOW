@@ -24,6 +24,7 @@ const helpContent: HelpContent = {
       { name: 'NOW clip=5s start=10s [search]', description: 'Play a specific clip from media' },
       { name: 'NOW what was that', description: 'Show the sources used in the last jumble' },
       { name: 'NOW !!', description: 'Repeat your last command' },
+      { name: 'NOW bind [:emote:] [search]', description: 'Bind media to an emote for voice chat' },
       { name: 'NOW quiz', description: 'Start a quiz game in your voice channel' },
       { name: 'NOW quiz {filter=value}', description: 'Start a quiz with filtered audio' },
       { name: 'NOW quiz clip=5s start=2s', description: 'Start a quiz with shorter clips' },
@@ -36,7 +37,7 @@ const helpContent: HelpContent = {
       { name: '@NOW [message]', description: 'Talk to the AI assistant' },
       { name: 'NOW help [topic]', description: 'Show help for a specific topic' }
     ],
-    footer: 'Type `NOW help [topic]` for more details on a topic.\nAvailable topics: filters, quiz, play, mahjong, ai'
+    footer: 'Type `NOW help [topic]` for more details on a topic.\nAvailable topics: filters, quiz, play, mahjong, ai, bind'
   },
   
   filters: {
@@ -117,6 +118,19 @@ const helpContent: HelpContent = {
       { name: '@NOW suggest some filter combinations', description: 'Get creative suggestions' }
     ],
     footer: 'The AI assistant uses a language model to provide helpful responses. Just mention the bot with @NOW and ask your question!'
+  },
+  
+  bind: {
+    title: '🔊 Emote Binding Commands',
+    description: 'Bind media to emotes for quick playback in voice channels:',
+    commands: [
+      { name: 'NOW bind :emote: [search term]', description: 'Bind media to an emote or sticker' },
+      { name: 'NOW bind :emote: [search term] {filter=value}', description: 'Bind with filters applied' },
+      { name: 'NOW bind :emote: [search] clip=3s', description: 'Bind a short clip of media' },
+      { name: 'NOW bind :emote: [search] clip=3s start=5s', description: 'Bind specific section of media' },
+      { name: 'NOW bind :emote: [search] {reverse,bass=10}', description: 'Bind with multiple filters' }
+    ],
+    footer: 'After binding, simply post the emote in a message while in a voice channel to play the sound!\nThis works with both custom server emotes and Discord stickers.\nBindings are server-specific and will only work in the server where they were created.\nEmote bindings won\'t trigger during quiz games.'
   }
 };
 

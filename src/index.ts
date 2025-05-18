@@ -21,6 +21,7 @@ import { handleRemixCommand } from './bot/commands/remix';
 import { handleFilterTestCommand } from './bot/commands/filtertest';
 import { handleMention } from './llm/mentionHandler';
 import { handleGalleryCommand, handleGalleryReaction, handleGalleryReactionRemove } from './bot/commands/gallery';
+import { handleBindCommand, handleEmotePlayback } from './bot/commands/bind';
 import apiRoutes from './web/api';
 import authRoutes from './web/auth-routes';
 import { setupAuth, isAuthenticated } from './web/auth';
@@ -253,6 +254,16 @@ client.on(Events.MessageCreate, async (message) => {
           await saveUserLastCommand(message.author.id, message.author.username, message.content);
           break;
           
+        case 'bind':
+          await handleBindCommand(
+            message,
+            commandArgs.searchTerm,
+            commandArgs.filterString,
+            commandArgs.clipOptions
+          );
+          await saveUserLastCommand(message.author.id, message.author.username, message.content);
+          break;
+          
         case 'gallery':
           // Check if a user was mentioned
           let targetUser = message.mentions.users.first();
@@ -443,9 +454,14 @@ client.on(Events.MessageCreate, async (message) => {
   } else {
     // Handle potential quiz answers (all non-command messages)
     try {
-      await handleQuizAnswer(message);
+      const quizAnswerHandled = await handleQuizAnswer(message);
+      
+      // If not a quiz answer, check for emotes to trigger audio playback
+      if (!quizAnswerHandled) {
+        await handleEmotePlayback(message);
+      }
     } catch (error) {
-      console.error('Error handling quiz answer:', error);
+      console.error('Error handling non-command message:', error);
       // Don't log permission errors for quiz answers since they're frequent
       const discordError = error as { code?: number };
       if (discordError.code !== 50013) {
