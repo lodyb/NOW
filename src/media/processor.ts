@@ -595,8 +595,10 @@ export const encodeMediaWithBitrates = async (
   
   // Pre-trim long media to save processing time
   let inputForEncoding = inputPath;
+  let preTrimPath = '';
+  
   if (duration > finalDuration) {
-    const preTrimPath = path.join(TEMP_DIR, `pretrim_${path.basename(inputPath)}`);
+    preTrimPath = path.join(TEMP_DIR, `pretrim_${path.basename(inputPath)}`);
     console.log(`Trimming media to ${finalDuration}s to optimize file size`);
     
     try {
@@ -882,7 +884,7 @@ export const generateThumbnailsForExistingMedia = (): Promise<void> => {
        WHERE normalizedPath IS NOT NULL 
        AND normalizedPath LIKE '%.mp4' 
        AND (thumbnails IS NULL OR thumbnails = '')`,
-      (err, rows: MediaRow[]) => {
+      async (err, rows: MediaRow[]) => {
         if (err) {
           console.error('Error fetching media for thumbnail generation:', err);
           reject(err);
@@ -1205,7 +1207,7 @@ export const scanAndProcessUnprocessedMedia = async (): Promise<void> => {
                     }
                     return { id: media.id, success: true, message: 'Thumbnails generated' };
                   } catch (error) {
-                    console.error(`Error generating thumbnails for media ${row.id}:`, error);
+                    console.error(`Error generating thumbnails for media :`, error);
                     return { id: media.id, success: false, message: String(error) };
                   }
                 } else {
