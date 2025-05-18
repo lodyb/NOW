@@ -980,7 +980,7 @@ export const updateEmoteBinding = (binding: EmoteBinding): Promise<boolean> => {
     const query = `
       UPDATE emote_bindings
       SET userId = ?, emoteName = ?, searchTerm = ?, 
-          filterString = ?, clipDuration = ?, clipStart = ?
+          filterString = ?, clipDuration = ?, clipStart = ?, audioPath = NULL
       WHERE guildId = ? AND emoteId = ?
     `;
     
@@ -1020,43 +1020,6 @@ export const getEmoteBinding = (guildId: string, emoteId: string): Promise<Emote
         reject(err);
       } else {
         resolve(row || null);
-      }
-    });
-  });
-};
-
-// Get all emote bindings for a guild
-export const getGuildEmoteBindings = (guildId: string): Promise<EmoteBinding[]> => {
-  return new Promise((resolve, reject) => {
-    const query = `
-      SELECT * FROM emote_bindings
-      WHERE guildId = ?
-      ORDER BY createdAt DESC
-    `;
-    
-    db.all(query, [guildId], (err, rows: EmoteBinding[]) => {
-      if (err) {
-        reject(err);
-      } else {
-        resolve(rows || []);
-      }
-    });
-  });
-};
-
-// Delete an emote binding
-export const deleteEmoteBinding = (guildId: string, emoteId: string): Promise<boolean> => {
-  return new Promise((resolve, reject) => {
-    const query = `
-      DELETE FROM emote_bindings
-      WHERE guildId = ? AND emoteId = ?
-    `;
-    
-    db.run(query, [guildId, emoteId], function(err) {
-      if (err) {
-        reject(err);
-      } else {
-        resolve(this.changes > 0);
       }
     });
   });

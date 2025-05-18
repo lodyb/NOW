@@ -927,7 +927,41 @@ export const parseFilterString = (filterString: string): MediaFilter => {
   const content = filterString.substring(1, filterString.length - 1);
   const filters: MediaFilter = {};
   
-  // Special case: Handle random filters
+  // Handle comma-separated list that might include random filters
+  if (content.includes(',')) {
+    const parts = content.split(',').map(p => p.trim().toLowerCase());
+    const randomParts = parts.filter(p => p.startsWith('random'));
+    const otherParts = parts.filter(p => !p.startsWith('random'));
+    
+    // Process random parts if found
+    if (randomParts.length > 0) {
+      // Get total count of random filters to apply
+      const totalCount = randomParts.reduce((count, part) => {
+        const split = part.split('=');
+        if (split.length > 1) {
+          const parsedCount = parseInt(split[1], 10);
+          return count + (!isNaN(parsedCount) ? Math.min(5, Math.max(1, parsedCount)) : 1);
+        }
+        return count + 1;
+      }, 0);
+      
+      // Select random filters
+      const randomFilters = getRandomFilters(Math.min(5, totalCount));
+      console.log(`Selected random filters: ${randomFilters.join(', ')}`);
+      
+      // Combine with other non-random filters
+      filters.__stacked_filters = [...randomFilters, ...otherParts];
+      return filters;
+    }
+    
+    // If no random filters, process as normal stack of filters
+    if (!content.includes('=')) {
+      filters.__stacked_filters = parts;
+      return filters;
+    }
+  }
+  
+  // Special case: Handle standalone random filter
   if (content.toLowerCase().startsWith('random')) {
     const randomOptions = content.split('=');
     let count = 1;
@@ -943,16 +977,6 @@ export const parseFilterString = (filterString: string): MediaFilter => {
     // Set stacked filters array with randomly selected filters
     filters.__stacked_filters = getRandomFilters(count);
     console.log(`Selected random filters: ${filters.__stacked_filters.join(', ')}`);
-    return filters;
-  }
-  
-  const splitContent = content.split(',');
-  
-  // Handle comma-separated list of filters without key-value pairs
-  // This handles cases like {jumble,nuked,waaw} which should be treated as an array of filters
-  if (splitContent.length > 1 && !content.includes('=')) {
-    // Split by comma and trim each filter name
-    filters.__stacked_filters = splitContent.map(f => f.trim());
     return filters;
   }
   

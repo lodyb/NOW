@@ -66,6 +66,16 @@ export async function handleBindCommand(
     return;
   }
   
+  // Special case: when the search term starts with a filter in {...}
+  // In this case, extract the filter, and use the rest as the search term
+  if (actualSearchTerm.startsWith('{') && !filterString) {
+    const filterEndIndex = actualSearchTerm.indexOf('}') + 1;
+    if (filterEndIndex > 0) {
+      filterString = actualSearchTerm.substring(0, filterEndIndex);
+      actualSearchTerm = actualSearchTerm.substring(filterEndIndex).trim();
+    }
+  }
+  
   if (!actualSearchTerm) {
     await safeReply(message, 'Please provide a search term after the emote. Example: `NOW bind 👍 awesome`');
     return;
