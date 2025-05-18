@@ -73,6 +73,11 @@ export async function handleBindCommand(
     if (filterEndIndex > 0) {
       filterString = actualSearchTerm.substring(0, filterEndIndex);
       actualSearchTerm = actualSearchTerm.substring(filterEndIndex).trim();
+      
+      // Make sure the filter string is properly formatted
+      if (!filterString.startsWith('{') || !filterString.endsWith('}')) {
+        filterString = `{${filterString.replace(/[{}]/g, '')}}`;
+      }
     }
   }
   
@@ -82,6 +87,8 @@ export async function handleBindCommand(
   }
   
   try {
+    console.log(`Binding emote ${emoteName} to search term "${actualSearchTerm}" with filter: ${filterString || 'none'}`);
+    
     // Find media matching search term
     const media = await findMediaBySearch(actualSearchTerm, false, 1);
     
@@ -104,9 +111,15 @@ export async function handleBindCommand(
       clipDuration: clipOptions?.duration,
       clipStart: clipOptions?.start
     };
+    
+    // Validate filter format before saving
+    if (bindingData.filterString && (!bindingData.filterString.startsWith('{') || !bindingData.filterString.endsWith('}'))) {
+      bindingData.filterString = `{${bindingData.filterString.replace(/[{}]/g, '')}}`;
+    }
 
     // If binding exists, update it instead of creating a new one
     if (existingBinding) {
+      // Clear existing audio path to force regeneration with new filters
       await updateEmoteBinding(bindingData);
     } else {
       await saveEmoteBinding(bindingData);
@@ -117,55 +130,52 @@ export async function handleBindCommand(
     let confirmMessage = `Emote ${customEmoteMatch ? `<:${emoteName}:${emoteId}>` : emoteName} ${action} to "${media[0].title}"`;
     
     if (filterString) {
-      confirmMessage += ` with filters: ${filterString}`;
-    }
-    
-    if (clipOptions?.duration || clipOptions?.start) {
-      const clipDetails = [];
-      if (clipOptions.duration) clipDetails.push(`duration: ${clipOptions.duration}`);
-      if (clipOptions.start) clipDetails.push(`start: ${clipOptions.start}`);
-      confirmMessage += ` (${clipDetails.join(', ')})`;
+      confirmMessage += ` with filter ${filterString}`;
     }
     
     await safeReply(message, confirmMessage);
   } catch (error) {
-    console.error('Error binding emote:', error);
-    await safeReply(message, `Error binding emote: ${(error as Error).message}`);
+    console.error('Error handling bind command:', error);
+    await safeReply(message, 'There was an error processing your command. Please try again later.');
   }
 }
 
 /**
- * Handle emote playback when a message contains bound emotes
+ * Play media bound to an emote
  */
 export async function handleEmotePlayback(message: Message): Promise<void> {
-  if (!message.guild) return;
-  
-  // Skip if user is not in a voice channel
-  const member = message.member as GuildMember;
-  if (!member?.voice.channel) return;
-  
-  // Don't play emotes during an active quiz
-  if (await isQuizActiveInGuild(message.guild.id)) return;
-  
-  // Extract all custom Discord emotes from the message
-  const customEmotes = [...message.content.matchAll(new RegExp(CUSTOM_EMOJI_REGEX, 'g'))];
-  
-  // Extract all unicode emojis from the message
-  const unicodeEmotes = [...message.content.matchAll(new RegExp(UNICODE_EMOJI_REGEX, 'g'))];
-  
-  // No emotes found
-  if (customEmotes.length === 0 && unicodeEmotes.length === 0) return;
-  
-  // Process all found emotes
-  const allEmotes = [
-    ...customEmotes.map(match => ({ name: match[1], id: match[2] })),
-    ...unicodeEmotes.map(match => ({ name: match[1], id: match[1] }))
-  ];
-  
-  // Only process the first emote found to prevent spamming
-  if (allEmotes.length > 0) {
-    const emote = allEmotes[0];
-    await playEmoteMedia(message, emote.id);
+  try {
+    if (!message.guild) return;
+    
+    // Check if quiz is active in this guild
+    if (await isQuizActiveInGuild(message.guild.id)) {
+      return; // Don't trigger emotes during a quiz
+    }
+    
+    // Extract emotes from the message content
+    const customEmotes = message.content.match(new RegExp(CUSTOM_EMOJI_REGEX, 'g'));
+    const unicodeEmotes = message.content.match(new RegExp(UNICODE_EMOJI_REGEX, 'g'));
+    
+    // Process custom Discord emotes
+    if (customEmotes && customEmotes.length > 0) {
+      for (const emote of customEmotes) {
+        const match = emote.match(CUSTOM_EMOJI_REGEX);
+        if (match && match[2]) {
+          await playEmoteMedia(message, match[2]);
+          return; // Only play the first matching emote
+        }
+      }
+    }
+    
+    // Process Unicode emojis
+    if (unicodeEmotes && unicodeEmotes.length > 0) {
+      for (const emote of unicodeEmotes) {
+        await playEmoteMedia(message, emote);
+        return; // Only play the first matching emote
+      }
+    }
+  } catch (error) {
+    console.error('Error handling emote playback:', error);
   }
 }
 
@@ -176,6 +186,11 @@ async function playEmoteMedia(message: Message, emoteId: string): Promise<void> 
   try {
     const binding = await getEmoteBinding(message.guild!.id, emoteId);
     if (!binding) return; // No binding found
+    
+    console.log(`Processing emote binding for ${binding.emoteName} with search term "${binding.searchTerm}"`);
+    if (binding.filterString) {
+      console.log(`Filter string detected: ${binding.filterString}`);
+    }
     
     // Get user's voice channel
     const voiceChannel = (message.member as GuildMember)?.voice.channel as VoiceBasedChannel;
@@ -189,19 +204,29 @@ async function playEmoteMedia(message: Message, emoteId: string): Promise<void> 
     
     // If no pre-processed audio, or the file doesn't exist, generate it
     if (!audioPath || !fs.existsSync(audioPath)) {
+      console.log(`No cached audio found, generating new audio for emote ${binding.emoteName}`);
+      
       // Find the media matching the search term
       const mediaResults = await findMediaBySearch(binding.searchTerm, false, 1);
       
-      if (!mediaResults || mediaResults.length === 0) return;
+      if (!mediaResults || mediaResults.length === 0) {
+        console.error(`No media found matching "${binding.searchTerm}"`);
+        return;
+      }
       
       const media = mediaResults[0];
       
-      // Fix for TS2345: Add null check for normalizedPath
-      if (!media.normalizedPath) return;
+      if (!media.normalizedPath) {
+        console.error(`No normalized path found for media matching "${binding.searchTerm}"`);
+        return;
+      }
       
       const mediaPath = path.join(NORMALIZED_DIR, path.basename(media.normalizedPath));
       
-      if (!fs.existsSync(mediaPath)) return;
+      if (!fs.existsSync(mediaPath)) {
+        console.error(`Media file not found at ${mediaPath}`);
+        return;
+      }
       
       // Generate a unique filename for the processed audio
       const randomId = Math.floor(Math.random() * 1000000000).toString();
@@ -213,8 +238,22 @@ async function playEmoteMedia(message: Message, emoteId: string): Promise<void> 
         enforceDiscordLimit: true
       };
       
+      // Handle filter string parsing
       if (binding.filterString) {
-        options.filters = parseFilterString(binding.filterString);
+        try {
+          console.log(`Parsing filter string: ${binding.filterString}`);
+          // Make sure filter string is properly formatted with braces
+          const formattedFilterString = binding.filterString.startsWith('{') && binding.filterString.endsWith('}')
+            ? binding.filterString
+            : `{${binding.filterString.replace(/[{}]/g, '')}}`;
+            
+          options.filters = parseFilterString(formattedFilterString);
+          console.log(`Parsed filters:`, options.filters);
+        } catch (error) {
+          console.error(`Error parsing filter string: ${error}`);
+          // If filter parsing fails, try to create a simple filter object
+          options.filters = { raw: binding.filterString.replace(/[{}]/g, '') };
+        }
       }
       
       if (binding.clipDuration || binding.clipStart) {
@@ -222,23 +261,37 @@ async function playEmoteMedia(message: Message, emoteId: string): Promise<void> 
           duration: binding.clipDuration,
           start: binding.clipStart
         };
+        console.log(`Applying clip options:`, options.clip);
       }
       
       // Process the media
-      audioPath = await processMedia(mediaPath, outputFilename, options);
-      
-      // Save the audio path to the binding for future use
-      await updateEmoteBindingAudioPath(binding.guildId, binding.emoteId, audioPath);
+      try {
+        console.log(`Processing media with options:`, options);
+        audioPath = await processMedia(mediaPath, outputFilename, options);
+        console.log(`Media processed successfully: ${audioPath}`);
+        
+        // Save the audio path to the binding for future use
+        await updateEmoteBindingAudioPath(binding.guildId, binding.emoteId, audioPath);
+        console.log(`Updated audio path in database`);
+      } catch (error) {
+        console.error(`Error processing media: ${error}`);
+        return;
+      }
+    } else {
+      console.log(`Using cached audio: ${audioPath}`);
     }
     
     // Check if the processed audio file exists
-    if (!fs.existsSync(audioPath)) return;
+    if (!fs.existsSync(audioPath)) {
+      console.error(`Processed audio file not found at ${audioPath}`);
+      return;
+    }
     
     // Play the audio in the voice channel
+    console.log(`Playing audio in voice channel ${voiceChannel.name}`);
     const connection = joinVoiceChannel({
       channelId: voiceChannel.id,
       guildId: message.guild!.id,
-      // Fix for TS2322: Cast the adapter creator to the expected type
       adapterCreator: message.guild!.voiceAdapterCreator as any,
     });
     
