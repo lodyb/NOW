@@ -974,6 +974,39 @@ export const updateEmoteBindingAudioPath = (
   });
 };
 
+// Update an existing emote binding
+export const updateEmoteBinding = (binding: EmoteBinding): Promise<boolean> => {
+  return new Promise((resolve, reject) => {
+    const query = `
+      UPDATE emote_bindings
+      SET userId = ?, emoteName = ?, searchTerm = ?, 
+          filterString = ?, clipDuration = ?, clipStart = ?
+      WHERE guildId = ? AND emoteId = ?
+    `;
+    
+    db.run(
+      query, 
+      [
+        binding.userId, 
+        binding.emoteName, 
+        binding.searchTerm, 
+        binding.filterString || null, 
+        binding.clipDuration || null, 
+        binding.clipStart || null,
+        binding.guildId,
+        binding.emoteId
+      ],
+      function(err) {
+        if (err) {
+          reject(err);
+        } else {
+          resolve(this.changes > 0);
+        }
+      }
+    );
+  });
+};
+
 // Get an emote binding by guildId and emoteId
 export const getEmoteBinding = (guildId: string, emoteId: string): Promise<EmoteBinding | null> => {
   return new Promise((resolve, reject) => {

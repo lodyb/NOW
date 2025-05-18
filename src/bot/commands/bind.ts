@@ -13,7 +13,8 @@ import {
   findMediaBySearch, 
   saveEmoteBinding, 
   getEmoteBinding,
-  updateEmoteBindingAudioPath
+  updateEmoteBindingAudioPath,
+  updateEmoteBinding
 } from '../../database/db';
 import { processMedia, parseFilterString } from '../../media/processor';
 import { safeReply } from '../utils/helpers';
@@ -79,8 +80,11 @@ export async function handleBindCommand(
       return;
     }
     
-    // Save the binding to the database
-    await saveEmoteBinding({
+    // Check if this emote is already bound
+    const existingBinding = await getEmoteBinding(message.guild.id, emoteId);
+    
+    // Binding data to save/update
+    const bindingData = {
       guildId: message.guild.id,
       userId: message.author.id,
       emoteId,
@@ -89,10 +93,18 @@ export async function handleBindCommand(
       filterString,
       clipDuration: clipOptions?.duration,
       clipStart: clipOptions?.start
-    });
+    };
+
+    // If binding exists, update it instead of creating a new one
+    if (existingBinding) {
+      await updateEmoteBinding(bindingData);
+    } else {
+      await saveEmoteBinding(bindingData);
+    }
     
     // Create a friendly confirmation message
-    let confirmMessage = `Emote ${customEmoteMatch ? `<:${emoteName}:${emoteId}>` : emoteName} bound to "${media[0].title}"`;
+    const action = existingBinding ? 'updated' : 'bound';
+    let confirmMessage = `Emote ${customEmoteMatch ? `<:${emoteName}:${emoteId}>` : emoteName} ${action} to "${media[0].title}"`;
     
     if (filterString) {
       confirmMessage += ` with filters: ${filterString}`;
@@ -113,130 +125,129 @@ export async function handleBindCommand(
 }
 
 /**
- * Handle emote detection in messages and play corresponding audio
+ * Handle emote playback when a message contains bound emotes
  */
 export async function handleEmotePlayback(message: Message): Promise<void> {
   if (!message.guild) return;
   
-  // Don't process if a quiz is active in this guild
-  if (isQuizActiveInGuild(message.guild.id)) {
-    return;
-  }
+  // Skip if user is not in a voice channel
+  const member = message.member as GuildMember;
+  if (!member?.voice.channel) return;
   
-  // Don't process if not in a voice channel
-  const member = message.guild.members.cache.get(message.author.id);
-  if (!member?.voice?.channel) {
-    return;
-  }
-
-  // Extract emotes from message
+  // Don't play emotes during an active quiz
+  if (await isQuizActiveInGuild(message.guild.id)) return;
+  
+  // Extract all custom Discord emotes from the message
   const customEmotes = [...message.content.matchAll(new RegExp(CUSTOM_EMOJI_REGEX, 'g'))];
+  
+  // Extract all unicode emojis from the message
   const unicodeEmotes = [...message.content.matchAll(new RegExp(UNICODE_EMOJI_REGEX, 'g'))];
   
-  // Process the first matching emote (priority: custom emotes, then unicode)
-  let emoteId: string | undefined;
+  // No emotes found
+  if (customEmotes.length === 0 && unicodeEmotes.length === 0) return;
   
-  if (customEmotes.length > 0) {
-    emoteId = customEmotes[0][2]; // Extract ID from custom emote
-  } else if (unicodeEmotes.length > 0) {
-    emoteId = unicodeEmotes[0][1]; // Use the emoji itself for unicode
-  }
+  // Process all found emotes
+  const allEmotes = [
+    ...customEmotes.map(match => ({ name: match[1], id: match[2] })),
+    ...unicodeEmotes.map(match => ({ name: match[1], id: match[1] }))
+  ];
   
-  if (!emoteId) return; // No emotes found
-  
-  try {
-    // Look up the emote binding
-    const binding = await getEmoteBinding(message.guild.id, emoteId);
-    if (!binding) return; // No binding for this emote
-    
-    // Process and play the audio
-    await playEmoteAudio(message, member, binding);
-  } catch (error) {
-    console.error('Error playing emote audio:', error);
+  // Only process the first emote found to prevent spamming
+  if (allEmotes.length > 0) {
+    const emote = allEmotes[0];
+    await playEmoteMedia(message, emote.id);
   }
 }
 
 /**
- * Process and play audio for an emote binding
+ * Play media bound to an emote
  */
-async function playEmoteAudio(
-  message: Message, 
-  member: GuildMember, 
-  binding: any
-): Promise<void> {
+async function playEmoteMedia(message: Message, emoteId: string): Promise<void> {
   try {
-    // Check if we have a pre-processed audio file
-    if (binding.audioPath && fs.existsSync(binding.audioPath)) {
-      await playAudio(member.voice.channel!, binding.audioPath);
-      return;
+    const binding = await getEmoteBinding(message.guild!.id, emoteId);
+    if (!binding) return; // No binding found
+    
+    // Get user's voice channel
+    const voiceChannel = (message.member as GuildMember)?.voice.channel as VoiceBasedChannel;
+    if (!voiceChannel) return;
+    
+    const TEMP_DIR = path.join(process.cwd(), 'temp');
+    const NORMALIZED_DIR = path.join(process.cwd(), 'normalized');
+    
+    // Check if we already have a processed audio path for this binding
+    let audioPath = binding.audioPath;
+    
+    // If no pre-processed audio, or the file doesn't exist, generate it
+    if (!audioPath || !fs.existsSync(audioPath)) {
+      // Find the media matching the search term
+      const mediaResults = await findMediaBySearch(binding.searchTerm, false, 1);
+      
+      if (!mediaResults || mediaResults.length === 0) return;
+      
+      const media = mediaResults[0];
+      
+      // Fix for TS2345: Add null check for normalizedPath
+      if (!media.normalizedPath) return;
+      
+      const mediaPath = path.join(NORMALIZED_DIR, path.basename(media.normalizedPath));
+      
+      if (!fs.existsSync(mediaPath)) return;
+      
+      // Generate a unique filename for the processed audio
+      const randomId = Math.floor(Math.random() * 1000000000).toString();
+      const outputFilename = `emote_${binding.guildId}_${binding.emoteId.replace(/[^a-zA-Z0-9]/g, '')}_${randomId}.ogg`;
+      const outputPath = path.join(TEMP_DIR, outputFilename);
+      
+      // Process the media with any filters or clip options
+      const options: any = {
+        enforceDiscordLimit: true
+      };
+      
+      if (binding.filterString) {
+        options.filters = parseFilterString(binding.filterString);
+      }
+      
+      if (binding.clipDuration || binding.clipStart) {
+        options.clip = {
+          duration: binding.clipDuration,
+          start: binding.clipStart
+        };
+      }
+      
+      // Process the media
+      audioPath = await processMedia(mediaPath, outputFilename, options);
+      
+      // Save the audio path to the binding for future use
+      await updateEmoteBindingAudioPath(binding.guildId, binding.emoteId, audioPath);
     }
     
-    // If not, find the media and process it
-    const media = await findMediaBySearch(binding.searchTerm, false, 1);
+    // Check if the processed audio file exists
+    if (!fs.existsSync(audioPath)) return;
     
-    if (!media || media.length === 0) {
-      console.error(`No media found for emote binding: ${binding.emoteName}`);
-      return;
-    }
-    
-    // Process the media with filters if needed
-    const filters = binding.filterString ? parseFilterString(binding.filterString) : {};
-    const clipOptions = {
-      duration: binding.clipDuration,
-      start: binding.clipStart
-    };
-    
-    // Get the file path from the media object
-    const mediaPath = media[0].normalizedPath ? 
-      path.join(process.cwd(), 'normalized', path.basename(media[0].normalizedPath)) : 
-      path.join(process.cwd(), 'uploads', path.basename(media[0].filePath));
-
-    // Generate a unique output filename
-    const outputFilename = `emote_${binding.guildId}_${binding.emoteId}_${Date.now()}.${media[0].normalizedPath?.endsWith('.mp4') ? 'mp4' : 'ogg'}`;
-    
-    // Use the processMedia function with proper parameters
-    const outputPath = await processMedia(mediaPath, outputFilename, { filters, clip: clipOptions });
-    
-    // Save the processed path for future use
-    await updateEmoteBindingAudioPath(binding.guildId, binding.emoteId, outputPath);
-    
-    // Play the processed audio
-    await playAudio(member.voice.channel!, outputPath);
-  } catch (error) {
-    console.error('Error processing emote audio:', error);
-  }
-}
-
-/**
- * Play audio in a voice channel
- */
-async function playAudio(voiceChannel: VoiceBasedChannel, filePath: string): Promise<void> {
-  // Get or create a voice connection
-  let connection = getVoiceConnection(voiceChannel.guild.id);
-  
-  if (!connection) {
-    connection = joinVoiceChannel({
+    // Play the audio in the voice channel
+    const connection = joinVoiceChannel({
       channelId: voiceChannel.id,
-      guildId: voiceChannel.guild.id,
-      adapterCreator: voiceChannel.guild.voiceAdapterCreator as any
+      guildId: message.guild!.id,
+      // Fix for TS2322: Cast the adapter creator to the expected type
+      adapterCreator: message.guild!.voiceAdapterCreator as any,
     });
+    
+    const player = createAudioPlayer();
+    const resource = createAudioResource(audioPath);
+    
+    connection.subscribe(player);
+    player.play(resource);
+    
+    // Clean up when audio finishes playing
+    player.on(AudioPlayerStatus.Idle, () => {
+      try {
+        connection.destroy();
+      } catch (error) {
+        console.error('Error destroying voice connection:', error);
+      }
+    });
+    
+  } catch (error) {
+    console.error('Error playing emote media:', error);
   }
-  
-  // Create an audio player and resource
-  const player = createAudioPlayer();
-  const resource = createAudioResource(filePath);
-  
-  // Play the audio
-  player.play(resource);
-  connection.subscribe(player);
-  
-  // Cleanup when done
-  player.on(AudioPlayerStatus.Idle, () => {
-    // We don't disconnect here to avoid rapid connect/disconnect
-    // Voice timeouts will handle disconnects after inactivity
-  });
-  
-  player.on('error', (error) => {
-    console.error('Error playing audio:', error);
-  });
 }
