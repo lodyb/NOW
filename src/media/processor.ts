@@ -927,11 +927,32 @@ export const parseFilterString = (filterString: string): MediaFilter => {
   const content = filterString.substring(1, filterString.length - 1);
   const filters: MediaFilter = {};
   
+  // Special case: Handle random filters
+  if (content.toLowerCase().startsWith('random')) {
+    const randomOptions = content.split('=');
+    let count = 1;
+    
+    // Check if a count parameter is specified (e.g., random=3)
+    if (randomOptions.length > 1) {
+      const parsedCount = parseInt(randomOptions[1], 10);
+      if (!isNaN(parsedCount) && parsedCount > 0 && parsedCount <= 5) {
+        count = parsedCount;
+      }
+    }
+    
+    // Set stacked filters array with randomly selected filters
+    filters.__stacked_filters = getRandomFilters(count);
+    console.log(`Selected random filters: ${filters.__stacked_filters.join(', ')}`);
+    return filters;
+  }
+  
+  const splitContent = content.split(',');
+  
   // Handle comma-separated list of filters without key-value pairs
   // This handles cases like {jumble,nuked,waaw} which should be treated as an array of filters
-  if (content.includes(',') && !content.includes('=')) {
+  if (splitContent.length > 1 && !content.includes('=')) {
     // Split by comma and trim each filter name
-    filters.__stacked_filters = content.split(',').map(f => f.trim());
+    filters.__stacked_filters = splitContent.map(f => f.trim());
     return filters;
   }
   
@@ -1960,3 +1981,29 @@ function applyComplexVideoFilter(
       return false;
   }
 }
+
+/**
+ * Get random filters for testing or special effects
+ * @param count Number of random filters to select (between 1-5)
+ * @returns Array of filter names to apply
+ */
+export const getRandomFilters = (count: number = 1): string[] => {
+  // Limit count to reasonable range
+  count = Math.min(5, Math.max(1, count));
+  
+  // Collect all available filter names
+  const audioFilterNames = Object.keys(audioEffects);
+  const videoFilterNames = Object.keys(videoEffects);
+  
+  // Create combined list of all filters
+  const allFilters = [...audioFilterNames, ...videoFilterNames];
+  
+  // Select random unique filters
+  const selectedFilters = new Set<string>();
+  while (selectedFilters.size < count && selectedFilters.size < allFilters.length) {
+    const randomIndex = Math.floor(Math.random() * allFilters.length);
+    selectedFilters.add(allFilters[randomIndex]);
+  }
+  
+  return Array.from(selectedFilters);
+};
