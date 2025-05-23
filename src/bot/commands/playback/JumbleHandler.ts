@@ -27,24 +27,38 @@ export async function handleJumblePlayback(
   try {
     await updateStatus('Finding video and audio sources for jumble... ⏳');
     
-    // If no search term provided, it's difficult to find relevant media
+    let videoResults: any[] = [];
+    let allAudioResults: any[] = [];
+    
+    // If no search term provided, get random video and audio from the entire library
     if (!searchTerm || searchTerm.trim() === '') {
-      await updateStatus('Please provide a search term to find media for jumbling');
-      return;
-    }
-    
-    // Find video media that matches the search term
-    const videoResults = await MediaService.findMedia(searchTerm, true, 10);
-    if (videoResults.length === 0) {
-      await updateStatus('No video sources found matching your search');
-      return;
-    }
-    
-    // Get random audio media from the ENTIRE library instead of using the same search term
-    const allAudioResults = await MediaService.findMedia(undefined, false, 10);
-    if (allAudioResults.length === 0) {
-      await updateStatus('No audio sources found in the library');
-      return;
+      // Get all video media
+      videoResults = await MediaService.findMedia('', true, 50);
+      if (videoResults.length === 0) {
+        await updateStatus('No video sources found in the library');
+        return;
+      }
+      
+      // Get all audio media
+      allAudioResults = await MediaService.findMedia('', false, 50);
+      if (allAudioResults.length === 0) {
+        await updateStatus('No audio sources found in the library');
+        return;
+      }
+    } else {
+      // Original behavior: find video media that matches the search term
+      videoResults = await MediaService.findMedia(searchTerm, true, 10);
+      if (videoResults.length === 0) {
+        await updateStatus('No video sources found matching your search');
+        return;
+      }
+      
+      // Get random audio media from the ENTIRE library instead of using the same search term
+      allAudioResults = await MediaService.findMedia(undefined, false, 10);
+      if (allAudioResults.length === 0) {
+        await updateStatus('No audio sources found in the library');
+        return;
+      }
     }
     
     // Select random video from results
