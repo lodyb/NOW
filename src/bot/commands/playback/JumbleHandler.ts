@@ -540,16 +540,28 @@ function createVideoClip(inputPath: string, outputPath: string, startTime: numbe
 
       console.log(`Found ${videoStreams.length} video streams in input file`);
       
-      // Proceed with extracting video
-      ffmpeg(inputPath)
+      // Get video dimensions if available
+      const videoStream = videoStreams[0];
+      const width = videoStream.width;
+      const height = videoStream.height;
+      
+      // Create ffmpeg command with more robust options
+      const command = ffmpeg(inputPath)
         .setStartTime(startTime)
-        .setDuration(duration)
-        .outputOptions('-c:v libx264')   // H.264 video codec
-        .outputOptions('-preset fast')    // Fast encoding preset
-        .outputOptions('-crf 23')         // Constant Rate Factor for quality
-        .outputOptions('-pix_fmt yuv420p') // Pixel format for compatibility
-        .outputOptions('-an')             // No audio
-        .outputOptions('-y')              // Overwrite without asking
+        .setDuration(duration);
+      
+      // Add explicit dimensions if we have them
+      if (width && height) {
+        command.size(`${width}x${height}`);
+      }
+      
+      // Add more robust output options
+      command.outputOptions('-c:v libx264')   // H.264 video codec
+        .outputOptions('-preset fast')      // Fast encoding preset
+        .outputOptions('-crf 23')           // Constant Rate Factor for quality
+        .outputOptions('-pix_fmt yuv420p')  // Pixel format for compatibility
+        .outputOptions('-an')               // No audio
+        .outputOptions('-y')                // Overwrite without asking
         .on('start', (commandLine) => {
           console.log('FFmpeg video command:', commandLine);
         })
@@ -559,7 +571,28 @@ function createVideoClip(inputPath: string, outputPath: string, startTime: numbe
         })
         .on('error', (err) => {
           console.error('Error extracting video:', err);
-          reject(err);
+          
+          // If first attempt fails, try again with more basic settings
+          console.log('First attempt failed, trying with fallback options...');
+          ffmpeg(inputPath)
+            .setStartTime(startTime)
+            .setDuration(duration)
+            .outputOptions('-c:v libx264')
+            .outputOptions('-preset ultrafast')  // Use simpler preset
+            .outputOptions('-crf 28')           // Lower quality
+            .outputOptions('-pix_fmt yuv420p')
+            .outputOptions('-vf format=yuv420p') // Force pixel format
+            .outputOptions('-an')
+            .outputOptions('-y')
+            .on('end', () => {
+              console.log('Video extraction completed with fallback options');
+              resolve();
+            })
+            .on('error', (secondErr) => {
+              console.error('Error extracting video with fallback options:', secondErr);
+              reject(secondErr);
+            })
+            .save(outputPath);
         })
         .save(outputPath);
     });
