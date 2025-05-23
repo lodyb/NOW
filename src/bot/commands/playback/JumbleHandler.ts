@@ -40,10 +40,10 @@ export async function handleJumblePlayback(
       return;
     }
     
-    // Find audio media that matches the search term but is different from video
-    const allAudioResults = await MediaService.findMedia(searchTerm, false, 10);
+    // Get random audio media from the ENTIRE library instead of using the same search term
+    const allAudioResults = await MediaService.findMedia(undefined, false, 10);
     if (allAudioResults.length === 0) {
-      await updateStatus('No audio sources found matching your search');
+      await updateStatus('No audio sources found in the library');
       return;
     }
     
