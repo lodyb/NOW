@@ -29,7 +29,9 @@ const helpContent: HelpContent = {
       { name: 'NOW quiz {filter=value}', description: 'Start a quiz with filtered audio' },
       { name: 'NOW quiz clip=5s start=2s', description: 'Start a quiz with shorter clips' },
       { name: 'NOW stop', description: 'Stop an active quiz' },
-      { name: 'NOW upload', description: 'Get a link to upload new media' },
+      { name: 'NOW upload', description: 'Get a link to upload new media via web interface' },
+      { name: 'NOW upload <url> "answer1" "answer2"', description: 'Upload media directly from YouTube or URL' },
+      { name: 'NOW upload "answer text"', description: 'Upload media from a replied message' },
       { name: 'NOW image [search]', description: 'Show a thumbnail from a video' },
       { name: 'NOW waveform [search]', description: 'Show audio waveform visualization' },
       { name: 'NOW spectrogram [search]', description: 'Show audio spectrogram visualization' },
@@ -37,7 +39,7 @@ const helpContent: HelpContent = {
       { name: '@NOW [message]', description: 'Talk to the AI assistant' },
       { name: 'NOW help [topic]', description: 'Show help for a specific topic' }
     ],
-    footer: 'Type `NOW help [topic]` for more details on a topic.\nAvailable topics: filters, quiz, play, mahjong, ai, bind'
+    footer: 'Type `NOW help [topic]` for more details on a topic.\nAvailable topics: filters, quiz, play, mahjong, ai, bind, upload'
   },
   
   filters: {
@@ -131,6 +133,19 @@ const helpContent: HelpContent = {
       { name: 'NOW bind :emote: [search] {reverse,bass=10}', description: 'Bind with multiple filters' }
     ],
     footer: 'After binding, simply post the emote in a message while in a voice channel to play the sound!\nThis works with both custom server emotes and Discord stickers.\nBindings are server-specific and will only work in the server where they were created.\nEmote bindings won\'t trigger during quiz games.'
+  },
+  
+  upload: {
+    title: '📤 Upload Commands',
+    description: 'Commands for uploading media to the NOW collection:',
+    commands: [
+      { name: 'NOW upload', description: 'Get a web interface link for batch uploading files' },
+      { name: 'NOW upload https://www.youtube.com/watch?v=dQw4w9WgXcQ "Rick Roll"', description: 'Upload from YouTube with custom answer' },
+      { name: 'NOW upload https://example.com/video.mp4 "Title" "Alt Title"', description: 'Upload direct media URL with multiple answers' },
+      { name: 'NOW upload "Custom Answer"', description: 'Reply to a message with media to upload it' },
+      { name: 'NOW upload https://youtu.be/dQw4w9WgXcQ', description: 'Upload YouTube video using its title as the answer' }
+    ],
+    footer: 'YouTube URLs are automatically detected and downloaded with video titles.\nDirect media URLs (.mp4, .mp3, etc.) are also supported.\nAnswers in quotes become searchable terms for the quiz and play commands.\nIf no answers are provided, the filename or YouTube title is used automatically.\nUploaded media is automatically processed for Discord compatibility.'
   }
 };
 
