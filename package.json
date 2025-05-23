@@ -23,6 +23,7 @@
   },
   "dependencies": {
     "@discordjs/voice": "^0.16.0",
+    "@ffmpeg-installer/ffmpeg": "^1.1.0",
     "@types/node-fetch": "^2.6.12",
     "axios": "^1.9.0",
     "cookie-parser": "^1.4.7",
@@ -40,7 +41,9 @@
     "sqlite3": "^5.1.6",
     "tweetnacl": "^1.0.3",
     "vue": "^3.5.13",
-    "winston": "^3.17.0"
+    "winston": "^3.17.0",
+    "youtube-dl-exec": "^3.0.21",
+    "ytdl-core": "^4.11.5"
   },
   "devDependencies": {
     "@types/cookie-parser": "^1.4.8",

@@ -16,6 +16,7 @@ import path from 'path';
 import fs from 'fs';
 import crypto from 'crypto';
 import { generateProgressiveHint, generateRandomUnicodeMask } from '../utils/helpers';
+import { logger } from '../../utils/logger';
 
 // Define storage paths
 const NORMALIZED_DIR = path.join(process.cwd(), 'normalized');
@@ -75,7 +76,7 @@ export const handleQuizCommand = async (
   try {
     await startQuizSession(message, voiceChannel, filterString, clipOptions);
   } catch (error) {
-    console.error('Error starting quiz:', error);
+    logger.error('Error starting quiz', error);
     await message.reply(`Failed to start quiz: ${(error as Error).message}`);
   }
 };
@@ -108,8 +109,7 @@ export const handleQuizAnswer = async (message: Message): Promise<boolean> => {
   // Get the lowercase content for comparison
   const answer = message.content.toLowerCase().trim();
   
-  // Log for debugging
-  console.log(`Checking answer: "${answer}" against valid answers:`, session.correctAnswers);
+  logger.debug(`Quiz answer check: "${answer}" against ${session.correctAnswers.length} valid answers`);
   
   // First check exact match (case insensitive)
   if (session.correctAnswers.some(a => a.toLowerCase() === answer)) {
@@ -328,7 +328,7 @@ const nextRound = async (
         
         filePath = await processMedia(filePath, outputFilename, options);
       } catch (error) {
-        console.error('Error processing media:', error);
+        logger.error('Error processing media for quiz', error);
         await channel.send(`Error applying filters: ${(error as Error).message}`);
         return;
       }
@@ -352,7 +352,7 @@ const nextRound = async (
     session.timeout = setTimeout(() => {
       session.revealPercentage = 0; // Start from 0%
       const hint = generateProgressiveHint(session.mediaItem.title, session.revealPercentage);
-      channel.send(`Hint: ${hint}`).catch(console.error);
+      channel.send(`Hint: ${hint}`).catch(logger.error);
       scheduleHint(session, channel);
     }, 10000); // First progressive hint after 10 seconds
     
@@ -382,7 +382,7 @@ const nextRound = async (
         }
         
         // Let users know the audio has ended and they have time to answer
-        channel.send("🎵 Audio finished! You have 10 seconds to answer...").catch(console.error);
+        channel.send("🎵 Audio finished! You have 10 seconds to answer...").catch(logger.error);
         
         // Schedule first hint after audio ends (including visual hint)
         session.timeout = setTimeout(() => {
@@ -391,7 +391,7 @@ const nextRound = async (
           
           // Provide progressive hint
           const hint = generateProgressiveHint(session.mediaItem.title, session.revealPercentage);
-          channel.send(`Hint: ${hint}`).catch(console.error);
+          channel.send(`Hint: ${hint}`).catch(logger.error);
           
           // Continue with regular hint scheduling
           scheduleHint(session, channel);
@@ -399,7 +399,7 @@ const nextRound = async (
       }
     });
   } catch (error) {
-    console.error('Error in quiz round:', error);
+    logger.error('Error in quiz round', error);
     await channel.send(`An error occurred: ${(error as Error).message}`);
     endQuizSession(session);
   }
@@ -427,12 +427,12 @@ const ensureNormalizedFileExists = async (mediaItem: any): Promise<string> => {
     const origPath = path.join(UPLOADS_DIR, path.basename(mediaItem.filePath));
     
     if (fs.existsSync(origPath)) {
-      console.log(`Regenerating missing normalized file: ${normalizedPath}`);
+      logger.info(`Regenerating missing normalized file: ${normalizedPath}`);
       try {
         // Regenerate the normalized file
         return await normalizeMedia(origPath);
       } catch (error) {
-        console.error(`Failed to regenerate normalized file: ${error}`);
+        logger.error(`Failed to regenerate normalized file`, error);
       }
     }
   }
@@ -470,8 +470,7 @@ const scheduleHint = (session: QuizSession, channel: any) => {
         const hint = generateProgressiveHint(session.mediaItem.title, session.revealPercentage);
         await channel.send(`Hint: ${hint}`);
         
-        // Log for debugging hints
-        console.log(`Sent progressive hint with reveal percentage: ${session.revealPercentage}%`);
+        logger.debug(`Sent progressive hint with reveal percentage: ${session.revealPercentage}%`);
         
         // 25% chance to show a visual hint during hint cycle (in addition to round start)
         if (Math.random() < 0.25 && !session.lastVisualHint) {
@@ -483,7 +482,7 @@ const scheduleHint = (session: QuizSession, channel: any) => {
             
             // ... existing code for visual hints ...
           } catch (error) {
-            console.error('Error providing visual hint:', error);
+            logger.error('Error providing visual hint', error);
           }
         } else if (Math.random() < 0.25 && session.lastVisualHint) {
           // Reset the lastVisualHint so we can show another one next time
@@ -494,7 +493,7 @@ const scheduleHint = (session: QuizSession, channel: any) => {
         scheduleHint(session, channel);
       }
     } catch (error) {
-      console.error("Error in scheduleHint:", error);
+      logger.error("Error in scheduleHint", error);
       // Try to recover by scheduling the next hint anyway
       if (session.isActive && session.revealPercentage < 90) {
         scheduleHint(session, channel);
@@ -513,7 +512,7 @@ const endQuizSession = (session: QuizSession) => {
   try {
     session.connection.destroy();
   } catch (error) {
-    console.error('Error disconnecting from voice:', error);
+    logger.error('Error disconnecting from voice', error);
   }
   
   activeSessions.delete(session.guildId);
@@ -569,6 +568,6 @@ const showVisualHint = async (session: QuizSession, channel: any) => {
       session.lastVisualHint = selectedHint;
     }
   } catch (error) {
-    console.error('Error providing visual hint:', error);
+    logger.error('Error providing visual hint', error);
   }
 };

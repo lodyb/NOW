@@ -17,7 +17,7 @@ interface MediaRow {
   answers?: string; // This will be the concatenated string from SQL
 }
 
-interface Media extends Omit<MediaRow, 'answers' | 'thumbnails' | 'metadata'> {
+export interface Media extends Omit<MediaRow, 'answers' | 'thumbnails' | 'metadata'> {
   answers: string[];
   thumbnails: string[];
   metadata?: any;

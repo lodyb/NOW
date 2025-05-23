@@ -27,6 +27,7 @@ import authRoutes from './web/auth-routes';
 import { setupAuth, isAuthenticated } from './web/auth';
 import { generateThumbnailsForExistingMedia, scanAndProcessUnprocessedMedia } from './media/processor';
 import fs from 'fs';
+import { logger } from './utils/logger';
 
 // Load environment variables, handle both development and production paths
 const envPaths = [
@@ -41,7 +42,7 @@ let envLoaded = false;
 // Try each path until we find one that works
 for (const envPath of envPaths) {
   if (fs.existsSync(envPath)) {
-    console.log(`Loading environment from: ${envPath}`);
+    logger.info(`Loading environment from: ${envPath}`);
     dotenv.config({ path: envPath });
     envLoaded = true;
     break;
@@ -49,12 +50,12 @@ for (const envPath of envPaths) {
 }
 
 if (!envLoaded) {
-  console.warn('No .env file found. Falling back to process.env variables.');
+  logger.error('No .env file found. Falling back to process.env variables.');
 }
 
 // Log loaded environment type (without exposing sensitive values)
-console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
-console.log(`LLM Model: ${process.env.LLM_MODEL_NAME || '(not set)'}`);
+logger.info(`Environment: ${process.env.NODE_ENV || 'development'}`);
+logger.info(`LLM Model: ${process.env.LLM_MODEL_NAME || '(not set)'}`);
 
 // Initialize Express app
 const app = express();
@@ -114,7 +115,7 @@ const client = new Client({
 
 // Bot is ready event
 client.once(Events.ClientReady, (readyClient) => {
-  console.log(`Ready! Logged in as ${readyClient.user.tag}`);
+  logger.info(`Discord bot ready! Logged in as ${readyClient.user.tag}`);
 });
 
 // Helper function to recursively collect context from reply chains
@@ -140,7 +141,7 @@ async function getReplyChainContext(message: Message, maxDepth: number = 5): Pro
       currentMessage = parentMessage;
       depth++;
     } catch (error) {
-      console.error('Error fetching parent message:', error);
+      logger.error('Error fetching parent message:', error);
       break;
     }
   }
@@ -159,15 +160,7 @@ client.on(Events.MessageCreate, async (message) => {
       // First check if this is a NOW command - if so, skip the reply handling
       const commandArgs = parseCommand(message);
       if (commandArgs) {
-        // This is a command, don't handle it as a reply
-        console.log(`Command in reply detected: ${commandArgs.command}, skipping reply handler`);
-        console.log(`Raw message content: ${JSON.stringify({
-          content: message.content,
-          author: message.author.username,
-          reference: message.reference.messageId,
-          command: commandArgs
-        }, null, 2)}`);
-        
+        logger.debug(`Command in reply detected: ${commandArgs.command}, skipping reply handler`);
         // Skip the rest of this conditional block but DO NOT RETURN
         // So we'll continue to the main command processing below
       } else {
@@ -187,7 +180,7 @@ client.on(Events.MessageCreate, async (message) => {
           const conversationHistory = contextChain.join('\n');
           const contextPrompt = `Here's our conversation history:\n${conversationHistory}\n\nPlease respond to my latest message.`;
           
-          console.log(`Processing reply to bot with context chain of ${contextChain.length} messages`);
+          logger.debug(`Processing reply to bot with context chain of ${contextChain.length} messages`);
           
           // Use the LLM handler with the full conversation context
           // Only return early if it's not a NOW command
@@ -198,7 +191,7 @@ client.on(Events.MessageCreate, async (message) => {
         }
         // Case 2: Reply to someone else's message while mentioning the bot
         else if (message.mentions.has(client.user!)) {
-          console.log(`Processing reply to message from ${repliedMessage.author.username} with content: ${repliedMessage.content.substring(0, 50)}...`);
+          logger.debug(`Processing reply to message from ${repliedMessage.author.username} with content: ${repliedMessage.content.substring(0, 50)}...`);
           
           // User is replying to someone else's message and mentioning the bot
           const contextPrompt = `Source message: "${repliedMessage.content}" from "${repliedMessage.author.displayName}"\n\nMy message: ${message.content.replace(/<@!?\d+>/g, '').trim()}`;
@@ -212,21 +205,16 @@ client.on(Events.MessageCreate, async (message) => {
         }
       }
     } catch (error) {
-      console.error('Error handling reply:', error);
+      logger.error('Error handling reply', error);
     }
   }
   
-  // Check if message is mentioning the bot
-  if (message.mentions.has(client.user!)) {
+  // Handle bot mentions
+  if (message.mentions.has(client.user!) && !message.author.bot) {
     try {
-      // Only return early if handleMention returns false (not a NOW command)
-      const isNowCommand = await handleMention(message);
-      if (!isNowCommand) {
-        return; // Exit early if it's handled by the AI but not for NOW commands
-      }
-      // Otherwise continue to potentially handle as a NOW command
+      await handleMention(message);
     } catch (error) {
-      console.error('Error handling mention:', error);
+      logger.error('Error handling mention', error);
     }
   }
   
@@ -235,11 +223,9 @@ client.on(Events.MessageCreate, async (message) => {
   
   // Only log when we actually have a command to process
   if (commandArgs) {
-    console.log(`Command detected: ${commandArgs.command}`, commandArgs);
+    logger.debug(`Command detected: ${commandArgs.command}`);
   
     try {
-      console.log(`Command received: ${commandArgs.command}`, commandArgs);
-      
       // Register gallery-related commands in the command switch statement
       switch (commandArgs.command) {
         case 'play':
@@ -343,13 +329,13 @@ client.on(Events.MessageCreate, async (message) => {
           break;
           
         case 'remix':
-          console.log(`Processing remix command with filterString: ${commandArgs.filterString || 'none'}`);
+          logger.debug(`Processing remix command with filterString: ${commandArgs.filterString || 'none'}`);
           await handleRemixCommand(
             message,
             commandArgs.filterString,
             commandArgs.clipOptions
           );
-          console.log(`Remix command processing completed`);
+          logger.debug(`Remix command processing completed`);
           await saveUserLastCommand(message.author.id, message.author.username, message.content);
           break;
           
@@ -429,7 +415,7 @@ client.on(Events.MessageCreate, async (message) => {
               await safeReply(message, 'No previous command found to repeat.');
             }
           } catch (error) {
-            console.error('Error handling repeat command:', error);
+            logger.error('Error handling repeat command', error);
             await safeReply(message, `Error: ${(error as Error).message}`);
           }
           break;
@@ -439,7 +425,7 @@ client.on(Events.MessageCreate, async (message) => {
           await safeReply(message, 'Unknown command. Type `NOW help` for a list of available commands.');
       }
     } catch (error) {
-      console.error('Error handling command:', error);
+      logger.error('Error handling command', error);
       // Don't attempt to send another message if we already had an error
       // This prevents the cascade of permission errors
       const discordError = error as { code?: number };
@@ -447,7 +433,7 @@ client.on(Events.MessageCreate, async (message) => {
         try {
           await safeReply(message, `An error occurred: ${(error as Error).message}`);
         } catch (replyError) {
-          console.error('Failed to send error reply:', replyError);
+          logger.error('Failed to send error reply', replyError);
         }
       }
     }
@@ -461,11 +447,11 @@ client.on(Events.MessageCreate, async (message) => {
         await handleEmotePlayback(message);
       }
     } catch (error) {
-      console.error('Error handling non-command message:', error);
+      logger.error('Error handling non-command message', error);
       // Don't log permission errors for quiz answers since they're frequent
       const discordError = error as { code?: number };
       if (discordError.code !== 50013) {
-        console.error(error);
+        logger.error('Non-permission error in message handling', error);
       }
     }
   }
@@ -474,26 +460,18 @@ client.on(Events.MessageCreate, async (message) => {
 // Main initialization function
 async function init() {
   try {
-    await initDatabase();
-    console.log('Database initialized');
+    logger.info('Initializing application...');
     
-    // Start Express server
+    // Initialize database
+    await initDatabase();
+    logger.info('Database initialized');
+    
+    // Start the web server
     app.listen(PORT, () => {
-      console.log(`Web server running on port ${PORT}`);
-      console.log(`Media manager available at http://localhost:${PORT}/`);
-      
-      // Scan for media that needs processing (files that exist in DB but not normalized)
-      console.log('Starting scan for unprocessed media...');
-      scanAndProcessUnprocessedMedia()
-        .then(() => console.log('Media processing scan completed'))
-        .catch((error: Error) => console.error('Error processing media files:', error));
-      
-      // Generate thumbnails for existing videos without them
-      generateThumbnailsForExistingMedia()
-        .catch(error => console.error('Error generating thumbnails:', error));
+      logger.info(`Web server running on port ${PORT}`);
     });
     
-    // Register reaction add/remove event handlers for gallery feature
+    // Setup Discord event handlers
     client.on(Events.MessageReactionAdd, async (reaction, user) => {
       // Ensure the reaction emoji is a frog 🐸
       if (reaction.emoji.name === '🐸') {
@@ -516,7 +494,7 @@ async function init() {
     
     await client.login(token);
   } catch (error) {
-    console.error('Initialization error:', error);
+    logger.error('Initialization error', error);
     process.exit(1);
   }
 }
