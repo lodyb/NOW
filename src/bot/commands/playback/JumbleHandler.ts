@@ -27,50 +27,100 @@ export async function handleJumblePlayback(
   try {
     await updateStatus('Finding video and audio sources for jumble... ⏳');
     
+    // If no search term provided, it's difficult to find relevant media
+    if (!searchTerm || searchTerm.trim() === '') {
+      await updateStatus('Please provide a search term to find media for jumbling');
+      return;
+    }
+    
+    // Find video media that matches the search term
     const videoResults = await MediaService.findMedia(searchTerm, true, 10);
     if (videoResults.length === 0) {
-      await updateStatus('No video sources found in the database');
+      await updateStatus('No video sources found matching your search');
       return;
     }
     
-    const audioResults = await MediaService.findMedia(searchTerm, false, 10);
-    if (audioResults.length === 0) {
-      await updateStatus('No audio sources found in the database');
+    // Find audio media that matches the search term but is different from video
+    const allAudioResults = await MediaService.findMedia(searchTerm, false, 10);
+    if (allAudioResults.length === 0) {
+      await updateStatus('No audio sources found matching your search');
       return;
     }
     
+    // Select random video from results
     const videoMedia = videoResults[Math.floor(Math.random() * videoResults.length)];
-    const availableAudioSources = audioResults.filter(m => m.id !== videoMedia.id);
+    
+    // Filter audio results to avoid using the same file as both video and audio source
+    // This is important for media that has both video and audio tracks
+    const availableAudioSources = allAudioResults.filter(m => m.id !== videoMedia.id);
+    
     const audioMedia = availableAudioSources.length > 0 
       ? availableAudioSources[Math.floor(Math.random() * availableAudioSources.length)]
-      : audioResults[Math.floor(Math.random() * audioResults.length)];
+      : allAudioResults[Math.floor(Math.random() * allAudioResults.length)];
     
-    await updateStatus('Found video and audio sources, preparing to jumble... ⏳');
+    await updateStatus(`Found "${videoMedia.title}" (video) and "${audioMedia.title}" (audio). Preparing to jumble... ⏳`);
     
     const videoPath = MediaService.resolveMediaPath(videoMedia);
     const audioPath = MediaService.resolveMediaPath(audioMedia);
     
-    if (!MediaService.validateMediaExists(videoPath) || !MediaService.validateMediaExists(audioPath)) {
-      await updateStatus('One or more media files could not be found on disk');
+    if (!MediaService.validateMediaExists(videoPath)) {
+      await updateStatus(`Video file "${videoMedia.title}" not found on disk`);
       return;
     }
     
-    const { duration: videoDuration } = await getMediaInfo(videoPath);
-    const { duration: audioDuration } = await getMediaInfo(audioPath);
-    
-    if (!videoDuration || !audioDuration) {
-      await updateStatus('Could not determine media durations');
+    if (!MediaService.validateMediaExists(audioPath)) {
+      await updateStatus(`Audio file "${audioMedia.title}" not found on disk`);
       return;
     }
     
-    const maxClipDuration = Math.min(30, videoDuration, audioDuration);
-    const videoStartTime = videoDuration > maxClipDuration 
+    // Extract media info with error handling
+    let videoDuration = 0;
+    let audioDuration = 0;
+    
+    try {
+      const videoInfo = await getMediaInfo(videoPath);
+      videoDuration = videoInfo.duration || 0;
+      
+      const audioInfo = await getMediaInfo(audioPath);
+      audioDuration = audioInfo.duration || 0;
+      
+      if (!videoDuration || !audioDuration) {
+        await updateStatus('Could not determine media durations');
+        return;
+      }
+    } catch (error) {
+      console.error('Error getting media info:', error);
+      await safeReply(message, `Error analyzing media: ${truncateError(error)}`);
+      return;
+    }
+    
+    // Calculate max clip duration (use clip duration from options if provided)
+    let maxClipDuration = Math.min(30, videoDuration, audioDuration);
+    if (clipOptions?.duration) {
+      const requestedDuration = parseFloat(clipOptions.duration);
+      if (!isNaN(requestedDuration)) {
+        maxClipDuration = Math.min(maxClipDuration, requestedDuration);
+      }
+    }
+    
+    // Calculate start times (use start time from options if provided)
+    let videoStartTime = videoDuration > maxClipDuration 
       ? Math.floor(Math.random() * (videoDuration - maxClipDuration)) 
       : 0;
-    const audioStartTime = audioDuration > maxClipDuration 
+      
+    let audioStartTime = audioDuration > maxClipDuration 
       ? Math.floor(Math.random() * (audioDuration - maxClipDuration)) 
       : 0;
     
+    if (clipOptions?.start) {
+      const requestedStart = parseFloat(clipOptions.start);
+      if (!isNaN(requestedStart)) {
+        videoStartTime = Math.min(requestedStart, videoDuration - maxClipDuration);
+        audioStartTime = Math.min(requestedStart, audioDuration - maxClipDuration);
+      }
+    }
+    
+    // Save jumble info for the 'what was that' command
     await saveJumbleInfo({
       userId: message.author.id,
       guildId: message.guildId || '',
@@ -92,34 +142,48 @@ export async function handleJumblePlayback(
     const audioClipPath = path.join(tempDir, `audio_clip_${randomId}.aac`);
     const outputPath = path.join(tempDir, `jumble_${randomId}.mp4`);
     
-    await updateStatus('Creating video clip... ⏳');
-    await createVideoClip(videoPath, videoClipPath, videoStartTime, maxClipDuration);
-    
-    await updateStatus('Video clip created, extracting audio... ⏳');
-    await createAudioClip(audioPath, audioClipPath, audioStartTime, maxClipDuration);
-    
-    await updateStatus('Combining clips... ⏳');
-    await combineVideoAndAudio(videoClipPath, audioClipPath, outputPath);
+    try {
+      await updateStatus(`Creating video clip from "${videoMedia.title}"... ⏳`);
+      await createVideoClip(videoPath, videoClipPath, videoStartTime, maxClipDuration);
+      
+      await updateStatus(`Video clip created, extracting audio from "${audioMedia.title}"... ⏳`);
+      await createAudioClip(audioPath, audioClipPath, audioStartTime, maxClipDuration);
+      
+      await updateStatus('Combining clips... ⏳');
+      await combineVideoAndAudio(videoClipPath, audioClipPath, outputPath);
+    } catch (error) {
+      console.error('Error processing media clips:', error);
+      await safeReply(message, `Error processing media clips: ${truncateError(error)}`);
+      FileService.cleanupTempFiles([videoClipPath, audioClipPath, outputPath]);
+      return;
+    }
     
     let finalPath = outputPath;
-    if (filterString?.trim()) {
-      await updateStatus('Applying additional filters... ⏳');
-      const finalOutputFilename = `final_jumble_${randomId}.mp4`;
-      const finalOutputPath = path.join(tempDir, finalOutputFilename);
-      
-      const options: ProcessOptions = {
-        filters: parseFilterString(filterString.startsWith('{') ? filterString : `{${filterString}}`),
-        enforceDiscordLimit: true
-      };
-      
-      finalPath = await processMedia(outputPath, finalOutputFilename, options);
-    } else {
-      await updateStatus('Optimizing for Discord... ⏳');
-      const finalOutputFilename = `final_jumble_${randomId}.mp4`;
-      const finalOutputPath = path.join(tempDir, finalOutputFilename);
-      
-      const options: ProcessOptions = { enforceDiscordLimit: true };
-      finalPath = await processMedia(outputPath, finalOutputFilename, options);
+    try {
+      if (filterString?.trim()) {
+        await updateStatus('Applying additional filters... ⏳');
+        const finalOutputFilename = `final_jumble_${randomId}.mp4`;
+        const finalOutputPath = path.join(tempDir, finalOutputFilename);
+        
+        const options: ProcessOptions = {
+          filters: parseFilterString(filterString.startsWith('{') ? filterString : `{${filterString}}`),
+          enforceDiscordLimit: true
+        };
+        
+        finalPath = await processMedia(outputPath, finalOutputFilename, options);
+      } else {
+        await updateStatus('Optimizing for Discord... ⏳');
+        const finalOutputFilename = `final_jumble_${randomId}.mp4`;
+        const finalOutputPath = path.join(tempDir, finalOutputFilename);
+        
+        const options: ProcessOptions = { enforceDiscordLimit: true };
+        finalPath = await processMedia(outputPath, finalOutputFilename, options);
+      }
+    } catch (error) {
+      console.error('Error processing final media:', error);
+      await safeReply(message, `Error optimizing media for Discord: ${truncateError(error)}`);
+      FileService.cleanupTempFiles([videoClipPath, audioClipPath, outputPath]);
+      return;
     }
     
     if (!MediaService.validateMediaExists(finalPath)) {
@@ -128,11 +192,19 @@ export async function handleJumblePlayback(
     
     await updateStatus('Jumble complete! Uploading... 📤');
     
-    const attachment = new AttachmentBuilder(finalPath);
-    await safeReply(message, { files: [attachment] });
-    
-    FileService.cleanupTempFiles([videoClipPath, audioClipPath, outputPath, finalPath]);
-    
+    try {
+      const attachment = new AttachmentBuilder(finalPath);
+      await safeReply(message, { 
+        content: `Jumbled video from "${videoMedia.title}" with audio from "${audioMedia.title}" 🎬+🔊`,
+        files: [attachment] 
+      });
+    } catch (error) {
+      console.error('Error sending attachment:', error);
+      await safeReply(message, `Error uploading jumble: ${truncateError(error)}`);
+    } finally {
+      // Cleanup temp files
+      FileService.cleanupTempFiles([videoClipPath, audioClipPath, outputPath, finalPath]);
+    }
   } catch (error) {
     console.error('Error handling jumble playback:', error);
     await safeReply(message, `Error creating jumble: ${(error as Error).message}`);

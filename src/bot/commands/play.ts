@@ -12,7 +12,9 @@ export const handlePlayCommand = async (
 ) => {
   try {
     if (filterString?.toLowerCase().includes('jumble')) {
-      await handleJumblePlayback(message, searchTerm, filterString.replace(/(jumble|{|})/gi, ''), clipOptions);
+      // Extract just the search term without the jumble part
+      const cleanFilterString = filterString.replace(/(jumble|{|})/gi, '').trim();
+      await handleJumblePlayback(message, searchTerm, cleanFilterString, clipOptions);
       return;
     }
 
