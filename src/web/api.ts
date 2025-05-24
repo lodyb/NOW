@@ -17,6 +17,18 @@ import {
 
 // Authentication middleware
 const requireAuth = async (req: ExpressRequest, res: Response, next: Function) => {
+  // Skip auth check if Discord credentials aren't configured - default to user 1
+  if (!process.env.DISCORD_CLIENT_ID || !process.env.DISCORD_CLIENT_SECRET) {
+    const defaultUser = await getUserById('1');
+    if (defaultUser) {
+      (req as any).user = defaultUser;
+      return next();
+    }
+    // If user 1 doesn't exist, create a fallback
+    (req as any).user = { id: '1', username: 'admin' };
+    return next();
+  }
+
   const userId = req.query.user as string;
   
   if (!userId) {
