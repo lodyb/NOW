@@ -15,6 +15,15 @@ import youtubeDl from 'youtube-dl-exec';
 
 // Directory for temporary downloads
 const TEMP_DIR = path.join(process.cwd(), 'temp');
+const UPLOADS_DIR = path.join(process.cwd(), 'uploads');
+
+/**
+ * Resolve original file path for jumble operations (uses original files instead of normalized)
+ */
+function resolveOriginalMediaPath(media: any): string {
+  // Always use the original file path for jumble operations to get highest quality
+  return path.join(UPLOADS_DIR, path.basename(media.filePath));
+}
 
 export async function handleJumblePlayback(
   message: Message,
@@ -74,8 +83,8 @@ export async function handleJumblePlayback(
     
     await updateStatus(`Found "${videoMedia.title}" (video) and "${audioMedia.title}" (audio). Preparing to jumble... ⏳`);
     
-    const videoPath = MediaService.resolveMediaPath(videoMedia);
-    const audioPath = MediaService.resolveMediaPath(audioMedia);
+    const videoPath = resolveOriginalMediaPath(videoMedia);
+    const audioPath = resolveOriginalMediaPath(audioMedia);
     
     if (!MediaService.validateMediaExists(videoPath)) {
       await updateStatus(`Video file "${videoMedia.title}" not found on disk`);
@@ -296,7 +305,7 @@ export async function handleJumbleRemix(
     
     // Select a random media item from the database
     const dbMedia = dbResults[Math.floor(Math.random() * dbResults.length)];
-    const dbMediaPath = MediaService.resolveMediaPath(dbMedia);
+    const dbMediaPath = resolveOriginalMediaPath(dbMedia); // Use original file instead of normalized
     
     if (!MediaService.validateMediaExists(dbMediaPath)) {
       await updateStatus('The selected media file could not be found on disk.');

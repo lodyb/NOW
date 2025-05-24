@@ -11,8 +11,32 @@ import {
   getMediaById,
   findAllMediaPaginated,
   getUserGalleryItems,
-  getGalleryUsers
+  getGalleryUsers,
+  getUserById
 } from '../database/db';
+
+// Authentication middleware
+const requireAuth = async (req: ExpressRequest, res: Response, next: Function) => {
+  const userId = req.query.user as string;
+  
+  if (!userId) {
+    return res.redirect('/auth/login');
+  }
+  
+  try {
+    const user = await getUserById(userId);
+    if (!user) {
+      return res.status(403).send('Access denied. Please use the bot first to gain access.');
+    }
+    
+    // Store user in request for later use
+    (req as any).user = user;
+    next();
+  } catch (error) {
+    console.error('Auth error:', error);
+    return res.status(500).send('Authentication error');
+  }
+};
 
 // Extend request type to include multer's file property
 interface Request extends ExpressRequest {
@@ -74,27 +98,46 @@ router.use('/media/processed', express.static(PROCESSED_DIR));
 router.use('/gallery', express.static(path.join(process.cwd(), 'gallery')));
 
 // Serve SPA from root
-router.get('/', (req, res) => {
+router.get('/', requireAuth, (req, res) => {
   res.sendFile(path.join(process.cwd(), 'src/web/public/index.html'));
 });
 
 // Serve playground page
-router.get('/playground', (req, res) => {
+router.get('/playground', requireAuth, (req, res) => {
   res.sendFile(path.join(process.cwd(), 'src/web/public/playground.html'));
 });
 
 // Serve gallery page
-router.get('/gallery', (req, res) => {
+router.get('/gallery', requireAuth, (req, res) => {
   res.sendFile(path.join(process.cwd(), 'src/web/public/gallery.html'));
 });
 
 // Serve individual user gallery pages
-router.get('/gallery/:userId', (req, res) => {
+router.get('/gallery/:userId', requireAuth, (req, res) => {
   res.sendFile(path.join(process.cwd(), 'src/web/public/gallery.html'));
 });
 
+// Add login page route (no auth required)
+router.get('/auth/login', (req, res) => {
+  res.send(`
+    <html>
+      <head><title>NOW Bot - Login Required</title></head>
+      <body style="font-family: Arial, sans-serif; text-align: center; padding: 50px;">
+        <h1>Access Denied</h1>
+        <p>You need to use the NOW bot in Discord first to gain access to this website.</p>
+        <p>Try using a command like <code>NOW play something</code> in your Discord server.</p>
+      </body>
+    </html>
+  `);
+});
+
+// Add user info endpoint
+router.get('/api/user', requireAuth, (req: any, res) => {
+  res.json(req.user);
+});
+
 // API endpoints
-router.get('/api/media', async (req, res) => {
+router.get('/api/media', requireAuth, async (req, res) => {
   try {
     const search = req.query.search as string | undefined;
     const page = parseInt(req.query.page as string) || 1;
@@ -120,7 +163,7 @@ router.get('/api/media', async (req, res) => {
 });
 
 // Get media by ID
-router.get('/api/media/:id', async (req, res) => {
+router.get('/api/media/:id', requireAuth, async (req, res) => {
   try {
     const id = parseInt(req.params.id);
     if (isNaN(id)) {
@@ -139,7 +182,7 @@ router.get('/api/media/:id', async (req, res) => {
 });
 
 // Check media processing status - Note: Removed duplicate endpoint
-router.get('/api/media/:id/status', async (req, res) => {
+router.get('/api/media/:id/status', requireAuth, async (req, res) => {
   try {
     const id = parseInt(req.params.id);
     if (isNaN(id)) {
@@ -166,7 +209,7 @@ router.get('/api/media/:id/status', async (req, res) => {
   }
 });
 
-router.post('/api/media/:id/toggle-deleted', async (req, res) => {
+router.post('/api/media/:id/toggle-deleted', requireAuth, async (req, res) => {
   try {
     const id = parseInt(req.params.id);
     if (isNaN(id)) {
@@ -243,7 +286,8 @@ router.post('/api/upload', upload.single('file'), express.json(), async (req: Re
       req.file.path,
       null, // Start with null normalizedPath
       null, // No year
-      { uploadedBy: req.query.user || 'unknown', originalFilename: req.file.originalname }
+      { uploadedBy: req.query.user || 'unknown', originalFilename: req.file.originalname },
+      req.query.user as string || null // Pass uploaderId
     );
     
     // Check if answers were provided in the request body, otherwise use filename

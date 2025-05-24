@@ -742,3 +742,137 @@ export async function testVideoAudioFilterChain(
     }
   });
 }
+
+/**
+ * Test new VST and datamoshing effects specifically
+ */
+export async function testNewEffects(
+  progressCallback?: (current: number, total: number, filter: string) => Promise<void>
+): Promise<string> {
+  // Ensure test directory exists
+  if (!fs.existsSync(TEST_DIR)) {
+    fs.mkdirSync(TEST_DIR, { recursive: true });
+  }
+  
+  // Define new effects to test
+  const newAudioEffects = [
+    'granular', 'glitchstep', 'datacorrupt', 'timestretch', 'vocoder', 'ringmod', 
+    'formant', 'autopan', 'sidechain', 'compressor', 'limiter', 'multiband',
+    'bitrot', 'memoryerror', 'bufferoverflow', 'stackcorrupt', 'voidecho',
+    'dimension', 'timerift', 'quantum', 'cassettetape', 'vinylcrackle',
+    'radiotuning', 'amradio'
+  ];
+  
+  const newVideoEffects = [
+    'datamoshing', 'scanlines', 'chromashift', 'pixelshift', 'memoryglitch',
+    'fisheye', 'tunnel', 'spin', 'zoom', 'vintage', 'cyberpunk', 'hologram',
+    'audiowave', 'audiospectrum', 'audiofreq', 'audiovector',
+    'commodore64', 'gameboy', 'nes'
+  ];
+  
+  const totalFilters = newAudioEffects.length + newVideoEffects.length;
+  let completed = 0;
+  
+  console.log(`Testing ${totalFilters} new effects (${newAudioEffects.length} audio, ${newVideoEffects.length} video)...`);
+  
+  // Test new audio effects
+  const audioResults: FilterTestResult[] = [];
+  for (const filterName of newAudioEffects) {
+    if (progressCallback) {
+      await progressCallback(++completed, totalFilters, `Testing new audio effect: ${filterName}`);
+    } else {
+      console.log(`Testing new audio effect: ${filterName} (${completed}/${totalFilters})`);
+    }
+    
+    if (filterName in audioEffects) {
+      const result = await testFilter(filterName, audioEffects[filterName], false);
+      audioResults.push(result);
+    }
+  }
+  
+  // Test new video effects
+  const videoResults: FilterTestResult[] = [];
+  for (const filterName of newVideoEffects) {
+    if (progressCallback) {
+      await progressCallback(++completed, totalFilters, `Testing new video effect: ${filterName}`);
+    } else {
+      console.log(`Testing new video effect: ${filterName} (${completed}/${totalFilters})`);
+    }
+    
+    if (filterName in videoEffects) {
+      const result = await testFilter(filterName, videoEffects[filterName], true);
+      videoResults.push(result);
+    }
+  }
+  
+  // Combine results and generate report
+  const allResults = [...audioResults, ...videoResults];
+  const report = generateReport(allResults);
+  
+  // Save report to file
+  const reportPath = path.join(TEST_DIR, `new_effects_test_report_${Date.now()}.md`);
+  fs.writeFileSync(reportPath, report);
+  
+  console.log(`New effects testing complete. Results saved to ${reportPath}`);
+  return reportPath;
+}
+
+/**
+ * Test extreme filter combinations that might break things
+ */
+export async function testExtremeFilterCombinations(): Promise<string> {
+  // Ensure test directory exists
+  if (!fs.existsSync(TEST_DIR)) {
+    fs.mkdirSync(TEST_DIR, { recursive: true });
+  }
+  
+  console.log('Testing extreme filter combinations...');
+  
+  const extremeCombinations = [
+    // Audio datamoshing combinations
+    ['bitrot', 'stackcorrupt', 'memoryerror'],
+    ['quantum', 'timerift', 'dimension'],
+    ['nuked', 'destroy8bit', 'extremebass'],
+    ['granular', 'glitchstep', 'datacorrupt'],
+    
+    // Vintage + modern combinations
+    ['cassettetape', 'vinylcrackle', 'compressor'],
+    ['radiotuning', 'amradio', 'limiter'],
+    
+    // Extreme processing chains
+    ['deepfried', 'crushcrush', 'hardclip', 'saturate'],
+    ['voidecho', 'haunted', 'corrupt', 'backwards']
+  ];
+  
+  const results: FilterTestResult[] = [];
+  
+  for (let i = 0; i < extremeCombinations.length; i++) {
+    const combination = extremeCombinations[i];
+    console.log(`Testing extreme combination ${i + 1}/${extremeCombinations.length}: ${combination.join(' + ')}`);
+    
+    const result = await testAudioFilterChain(combination);
+    results.push(result);
+  }
+  
+  // Test some video + audio combinations
+  const videoAudioCombinations = [
+    { video: ['datamoshing', 'scanlines'], audio: ['bitrot', 'stackcorrupt'] },
+    { video: ['cyberpunk', 'hologram'], audio: ['quantum', 'dimension'] },
+    { video: ['vintage', 'commodore64'], audio: ['cassettetape', 'vinylcrackle'] }
+  ];
+  
+  for (let i = 0; i < videoAudioCombinations.length; i++) {
+    const combo = videoAudioCombinations[i];
+    console.log(`Testing video+audio combination ${i + 1}/${videoAudioCombinations.length}: ${combo.video.join('+')} / ${combo.audio.join('+')}`);
+    
+    const result = await testVideoAudioFilterChain(combo.video, combo.audio);
+    results.push(result);
+  }
+  
+  const report = generateReport(results);
+  const reportPath = path.join(TEST_DIR, `extreme_combinations_test_${Date.now()}.md`);
+  fs.writeFileSync(reportPath, report);
+  
+  console.log(`Extreme combinations testing complete. Results saved to ${reportPath}`);
+  return reportPath;
+}

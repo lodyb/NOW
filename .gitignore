@@ -11,6 +11,7 @@ dist/
 uploads/
 normalized/
 thumbnails/
+filterTests/
 
 # Logs
 logs/

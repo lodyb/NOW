@@ -1363,8 +1363,6 @@ export const audioEffects: Record<string, string> = {
   reverb: 'areverse,aecho=0.8:0.9:1000:0.3,areverse',
   nightcore: 'asetrate=44100*1.25,aresample=44100,atempo=0.85',
   underwater: 'lowpass=f=800',
-  
-  // Restored effects
   aecho: 'aecho=0.6:0.6:1000:0.5',
   robotize: 'asetrate=8000,vibrato=f=5:d=0.5,aresample=8000',
   retroaudio: 'aresample=8000,aformat=sample_fmts=u8',
@@ -1374,15 +1372,11 @@ export const audioEffects: Record<string, string> = {
   tremolo: 'tremolo=f=8:d=0.8',
   vibrato: 'vibrato=f=10:d=0.5',
   chorus: 'chorus=0.5:0.9:60:0.4:0.25:2',
-  
-  // Bass boost variations
   bassboosted: 'bass=g=15:f=110:width_type=h',
   extremebass: 'bass=g=20:f=60:width_type=h,volume=3dB',
   distortbass: 'bass=g=18:f=80:width_type=h,volume=3dB',
   earrape: 'bass=g=15:f=60:width_type=h,treble=g=5,volume=4dB',
   clippedbass: 'bass=g=18:f=80:width_type=h,volume=2.5dB',
-  
-  // Audio destruction effects
   saturate: 'bass=g=2,treble=g=1,volume=2',
   crunch: 'acrusher=level_in=4:level_out=1.5:bits=4:mode=log:aa=0',
   lofi: 'aresample=6000:filter_type=cubic,aresample=44100:filter_type=cubic',
@@ -1390,13 +1384,9 @@ export const audioEffects: Record<string, string> = {
   crushcrush: 'acrusher=level_in=4:level_out=1.5:bits=3:mode=log:mix=0.4',
   deepfried: 'bass=g=8:f=100:width_type=h,acrusher=level_in=4:level_out=1.5:bits=3:mode=log:mix=1',
   destroy8bit: 'aresample=8000:filter_type=cubic,acrusher=level_in=4:level_out=1.5:bits=2:mode=log:aa=0,aresample=44100',
-  
-  // Meme-worthy audio effects
   nuked: 'bass=g=15:f=60:width_type=h,acrusher=level_in=4:level_out=1.5:bits=3:mode=log:aa=0,volume=6dB',
   phonk: 'bass=g=10:f=70:width_type=h,atempo=0.85,asetrate=44100*0.95,aresample=44100',
   vaporwave: 'asetrate=44100*0.8,aresample=44100,bass=g=5:f=150:width_type=h',
-  
-  // Additional effects
   alien: 'vibrato=f=8:d=1,asetrate=44100*1,aresample=44100',
   demon: 'asetrate=44100*0.7,aresample=44100',
   destroy: 'acrusher=bits=2:mode=lin:mix=1,areverse',
@@ -1415,7 +1405,47 @@ export const audioEffects: Record<string, string> = {
   whisper: "afftfilt=real='hypot(re,im)*cos((random(0)*2-1)*2*3.14)':imag='hypot(re,im)*sin((random(1)*2-1)*2*3.14)':win_size=128:overlap=0.8",
   clipping: 'acrusher=.1:1:64:0:log',
   ess: 'deesser=i=1:s=e',
-  crystalizer: 'crystalizer=i=5'
+  crystalizer: 'crystalizer=i=5',
+
+  // NEW PROCEDURAL/GENERATIVE EFFECTS
+  granular: 'aeval=random(1)*0.3*sin(2*PI*t*random(1)*2000)',
+  glitchstep: 'aeval=if(mod(floor(t*4),2),random(1)*0.5,0)*sin(2*PI*t*440)',
+  datacorrupt: 'afftfilt=real=\'if(gt(random(0),0.95),0,re)\':imag=\'if(gt(random(0),0.95),0,im)\'',
+  timestretch: 'aeval=sin(2*PI*t*440*(1+0.5*sin(t*0.1)))',
+  
+  // NEW SYNTHESIS-STYLE EFFECTS
+  vocoder: 'aeval=sin(2*PI*t*440)*((sin(2*PI*t*10)+1)/2)',
+  ringmod: 'aeval=sin(2*PI*t*55)*sin(2*PI*t*440)',
+  formant: 'aformat=channel_layouts=mono,aeval=\'val(0)*sin(2*PI*t*800)*sin(2*PI*t*1200)\'',
+  autopan: 'apulsator=hz=0.5:width=1',
+  sidechain: 'agate=threshold=0.1:ratio=2:attack=1:release=5',
+  
+  // NEW VST-STYLE PROCESSING
+  compressor: 'acompressor=threshold=0.1:ratio=4:attack=5:release=50:makeup=2',
+  limiter: 'alimiter=level_in=1:level_out=0.8:limit=0.9',
+  multiband: 'crossover=split=160Hz|800Hz|4kHz[low][mid1][mid2][high];[low]acompressor=ratio=3[c1];[mid1]acompressor=ratio=2[c2];[mid2]acompressor=ratio=2[c3];[high]acompressor=ratio=4[c4];[c1][c2][c3][c4]amix=4',
+  
+  // NEW REAL-TIME ANALYSIS EFFECTS
+  specresponse: 'showspectrum=size=640x480:mode=combined:color=rainbow:scale=log',
+  volumefollow: 'volumedetect,aeval=sin(2*PI*t*440*(1+metadata.lavfi.volumedetect.mean_volume/100))',
+  
+  // NEW DATAMOSHING AUDIO
+  bitrot: 'afftfilt=real=\'if(gt(random(0),0.98),random(1)*255,re)\':imag=\'if(gt(random(0),0.98),random(1)*255,im)\'',
+  memoryerror: 'aeval=if(gt(random(0),0.995),random(1)*0.8,val(0))',
+  bufferoverflow: 'adelay=delays=random(1)*100|random(1)*100',
+  stackcorrupt: 'afftfilt=real=\'if(gt(random(0),0.99),re*random(1)*10,re)\':imag=\'if(gt(random(0),0.99),im*random(1)*10,im)\'',
+  
+  // NEW EXTREME EFFECTS
+  voidecho: 'aecho=0.9:0.95:2000|4000|8000:0.8|0.6|0.4,areverse,aecho=0.8:0.9:1000:0.3,areverse',
+  dimension: 'aphaser=delay=20:decay=0.8:speed=0.1,aecho=0.7:0.8:3000:0.5',
+  timerift: 'atempo=0.5,areverse,atempo=2,areverse,atempo=0.8',
+  quantum: 'afftfilt=real=\'hypot(re,im)*cos(random(0)*6.28)\':imag=\'hypot(re,im)*sin(random(0)*6.28)\'',
+  
+  // NEW VINTAGE EFFECTS
+  cassettetape: 'aresample=22050,aflanger=delay=5:depth=2:regen=50,aresample=44100,highpass=f=80,lowpass=f=12000',
+  vinylcrackle: 'anoise=c=pink:r=0.01,amix=inputs=2:weights=1 0.05',
+  radiotuning: 'highpass=f=300+200*sin(2*PI*t*0.5),lowpass=f=3000+1000*sin(2*PI*t*0.3)',
+  amradio: 'amodulate=frequency=1000+500*sin(2*PI*t*0.1)',
 };
 
 export const videoEffects: Record<string, string> = {
@@ -1427,18 +1457,12 @@ export const videoEffects: Record<string, string> = {
   pixelate: 'scale=iw/20:ih/20,scale=iw*20:ih*20:flags=neighbor',
   acid: 'hue=h=sin(n/10)*360',
   crt: 'noise=c0s=13:c0f=t+u,vignette=0.2',
-  
-  // Restored effects
   hmirror: 'hflip',
   vmirror: 'vflip',
-  
-  // Mirror effects - Fix these to use filter_complex properly
-  haah: '-filter_complex', // Use complexFilter in applyFilters instead of videoFilters
+  haah: '-filter_complex',
   waaw: '-filter_complex', 
   hooh: 'split[a][b];[a]crop=iw:ih/2:0:0[top];[top]vflip[bottom];[b][bottom]overlay=0:H/2',
   woow: 'split[a][b];[a]crop=iw:ih/2:0:ih/2[bottom];[bottom]vflip[top];[b][top]overlay=0:0',
-  
-  // Visual effects
   vhs: 'noise=alls=15:allf=t,curves=r=0.2:g=0.1:b=0.2,hue=h=5,colorbalance=rs=0.1:bs=-0.1,format=yuv420p,drawgrid=w=iw/24:h=2*ih:t=1:c=white@0.2',
   oldfilm: 'curves=r=0.2:g=0.1:b=0.2,noise=alls=7:allf=t,hue=h=9,eq=brightness=0.05:saturation=0.5,vignette',
   huerotate: 'hue=h=mod(t*20\\,360)',
@@ -1449,19 +1473,42 @@ export const videoEffects: Record<string, string> = {
   slowmo: 'setpts=2*PTS',
   waves: 'noise=alls=20:allf=t,eq=contrast=1.5:brightness=-0.1:saturation=1.2',
   pixelize: 'scale=iw*0.05:-1:flags=neighbor,scale=iw*20:-1:flags=neighbor',
-  
-  // 360-degree effects - Fix filter parameters
   v360_fisheye: 'v360=input=equirect:output=fisheye:w=720:h=720',
   v360_cube: 'v360=input=equirect:output=cube:w=1080:h=720',
   planet: 'v360=input=equirect:output=stereographic:w=720:h=720',
   tiny_planet: 'v360=input=equirect:output=stereographic:w=720:h=720:yaw=0:pitch=-90',
-  
-  // Special effects
-  oscilloscope: 'oscilloscope=s=1:r=1', // Fixed parameter names
-  
-  // Debug/analysis effects
+  oscilloscope: 'oscilloscope=s=1:r=1',
   signalstats: 'signalstats=stat=all:color=cyan',
   waveform: 'waveform=filter=lowpass:mode=column:mirror=1:display=stack:components=7',
+
+  // NEW DATAMOSHING EFFECTS
+  datamoshing: 'noise=alls=50:allf=t,geq=r=\'if(gt(random(1),0.98),255,r(X,Y))\':g=\'if(gt(random(1),0.98),0,g(X,Y))\':b=\'if(gt(random(1),0.98),255,b(X,Y))\'',
+  scanlines: 'geq=r=\'if(mod(Y,4),r(X,Y),r(X,Y)*0.3)\':g=\'if(mod(Y,4),g(X,Y),g(X,Y)*0.3)\':b=\'if(mod(Y,4),b(X,Y),b(X,Y)*0.3)\'',
+  chromashift: 'split[a][b][c];[a]lutrgb=r=0:g=0[r];[b]lutrgb=r=0:b=0[g];[c]lutrgb=g=0:b=0[b];[r][g]overlay=x=2:y=0[rg];[rg][b]overlay=x=-2:y=0',
+  pixelshift: 'geq=r=\'r(X+random(1)*5-2.5,Y)\':g=\'g(X+random(1)*5-2.5,Y)\':b=\'b(X+random(1)*5-2.5,Y)\'',
+  memoryglitch: 'geq=r=\'if(gt(random(1),0.99),random(1)*255,r(X,Y))\':g=\'if(gt(random(1),0.99),random(1)*255,g(X,Y))\':b=\'if(gt(random(1),0.99),random(1)*255,b(X,Y))\'',
+  
+  // NEW GEOMETRIC TRANSFORMATIONS
+  fisheye: 'v360=input=flat:output=fisheye:w=720:h=720',
+  tunnel: 'geq=r=\'r(X+50*sin(hypot(X-W/2,Y-H/2)/10),Y+50*cos(hypot(X-W/2,Y-H/2)/10))\':g=\'g(X+50*sin(hypot(X-W/2,Y-H/2)/10),Y+50*cos(hypot(X-W/2,Y-H/2)/10))\':b=\'b(X+50*sin(hypot(X-W/2,Y-H/2)/10),Y+50*cos(hypot(X-W/2,Y-H/2)/10))\'',
+  spin: 'rotate=t*PI/4:c=black:ow=in_w:oh=in_h',
+  zoom: 'zoompan=z=\'zoom+0.002\':d=125:x=iw/2-(iw/zoom/2):y=ih/2-(ih/zoom/2)',
+  
+  // NEW ADVANCED COMBINATIONS
+  vintage: 'curves=r=0.2:g=0.1:b=0.2,noise=alls=7:allf=t,hue=h=9,vignette=0.3',
+  cyberpunk: 'geq=r=\'if(gt(r(X,Y),128),255,0)\':g=\'if(gt(g(X,Y),128),255,g(X,Y)*2)\':b=\'255\',hue=h=180',
+  hologram: 'split[a][b];[a]negate,hue=h=180[neg];[b][neg]overlay=x=2:y=2:eval=frame,noise=alls=30:allf=t',
+  
+  // NEW AUDIO-TO-VIDEO TRANSFORMATIONS
+  audiowave: 'showwaves=s=1280x720:mode=line:colors=blue',
+  audiospectrum: 'showspectrum=s=1280x720:mode=combined:color=rainbow:scale=log',
+  audiofreq: 'showfreqs=s=1280x720:mode=line:colors=red',
+  audiovector: 'avectorscope=s=1280x720:mode=lissajous:zoom=2',
+  
+  // NEW RETRO EFFECTS
+  commodore64: 'scale=320:200:flags=neighbor,lutrgb=r=\'if(lt(val,64),0,if(lt(val,128),85,if(lt(val,192),170,255)))\':g=\'if(lt(val,64),0,if(lt(val,128),85,if(lt(val,192),170,255)))\':b=\'if(lt(val,64),0,if(lt(val,128),85,if(lt(val,192),170,255)))\',scale=1280:720:flags=neighbor',
+  gameboy: 'format=gray,scale=160:144:flags=neighbor,lutrgb=\'if(lt(val,64),15,if(lt(val,128),56,if(lt(val,192),139,199)))\',scale=1280:720:flags=neighbor',
+  nes: 'scale=256:240:flags=neighbor,lutrgb=r=\'floor(val/32)*32\':g=\'floor(val/32)*32\':b=\'floor(val/32)*32\',scale=1280:720:flags=neighbor'
 };
 
 /**
@@ -1658,7 +1705,7 @@ const applyFilters = (
     // Apply special complex video filters separately
     if (isVideo) {
       for (const filterName of videoFilterNames) {
-        if (['haah', 'waaw', 'kaleidoscope', 'v360_cube', 'planet', 'tiny_planet', 'oscilloscope'].includes(filterName)) {
+        if (['haah', 'waaw', 'kaleidoscope', 'v360_cube', 'planet', 'tiny_planet', 'oscilloscope', 'audiowave', 'audiospectrum', 'audiofreq', 'audiovector'].includes(filterName)) {
           console.log(`Applying complex video effect: ${filterName}`);
           applyComplexVideoFilter(command, filterName);
         }
@@ -1666,7 +1713,7 @@ const applyFilters = (
       
       // Apply regular video filters as a combined chain
       const regularVideoFilters = videoFilterNames.filter(name => 
-        !['haah', 'waaw', 'kaleidoscope', 'v360_cube', 'planet', 'tiny_planet', 'oscilloscope'].includes(name));
+        !['haah', 'waaw', 'kaleidoscope', 'v360_cube', 'planet', 'tiny_planet', 'oscilloscope', 'audiowave', 'audiospectrum', 'audiofreq', 'audiovector'].includes(name));
       
       if (regularVideoFilters.length > 0) {
         const videoFilterStrings = regularVideoFilters.map(name => videoEffects[name]);
@@ -1881,7 +1928,6 @@ const isAudioFilterString = (filterString: string): boolean => {
  * Generate audio waveform image
  */
 export const generateAudioWaveform = async (audioPath: string): Promise<string[]> => {
-
   if (!fs.existsSync(audioPath)) {
     throw new Error(`Audio file not found: ${audioPath}`);
   }
@@ -1895,10 +1941,10 @@ export const generateAudioWaveform = async (audioPath: string): Promise<string[]
     // Generate waveform
     await new Promise<void>((resolve, reject) => {
       ffmpeg(audioPath)
-        .outputOptions([
-          '-filter_complex', 'showwavespic=s=640x240:colors=#3498db',
-          '-frames:v', '1'
+        .complexFilter([
+          'showwaves=s=640x240:mode=line:colors=blue'
         ])
+        .outputOptions('-frames:v 1')
         .save(waveformPath)
         .on('end', () => {
           results.push(`/media/thumbnails/${baseFilename}_waveform.png`);
@@ -1910,10 +1956,10 @@ export const generateAudioWaveform = async (audioPath: string): Promise<string[]
     // Generate spectrogram
     await new Promise<void>((resolve, reject) => {
       ffmpeg(audioPath)
-        .outputOptions([
-          '-filter_complex', 'showspectrumpic=s=640x240:mode=combined:color=rainbow',
-          '-frames:v', '1'
+        .complexFilter([
+          'showspectrum=s=640x240:mode=combined:color=rainbow'
         ])
+        .outputOptions('-frames:v 1')
         .save(spectrogramPath)
         .on('end', () => {
           results.push(`/media/thumbnails/${baseFilename}_spectrogram.png`);
@@ -1946,59 +1992,65 @@ function applyComplexVideoFilter(
   switch (filterName.toLowerCase()) {
     case 'haah':
       command.complexFilter([
-        { filter: 'split', options: '', outputs: ['a', 'b'] },
-        { filter: 'crop', options: 'iw/2:ih:0:0', inputs: 'a', outputs: 'a1' },
-        { filter: 'hflip', inputs: 'a1', outputs: 'a2' },
-        { filter: 'crop', options: 'iw/2:ih:iw/2:0', inputs: 'b', outputs: 'b1' },
-        { filter: 'hstack', inputs: ['a2', 'b1'] }
+        'split[a][b]',
+        '[a]crop=iw/2:ih:0:0[left]',
+        '[b]crop=iw/2:ih:iw/2:0,hflip[right]',
+        '[left][right]hstack'
       ]);
       return true;
       
     case 'waaw':
       command.complexFilter([
-        { filter: 'split', options: '', outputs: ['a', 'b'] },
-        { filter: 'crop', options: 'iw:ih/2:0:0', inputs: 'a', outputs: 'a1' },
-        { filter: 'hflip', inputs: 'a1', outputs: 'a2' },
-        { filter: 'crop', options: 'iw:ih/2:0:ih/2', inputs: 'b', outputs: 'b1' },
-        { filter: 'vstack', inputs: ['a2', 'b1'] }
+        'split[a][b]',
+        '[a]crop=iw/2:ih:0:0,hflip[left]',
+        '[b]crop=iw/2:ih:iw/2:0[right]',
+        '[left][right]hstack'
       ]);
       return true;
       
     case 'kaleidoscope':
       command.complexFilter([
-        { filter: 'split', options: '', outputs: ['a', 'b'] },
-        { filter: 'crop', options: 'iw/2:ih/2:0:0', inputs: 'a', outputs: 'a1' },
-        { filter: 'hflip', inputs: 'a1', outputs: 'a2' },
-        { filter: 'crop', options: 'iw/2:ih/2:iw/2:0', inputs: 'b', outputs: 'b1' },
-        { filter: 'vflip', inputs: 'b1', outputs: 'b2' },
-        { filter: 'hstack', inputs: ['a2', 'b2'], outputs: 'top' },
-        { filter: 'split', inputs: 'top', outputs: ['t1', 't2'] },
-        { filter: 'vstack', inputs: ['t1', 't2'] }
+        'split[a][b][c][d]',
+        '[a]crop=iw/2:ih/2:0:0[tl]',
+        '[b]crop=iw/2:ih/2:iw/2:0,hflip[tr]',
+        '[c]crop=iw/2:ih/2:0:ih/2,vflip[bl]',
+        '[d]crop=iw/2:ih/2:iw/2:ih/2,hflip,vflip[br]',
+        '[tl][tr]hstack[top]',
+        '[bl][br]hstack[bottom]',
+        '[top][bottom]vstack'
       ]);
       return true;
       
     case 'v360_cube':
-      command.complexFilter([
-        { filter: 'v360', options: 'input=equirect:output=cube:w=1080:h=720' }
-      ]);
+      command.videoFilters('v360=input=equirect:output=cube:w=1080:h=720');
       return true;
       
     case 'planet':
-      command.complexFilter([
-        { filter: 'v360', options: 'input=equirect:output=stereographic:w=720:h=720' }
-      ]);
+      command.videoFilters('v360=input=equirect:output=stereographic:w=720:h=720');
       return true;
       
     case 'tiny_planet':
-      command.complexFilter([
-        { filter: 'v360', options: 'input=equirect:output=stereographic:w=720:h=720:pitch=-90' }
-      ]);
+      command.videoFilters('v360=input=equirect:output=stereographic:w=720:h=720:yaw=0:pitch=-90');
       return true;
       
     case 'oscilloscope':
-      command.complexFilter([
-        { filter: 'oscilloscope', options: 'size=720x480:rate=1:zoom=1' }
-      ]);
+      command.complexFilter(['oscilloscope=s=640x480:x=1:y=2:s=1:t=1']);
+      return true;
+
+    case 'audiowave':
+      command.complexFilter(['showwaves=s=1280x720:mode=line:colors=blue']);
+      return true;
+
+    case 'audiospectrum':
+      command.complexFilter(['showspectrum=s=1280x720:mode=combined:color=rainbow:scale=log']);
+      return true;
+
+    case 'audiofreq':
+      command.complexFilter(['showfreqs=s=1280x720:mode=line:colors=red']);
+      return true;
+
+    case 'audiovector':
+      command.complexFilter(['avectorscope=s=1280x720:mode=lissajous:zoom=2']);
       return true;
       
     default:
