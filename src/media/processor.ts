@@ -2124,8 +2124,19 @@ export const getRandomFilters = (count: number = 1): string[] => {
  * @returns Array with one audio filter and one video filter
  */
 export const getDjFilters = (blacklistedFilters: string[] = []): string[] => {
+  // Filters that are known to be problematic with arbitrary input media
+  const problematicVideoFilters = [
+    'v360_fisheye', 'v360_cube', 'planet', 'tiny_planet', // v360 filters require 360° input
+    'zoom', // zoompan has strict requirements
+    'oscilloscope', // requires specific input
+    'audiowave', 'audiospectrum', 'audiofreq', 'audiovector', // audio visualization filters
+    'haah', 'waaw', 'kaleidoscope' // complex filters that often fail
+  ];
+  
   const audioFilterNames = Object.keys(audioEffects).filter(name => !blacklistedFilters.includes(name));
-  const videoFilterNames = Object.keys(videoEffects).filter(name => !blacklistedFilters.includes(name));
+  const videoFilterNames = Object.keys(videoEffects)
+    .filter(name => !blacklistedFilters.includes(name))
+    .filter(name => !problematicVideoFilters.includes(name)); // Exclude problematic filters
   
   const selectedFilters: string[] = [];
   
