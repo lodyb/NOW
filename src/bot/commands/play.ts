@@ -1,5 +1,6 @@
 import { Message } from 'discord.js';
 import { processMediaCommand } from './mediaCommand';
+import { handleJumblePlayback } from './playback/JumbleHandler';
 import { safeReply } from '../utils/helpers';
 
 export const handlePlayCommand = async (
@@ -10,6 +11,12 @@ export const handlePlayCommand = async (
   multi?: number
 ) => {
   try {
+    // Check for jumble filter
+    if (filterString?.toLowerCase().includes('jumble')) {
+      await handleJumblePlayback(message, searchTerm, filterString.replace(/(jumble|{|})/gi, ''), clipOptions);
+      return;
+    }
+
     // Handle multi parameter for multiple random files
     if (multi && multi > 1) {
       for (let i = 0; i < Math.min(multi, 5); i++) { // Cap at 5 to prevent spam
