@@ -740,7 +740,10 @@ function combineVideoAndAudio(videoPath: string, audioPath: string, outputPath: 
     
     ffmpeg(videoPath)
       .input(audioPath)
-      .outputOptions('-c:v copy')      // Copy video stream without re-encoding
+      .outputOptions('-c:v libx264')   // Always encode to H.264 for Discord compatibility
+      .outputOptions('-preset fast')   // Fast encoding preset
+      .outputOptions('-crf 23')        // Good quality
+      .outputOptions('-pix_fmt yuv420p') // Pixel format for compatibility
       .outputOptions('-c:a aac')       // Use AAC for audio
       .outputOptions('-b:a 192k')      // 192k bitrate for audio
       .outputOptions('-map 0:v:0')     // Take video from first input
@@ -752,7 +755,7 @@ function combineVideoAndAudio(videoPath: string, audioPath: string, outputPath: 
       })
       .on('progress', (progress) => {
         // Log progress to help with debugging
-        if (progress.percent) {
+        if (progress.percent && typeof progress.percent === 'number') {
           console.log(`Processing: ${Math.round(progress.percent)}% done`);
         }
       })
@@ -768,8 +771,9 @@ function combineVideoAndAudio(videoPath: string, audioPath: string, outputPath: 
         ffmpeg(videoPath)
           .input(audioPath)
           .outputOptions('-c:v libx264')   // Re-encode video with h264
-          .outputOptions('-crf 23')        // Reasonable quality
-          .outputOptions('-preset fast')   // Faster encoding
+          .outputOptions('-crf 28')        // Lower quality for compatibility
+          .outputOptions('-preset ultrafast') // Faster encoding
+          .outputOptions('-pix_fmt yuv420p') // Force pixel format
           .outputOptions('-c:a aac')       // AAC audio
           .outputOptions('-strict experimental')
           .outputOptions('-shortest')
