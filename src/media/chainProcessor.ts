@@ -280,7 +280,17 @@ export const processFilterChainRobust = async (
 
     // 3. Final step: Apply Discord limits if needed
     if (enforceDiscordLimit) {
-      const finalOutputFilename = outputFilename;
+      // Ensure correct file extension - videos should be .mp4, audio should be .ogg
+      let finalOutputFilename = outputFilename;
+      const isVideo = await import('./processor').then(p => p.isVideoFile(currentInputPath));
+      
+      if (isVideo && !finalOutputFilename.toLowerCase().endsWith('.mp4')) {
+        // Replace extension with .mp4 for videos
+        finalOutputFilename = finalOutputFilename.replace(/\.[^.]+$/, '.mp4');
+      } else if (!isVideo && !finalOutputFilename.toLowerCase().endsWith('.ogg')) {
+        // Replace extension with .ogg for audio
+        finalOutputFilename = finalOutputFilename.replace(/\.[^.]+$/, '.ogg');
+      }
       
       if (progressCallback) {
         await progressCallback('Optimizing for Discord', 0.9);
@@ -288,6 +298,8 @@ export const processFilterChainRobust = async (
       
       const finalOptions: ProcessOptions = {
         enforceDiscordLimit: true,
+        // Add 30-second duration limit for videos to ensure they embed properly in Discord
+        clip: isVideo ? { duration: '30' } : undefined,
         progressCallback: async (stage, progress) => {
           if (progressCallback) {
             await progressCallback('Finalizing', 0.9 + progress * 0.1);
