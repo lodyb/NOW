@@ -1,4 +1,4 @@
-import { parseFilterString, parseClipOptions, processMedia, ProcessOptions } from './processor';
+import { parseFilterString, parseClipOptions, processMedia, ProcessOptions, getDjFilters } from './processor';
 import path from 'path';
 import fs from 'fs';
 import crypto from 'crypto';
@@ -58,33 +58,31 @@ export const processFilterChainRobust = async (
         return { path: outputPath, appliedFilters, skippedFilters };
       }
     }
-    
-    // Generate random ID for temporary files
-    const randomId = crypto.randomBytes(4).toString('hex');
-    
+
     let currentInputPath = inputPath;
     let isFirstStep = true;
-    
+    const randomId = crypto.randomBytes(4).toString('hex');
+
     // 1. Apply clip options first if provided
-    if (clipOptions && Object.keys(clipOptions).length > 0) {
-      const clipOutputFilename = `clip_${randomId}_${path.basename(inputPath)}`;
-      
-      if (progressCallback) {
-        await progressCallback('Applying clip options', 0);
-      }
-      
+    if (clipOptions && (clipOptions.duration || clipOptions.start)) {
       try {
-        const options: ProcessOptions = {
+        const clipOutputFilename = `clip_${randomId}_${path.basename(inputPath)}`;
+        
+        if (progressCallback) {
+          await progressCallback('Applying clip options', 0.1);
+        }
+        
+        const clipResult = await processMedia(currentInputPath, clipOutputFilename, {
           clip: clipOptions,
           enforceDiscordLimit: false,
           progressCallback: async (stage, progress) => {
             if (progressCallback) {
-              await progressCallback('Clipping media', progress);
+              await progressCallback(stage, 0.1 + progress * 0.2);
             }
           }
-        };
+        });
         
-        currentInputPath = await processMedia(currentInputPath, clipOutputFilename, options);
+        currentInputPath = clipResult;
         isFirstStep = false;
         appliedFilters.push('clip');
       } catch (error) {
@@ -93,67 +91,155 @@ export const processFilterChainRobust = async (
         // Continue without clipping
       }
     }
-    
+
     // 2. Parse the filter string if provided
     if (filterString && filterString !== '{}') {
       const parsedFilters = parseFilterString(filterString);
       
       // Handle stacked filters with robust error handling
       if (parsedFilters.__stacked_filters && parsedFilters.__stacked_filters.length > 0) {
-        const stackedFilters = parsedFilters.__stacked_filters;
-        const totalFilters = stackedFilters.length;
+        let stackedFilters = parsedFilters.__stacked_filters;
         
-        // Check if macroblock is present - if so, try to process all together first
-        const hasMacroblock = stackedFilters.some(f => f.startsWith('macroblock'));
-        
-        if (hasMacroblock) {
-          // Try to process all filters together with macroblock
-          const filterOutputFilename = `filter_combined_${randomId}_${path.basename(currentInputPath)}`;
+        // Check if this is DJ mode and implement retry logic
+        if (stackedFilters.length === 2 && filterString.toLowerCase().includes('dj')) {
+          const maxRetries = 3;
+          let retryCount = 0;
+          let djSuccess = false;
+          const blacklistedFilters: string[] = [];
           
-          if (progressCallback) {
-            await progressCallback(
-              `Applying filters with macroblock: ${stackedFilters.join(', ')}`, 
-              0.3
-            );
-          }
-          
-          const filterOptions: ProcessOptions = {
-            filters: parsedFilters,
-            enforceDiscordLimit: false,
-            progressCallback: async (stage, progress) => {
+          while (!djSuccess && retryCount < maxRetries) {
+            try {
+              if (retryCount > 0) {
+                // Get new DJ filters excluding blacklisted ones
+                stackedFilters = getDjFilters(blacklistedFilters);
+                console.log(`DJ retry attempt ${retryCount}: ${stackedFilters.join(', ')}`);
+              }
+              
+              const filterOutputFilename = `dj_attempt_${retryCount}_${randomId}_${path.basename(currentInputPath)}`;
+              
               if (progressCallback) {
-                await progressCallback('Processing with macroblock', 0.3 + progress * 0.4);
+                await progressCallback(
+                  `Applying DJ filters (attempt ${retryCount + 1}): ${stackedFilters.join(', ')}`, 
+                  0.3
+                );
+              }
+              
+              const filterOptions: ProcessOptions = {
+                filters: { __stacked_filters: stackedFilters },
+                enforceDiscordLimit: false,
+                progressCallback: async (stage, progress) => {
+                  if (progressCallback) {
+                    await progressCallback(`DJ filters: ${stage}`, 0.3 + progress * 0.4);
+                  }
+                }
+              };
+              
+              const processedPath = await processMedia(
+                currentInputPath,
+                filterOutputFilename,
+                filterOptions
+              );
+              
+              // Success! Clean up previous file and continue
+              if (!isFirstStep) {
+                try {
+                  fs.unlinkSync(currentInputPath);
+                } catch (err) {
+                  console.error('Error cleaning up temporary file:', err);
+                }
+              }
+              
+              currentInputPath = processedPath;
+              isFirstStep = false;
+              appliedFilters.push(...stackedFilters);
+              djSuccess = true;
+              console.log(`✅ DJ filters applied successfully: ${stackedFilters.join(', ')}`);
+              
+            } catch (error) {
+              console.error(`❌ DJ attempt ${retryCount + 1} failed:`, error);
+              
+              // Blacklist the failed filters and try again
+              blacklistedFilters.push(...stackedFilters);
+              retryCount++;
+              
+              if (retryCount >= maxRetries) {
+                console.error('All DJ filter attempts failed, skipping DJ mode');
+                skippedFilters.push('dj');
               }
             }
-          };
+          }
+        } else {
+          // Regular stacked filter processing
+          const totalFilters = stackedFilters.length;
           
-          try {
-            const processedPath = await processMedia(
-              currentInputPath,
-              filterOutputFilename,
-              filterOptions
-            );
+          // Check if macroblock is present - if so, try to process all together first
+          const hasMacroblock = stackedFilters.some(f => f.startsWith('macroblock'));
+          
+          if (hasMacroblock) {
+            // Try to process all filters together with macroblock
+            const filterOutputFilename = `filter_combined_${randomId}_${path.basename(currentInputPath)}`;
             
-            // Clean up the previous temporary file
-            if (!isFirstStep) {
-              try {
-                fs.unlinkSync(currentInputPath);
-              } catch (err) {
-                console.error('Error cleaning up temporary file:', err);
-              }
+            if (progressCallback) {
+              await progressCallback(
+                `Applying filters with macroblock: ${stackedFilters.join(', ')}`, 
+                0.3
+              );
             }
             
-            currentInputPath = processedPath;
-            isFirstStep = false;
-            appliedFilters.push(...stackedFilters);
-          } catch (error) {
-            console.error(`Error applying filters with macroblock:`, error);
-            // Fall back to individual filter processing, skipping macroblock
-            skippedFilters.push('macroblock');
+            const filterOptions: ProcessOptions = {
+              filters: parsedFilters,
+              enforceDiscordLimit: false,
+              progressCallback: async (stage, progress) => {
+                if (progressCallback) {
+                  await progressCallback('Processing with macroblock', 0.3 + progress * 0.4);
+                }
+              }
+            };
             
-            const nonMacroblockFilters = stackedFilters.filter(f => !f.startsWith('macroblock'));
+            try {
+              const processedPath = await processMedia(
+                currentInputPath,
+                filterOutputFilename,
+                filterOptions
+              );
+              
+              // Clean up the previous temporary file
+              if (!isFirstStep) {
+                try {
+                  fs.unlinkSync(currentInputPath);
+                } catch (err) {
+                  console.error('Error cleaning up temporary file:', err);
+                }
+              }
+              
+              currentInputPath = processedPath;
+              isFirstStep = false;
+              appliedFilters.push(...stackedFilters);
+            } catch (error) {
+              console.error(`Error applying filters with macroblock:`, error);
+              
+              // Fall back to individual filter processing, skipping macroblock
+              skippedFilters.push('macroblock');
+              
+              const nonMacroblockFilters = stackedFilters.filter(f => !f.startsWith('macroblock'));
+              const result = await processFiltersIndividually(
+                nonMacroblockFilters,
+                currentInputPath,
+                randomId,
+                isFirstStep,
+                progressCallback,
+                0.3
+              );
+              
+              currentInputPath = result.outputPath;
+              isFirstStep = result.isFirstStep;
+              appliedFilters.push(...result.appliedFilters);
+              skippedFilters.push(...result.skippedFilters);
+            }
+          } else {
+            // Process filters individually
             const result = await processFiltersIndividually(
-              nonMacroblockFilters,
+              stackedFilters,
               currentInputPath,
               randomId,
               isFirstStep,
@@ -166,21 +252,6 @@ export const processFilterChainRobust = async (
             appliedFilters.push(...result.appliedFilters);
             skippedFilters.push(...result.skippedFilters);
           }
-        } else {
-          // Process filters individually
-          const result = await processFiltersIndividually(
-            stackedFilters,
-            currentInputPath,
-            randomId,
-            isFirstStep,
-            progressCallback,
-            0.3
-          );
-          
-          currentInputPath = result.outputPath;
-          isFirstStep = result.isFirstStep;
-          appliedFilters.push(...result.appliedFilters);
-          skippedFilters.push(...result.skippedFilters);
         }
       } else {
         // Process key-value filters individually
@@ -206,7 +277,7 @@ export const processFilterChainRobust = async (
         skippedFilters.push(...result.skippedFilters);
       }
     }
-    
+
     // 3. Final step: Apply Discord limits if needed
     if (enforceDiscordLimit) {
       const finalOutputFilename = outputFilename;

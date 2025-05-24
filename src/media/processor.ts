@@ -2120,11 +2120,12 @@ export const getRandomFilters = (count: number = 1): string[] => {
 
 /**
  * Get one random audio filter and one random video filter for DJ mode
+ * @param blacklistedFilters Array of filter names to avoid (previously failed filters)
  * @returns Array with one audio filter and one video filter
  */
-export const getDjFilters = (): string[] => {
-  const audioFilterNames = Object.keys(audioEffects);
-  const videoFilterNames = Object.keys(videoEffects);
+export const getDjFilters = (blacklistedFilters: string[] = []): string[] => {
+  const audioFilterNames = Object.keys(audioEffects).filter(name => !blacklistedFilters.includes(name));
+  const videoFilterNames = Object.keys(videoEffects).filter(name => !blacklistedFilters.includes(name));
   
   const selectedFilters: string[] = [];
   
