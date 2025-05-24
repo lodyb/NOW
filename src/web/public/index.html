@@ -961,8 +961,22 @@
         // Fetch the currently authenticated user
         const fetchCurrentUser = async () => {
           try {
+            // First, get user from URL params if available
+            const urlParams = new URLSearchParams(window.location.search);
+            const userParam = urlParams.get('user');
+            
+            if (userParam) {
+              // Set up axios defaults to include user in all requests
+              axios.defaults.params = { user: userParam };
+            }
+            
             const response = await axios.get('/api/user');
             currentUser.value = response.data;
+            
+            // Ensure axios defaults are set for all future requests
+            if (!axios.defaults.params?.user) {
+              axios.defaults.params = { user: response.data.id };
+            }
           } catch (error) {
             console.error('Error fetching user:', error);
             // If 401 unauthorized, we're not logged in
