@@ -1441,10 +1441,10 @@ export const audioEffects: Record<string, string> = {
   crystalizer: 'crystalizer=i=5',
 
   // NEW PROCEDURAL/GENERATIVE EFFECTS
-  granular: 'aeval=random(1)*0.3*sin(2*PI*t*random(1)*2000)',
-  glitchstep: 'aeval=if(mod(floor(t*4),2),random(1)*0.5,0)*sin(2*PI*t*440)',
+  granular: 'anoise=c=white:r=0.1,volume=0.3',
+  glitchstep: 'acrusher=bits=6:mode=log:aa=0,atempo=0.8',
   datacorrupt: 'afftfilt=real=\'if(gt(random(0),0.95),0,re)\':imag=\'if(gt(random(0),0.95),0,im)\'',
-  timestretch: 'aeval=sin(2*PI*t*440*(1+0.5*sin(t*0.1)))',
+  timestretch: 'atempo=0.8,areverse,atempo=1.2,areverse',
   
   // NEW SYNTHESIS-STYLE EFFECTS
   vocoder: 'aeval=sin(2*PI*t*440)*((sin(2*PI*t*10)+1)/2)',
