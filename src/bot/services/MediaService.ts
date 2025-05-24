@@ -22,7 +22,10 @@ export class MediaService {
   }
 
   static async findMedia(searchTerm?: string, requireVideo = false, limit = 1): Promise<MediaFile[]> {
-    return searchTerm 
+    // Treat empty strings and undefined as requests for random media
+    const hasValidSearchTerm = searchTerm && searchTerm.trim() !== '';
+    
+    return hasValidSearchTerm 
       ? await findMediaBySearch(searchTerm, requireVideo, limit)
       : await getRandomMedia(limit);
   }
