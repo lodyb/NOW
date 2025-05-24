@@ -3,7 +3,7 @@ import path from 'path';
 import fs from 'fs';
 import { execSync } from 'child_process';
 import { db } from '../database/db';
-import { logFFmpegCommand, logFFmpegError } from '../utils/logger';
+import { logFFmpegCommand, logFFmpegError, logFFmpegProcessingError } from '../utils/logger';
 
 // Define storage paths
 const UPLOADS_DIR = path.join(process.cwd(), 'uploads');
@@ -208,6 +208,16 @@ export const processMedia = async (
         }
       );
     } catch (error: unknown) {
+      // Log the FFmpeg processing error
+      logFFmpegProcessingError({
+        inputPath,
+        outputPath: tempFiltered,
+        stage: "Creating filtered version",
+        filters: options.filters ? JSON.stringify(options.filters) : undefined,
+        clipOptions: options.clip ? JSON.stringify(options.clip) : undefined,
+        error
+      });
+
       // Clean up any temporary files
       if (fs.existsSync(tempFiltered)) {
         try {
@@ -551,6 +561,14 @@ export const encodeMediaWithAttempts = async (
         }
       }
     } catch (error) {
+      // Log the FFmpeg processing error
+      logFFmpegProcessingError({
+        inputPath: inputForEncoding,
+        outputPath: tempOutputPath,
+        stage: `Encoding attempt ${i+1}`,
+        error
+      });
+      
       console.error(`Error in encoding attempt ${i+1}: ${error}`);
     }
   }
@@ -731,6 +749,14 @@ export const encodeMediaWithBitrates = async (
       }
     }
   } catch (error) {
+    // Log the FFmpeg processing error
+    logFFmpegProcessingError({
+      inputPath: inputForEncoding,
+      outputPath: tempOutputPath,
+      stage: "Smart encoding with bitrates",
+      error
+    });
+
     // Clean up any temporary files
     if (fs.existsSync(tempOutputPath)) {
       try {
@@ -977,6 +1003,13 @@ export const parseFilterString = (filterString: string): MediaFilter => {
     // Set stacked filters array with randomly selected filters
     filters.__stacked_filters = getRandomFilters(count);
     console.log(`Selected random filters: ${filters.__stacked_filters.join(', ')}`);
+    return filters;
+  }
+  
+  // Special case: Handle DJ filter (one random audio + one random video filter)
+  if (content.toLowerCase() === 'dj') {
+    filters.__stacked_filters = getDjFilters();
+    console.log(`Selected DJ filters: ${filters.__stacked_filters.join(', ')}`);
     return filters;
   }
   
@@ -2042,7 +2075,7 @@ function applyComplexVideoFilter(
       return true;
 
     case 'audiospectrum':
-      command.complexFilter(['showspectrum=s=1280x720:mode=combined:color=rainbow:scale=log']);
+      command.complexFilter(['showspectrum=s=1280x720:mode=combined:color=rainbow']);
       return true;
 
     case 'audiofreq':
@@ -2076,10 +2109,36 @@ export const getRandomFilters = (count: number = 1): string[] => {
   
   // Select random unique filters
   const selectedFilters = new Set<string>();
+  
   while (selectedFilters.size < count && selectedFilters.size < allFilters.length) {
     const randomIndex = Math.floor(Math.random() * allFilters.length);
     selectedFilters.add(allFilters[randomIndex]);
   }
   
   return Array.from(selectedFilters);
+};
+
+/**
+ * Get one random audio filter and one random video filter for DJ mode
+ * @returns Array with one audio filter and one video filter
+ */
+export const getDjFilters = (): string[] => {
+  const audioFilterNames = Object.keys(audioEffects);
+  const videoFilterNames = Object.keys(videoEffects);
+  
+  const selectedFilters: string[] = [];
+  
+  // Select one random audio filter
+  if (audioFilterNames.length > 0) {
+    const randomAudioIndex = Math.floor(Math.random() * audioFilterNames.length);
+    selectedFilters.push(audioFilterNames[randomAudioIndex]);
+  }
+  
+  // Select one random video filter
+  if (videoFilterNames.length > 0) {
+    const randomVideoIndex = Math.floor(Math.random() * videoFilterNames.length);
+    selectedFilters.push(videoFilterNames[randomVideoIndex]);
+  }
+  
+  return selectedFilters;
 };

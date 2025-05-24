@@ -76,8 +76,7 @@ export const handleUploadCommand = async (message: Message, searchTerm?: string)
       uploadPath,
       null, // normalizedPath will be set after processing
       null, // year
-      { uploader: message.author.username, source: args.url || 'Discord attachment' },
-      message.author.id // Pass uploaderId
+      { uploader: message.author.username, source: args.url || 'Discord attachment' }
     );
 
     await saveMediaAnswers(mediaId, answers);

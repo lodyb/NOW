@@ -12,6 +12,8 @@ uploads/
 normalized/
 thumbnails/
 filterTests/
+processed/
+tests/
 
 # Logs
 logs/

@@ -1,316 +1,174 @@
 import { Message, AttachmentBuilder } from 'discord.js';
-import { findMediaBySearch, getRandomMedia } from '../../database/db';
-import { parseFilterString } from '../../media/processor';
-import { processFilterChain } from '../../media/chainProcessor';
+import { MediaService } from '../services/MediaService';
+import { parseFilterString, parseClipOptions } from '../../media/processor';
+import { processFilterChainRobust } from '../../media/chainProcessor';
+import { StatusService } from '../services/StatusService';
 import { safeReply } from '../utils/helpers';
-import path from 'path';
-import fs from 'fs';
 import crypto from 'crypto';
-import fetch from 'node-fetch';
-import { Stream } from 'stream';
-import { promisify } from 'util';
+import fs from 'fs';
+import path from 'path';
 
-// Directory for temporary downloads
-const TEMP_DIR = path.join(process.cwd(), 'temp');
-const NORMALIZED_DIR = path.join(process.cwd(), 'normalized');
-
-// Ensure temp directory exists
-if (!fs.existsSync(TEMP_DIR)) {
-  fs.mkdirSync(TEMP_DIR, { recursive: true });
+interface MediaCommandOptions {
+  searchTerm?: string;
+  filterString?: string;
+  clipOptions?: { duration?: string; start?: string };
+  fromReply?: boolean;
 }
 
 /**
- * Unified media command handler for both play and remix commands
+ * Get media from database using search term or random selection
  */
-export const processMediaCommand = async (
+async function getMediaFromDatabase(searchTerm?: string): Promise<any> {
+  const results = await MediaService.findMedia(searchTerm, false, 1);
+  return results.length > 0 ? results[0] : null;
+}
+
+/**
+ * Get media from reply or attachments (placeholder - needs implementation)
+ */
+async function getMediaFromReplyOrAttachments(message: Message): Promise<any> {
+  // TODO: Implement getting media from replies/attachments
+  return null;
+}
+
+/**
+ * Handle media playback with robust error handling and ephemeral status updates
+ */
+export async function processMediaCommand(
   message: Message,
-  options: {
-    searchTerm?: string;
-    filterString?: string;
-    clipOptions?: { duration?: string; start?: string };
-    fromReply?: boolean;
-  }
-) => {
+  options: MediaCommandOptions
+): Promise<void> {
+  let statusMessage: Message | null = null;
+  
   try {
     const { searchTerm, filterString, clipOptions, fromReply } = options;
     
-    // Send initial status message
-    const statusMessage = await message.reply(`Processing request... ⏳`);
+    // Send initial ephemeral status message
+    const updateStatus = StatusService.createEphemeralStatusUpdater(message);
+    await updateStatus(`Processing request... ⏳`);
     
     // Get media source based on whether this is a play or remix command
     const mediaSource = fromReply ? 
       await getMediaFromReplyOrAttachments(message) : 
       await getMediaFromDatabase(searchTerm);
-    
+
     if (!mediaSource) {
-      await statusMessage.edit(
+      await updateStatus(
         fromReply ?
           "No media found in this message or the one it replies to. Please include media or reply to a message with media." :
           `No media found ${searchTerm ? `for "${searchTerm}"` : 'in the database'}`
       );
       return;
     }
-    
+
     try {
       let processedPath: string;
       let needsCleanup = false;
-      
+      let appliedFilters: string[] = [];
+      let skippedFilters: string[] = [];
+
       // Skip processing if no filters or clip options are specified and the media is from database
       const hasFilters = !!filterString;
       const hasClipOptions = !!(clipOptions && (clipOptions.duration || clipOptions.start));
-      
+
       if (!hasFilters && !hasClipOptions && !fromReply && !mediaSource.isTemporary) {
         // Just use the existing normalized file directly
         processedPath = mediaSource.filePath;
-        await statusMessage.edit(`Found ${searchTerm ? `"${searchTerm}"` : 'media'}, uploading... 📤`);
+        await updateStatus(`Found ${searchTerm ? `"${searchTerm}"` : 'media'}, uploading... 📤`);
       } else {
         // Prepare filter string for processing
         let parsedFilterString = filterString;
         if (filterString && !filterString.startsWith('{')) {
           parsedFilterString = `{${filterString}}`;
         }
-        
+
         // Update status message based on filter presence
         if (parsedFilterString) {
-          await statusMessage.edit(`Processing media with filters... ⏳`);
+          await updateStatus(`Processing media with filters... ⏳`);
         } else {
-          await statusMessage.edit(`Processing media... ⏳`);
+          await updateStatus(`Processing media... ⏳`);
         }
-        
+
         // Generate random ID for output filename
         const randomId = crypto.randomBytes(4).toString('hex');
         const outputFilename = `processed_${randomId}${path.extname(mediaSource.filePath)}`;
-        
-        // Process the media with filter chain
-        processedPath = await processFilterChain(
+
+        // Process the media with robust filter chain
+        const result = await processFilterChainRobust(
           mediaSource.filePath,
           outputFilename,
           parsedFilterString,
           clipOptions,
           async (stage, progress) => {
             try {
-              await statusMessage.edit(`${stage} (${Math.round(progress * 100)}%)... ⏳`);
+              await updateStatus(`${stage} (${Math.round(progress * 100)}%)... ⏳`);
             } catch (err) {
               console.error('Error updating status message:', err);
             }
           },
           true // Always enforce Discord's file size limits
         );
-        
+
+        processedPath = result.path;
+        appliedFilters = result.appliedFilters;
+        skippedFilters = result.skippedFilters;
         needsCleanup = true;
+
+        // Log filter results
+        if (appliedFilters.length > 0) {
+          console.log(`✅ Applied filters: ${appliedFilters.join(', ')}`);
+        }
+        if (skippedFilters.length > 0) {
+          console.log(`❌ Skipped filters: ${skippedFilters.join(', ')}`);
+        }
       }
-      
+
       // Upload the processed file
-      await statusMessage.edit(`Uploading... 📤`);
+      await updateStatus(`Uploading... 📤`);
       const attachment = new AttachmentBuilder(processedPath);
-      await safeReply(message, { files: [attachment] });
       
-      // Clean up
-      await statusMessage.delete().catch(err => console.error('Failed to delete status message:', err));
-      
+      // Create the final message content
+      let messageContent = '';
+      if (skippedFilters.length > 0) {
+        messageContent = `⚠️ Some filters were skipped due to errors: ${skippedFilters.join(', ')}`;
+      }
+
+      // Send the final result to everyone (not ephemeral)
+      await safeReply(message, { 
+        content: messageContent || undefined,
+        files: [attachment] 
+      });
+
+      // Clean up the ephemeral status message since we're done
+      // (For regular messages, we delete the status; for interactions it's already ephemeral)
+      if (!message.interaction && statusMessage) {
+        await StatusService.deleteStatusMessage(statusMessage);
+      }
+
       // Clean up temporary files
       if (needsCleanup) {
         try {
-          if (fs.existsSync(processedPath)) {
-            fs.unlinkSync(processedPath);
-          }
-        } catch (error) {
-          console.error('Error cleaning up processed file:', error);
+          fs.unlinkSync(processedPath);
+        } catch (err) {
+          console.error('Failed to clean up processed file:', err);
         }
       }
-      
-      // If this was a downloaded file (not from database), clean it up too
-      if (fromReply && mediaSource.isTemporary && fs.existsSync(mediaSource.filePath)) {
+
+      // Clean up temporary media source if needed
+      if (mediaSource.isTemporary) {
         try {
           fs.unlinkSync(mediaSource.filePath);
-        } catch (error) {
-          console.error('Error cleaning up temporary file:', error);
+        } catch (err) {
+          console.error('Failed to clean up temporary media source:', err);
         }
       }
-      
+
     } catch (error) {
       console.error('Error processing media:', error);
-      await statusMessage.edit(`Error processing media: ${(error as Error).message} ❌`);
+      await updateStatus(`❌ Processing failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   } catch (error) {
-    console.error('Error in processMediaCommand:', error);
-    await safeReply(message, `An error occurred: ${(error as Error).message}`);
-  }
-};
-
-/**
- * Get media from the database based on search term
- */
-async function getMediaFromDatabase(searchTerm?: string): Promise<{ filePath: string; isTemporary: false } | null> {
-  let media;
-  
-  if (!searchTerm) {
-    // Get random media when no search term provided
-    const randomResults = await getRandomMedia(1);
-    if (randomResults.length === 0) {
-      return null;
-    }
-    media = randomResults[0];
-  } else {
-    // Search for media by term
-    const results = await findMediaBySearch(searchTerm);
-    
-    if (results.length === 0) {
-      return null;
-    }
-    media = results[0];
-  }
-
-  // Determine the file path by standardizing the normalized path format
-  let filePath;
-  
-  if (media.normalizedPath) {
-    const filename = path.basename(media.normalizedPath);
-    // Ensure normalized path starts with 'norm_'
-    const normalizedFilename = filename.startsWith('norm_') ? filename : `norm_${filename}`;
-    filePath = path.join(NORMALIZED_DIR, normalizedFilename);
-  } else {
-    filePath = media.filePath;
-  }
-  
-  if (!fs.existsSync(filePath)) {
-    console.error(`File not found: ${filePath}`);
-    return null;
-  }
-  
-  return { filePath, isTemporary: false };
-}
-
-/**
- * Get media from message attachments or replied message
- */
-async function getMediaFromReplyOrAttachments(message: Message): Promise<{ filePath: string; isTemporary: boolean } | null> {
-  // Get the message to process
-  let targetMessage = message;
-  
-  // If this is a reply, use the referenced message
-  if (message.reference) {
-    const referencedMessage = await fetchReferencedMessage(message);
-    if (!referencedMessage) {
-      return null;
-    }
-    targetMessage = referencedMessage;
-  }
-  
-  // Find media URL in the message
-  const mediaUrl = await findMediaUrl(targetMessage);
-  
-  if (!mediaUrl) {
-    return null;
-  }
-  
-  // Download the media to a temporary location
-  const downloadedFilePath = await downloadMedia(mediaUrl);
-  
-  if (!downloadedFilePath) {
-    return null;
-  }
-  
-  return { filePath: downloadedFilePath, isTemporary: true };
-}
-
-/**
- * Fetch a message referenced in a reply
- */
-async function fetchReferencedMessage(message: Message): Promise<Message | null> {
-  const reference = message.reference;
-  if (!reference || !reference.messageId) {
-    return null;
-  }
-  
-  try {
-    const channel = message.channel;
-    return await channel.messages.fetch(reference.messageId);
-  } catch (error) {
-    console.error('Error fetching referenced message:', error);
-    return null;
-  }
-}
-
-/**
- * Find a media URL in a message (attachment or embed)
- */
-async function findMediaUrl(message: Message): Promise<string | null> {
-  // Check message attachments first
-  if (message.attachments.size > 0) {
-    const attachment = message.attachments.first();
-    if (attachment) {
-      const url = attachment.url;
-      const contentType = attachment.contentType || '';
-      
-      if (contentType.startsWith('video/') || 
-          contentType.startsWith('audio/') || 
-          contentType.startsWith('image/gif')) {
-        return url;
-      }
-    }
-  }
-  
-  // Check embeds for media links
-  if (message.embeds.length > 0) {
-    for (const embed of message.embeds) {
-      // Check for video in the embed
-      if (embed.video) {
-        return embed.video.url;
-      }
-      
-      // Check for an image in the embed (might be a gif)
-      if (embed.image) {
-        return embed.image.url;
-      }
-    }
-  }
-  
-  // Check message content for media links
-  const urlRegex = /(https?:\/\/[^\s]+\.(mp4|mp3|ogg|wav|webm|gif))/i;
-  const urlMatch = message.content.match(urlRegex);
-  if (urlMatch && urlMatch[0]) {
-    return urlMatch[0];
-  }
-  
-  return null;
-}
-
-/**
- * Download media from a URL to a local file
- */
-async function downloadMedia(url: string): Promise<string | null> {
-  try {
-    const streamPipeline = promisify(Stream.pipeline);
-    const response = await fetch(url);
-    
-    if (!response.ok) {
-      console.error(`Failed to download media: Server returned ${response.status} ${response.statusText}`);
-      return null;
-    }
-    
-    const contentType = response.headers.get('content-type') || '';
-    let fileExtension = '.mp4'; // Default extension
-    
-    // Determine file extension from content type
-    if (contentType.includes('video/mp4')) fileExtension = '.mp4';
-    else if (contentType.includes('video/webm')) fileExtension = '.webm';
-    else if (contentType.includes('audio/mpeg')) fileExtension = '.mp3';
-    else if (contentType.includes('audio/ogg')) fileExtension = '.ogg';
-    else if (contentType.includes('audio/wav')) fileExtension = '.wav';
-    else if (contentType.includes('image/gif')) fileExtension = '.gif';
-    
-    // Create a temporary file
-    const randomId = crypto.randomBytes(8).toString('hex');
-    const filePath = path.join(TEMP_DIR, `download_${randomId}${fileExtension}`);
-    
-    // Stream the response to a file
-    const fileStream = fs.createWriteStream(filePath);
-    await streamPipeline(response.body, fileStream);
-    
-    return filePath;
-  } catch (error) {
-    console.error('Error downloading media:', error);
-    return null;
+    console.error('Error in handleMediaCommand:', error);
+    await safeReply(message, `Error processing command: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
 }

@@ -28,7 +28,6 @@ import { setupAuth, isAuthenticated } from './web/auth';
 import { generateThumbnailsForExistingMedia, scanAndProcessUnprocessedMedia } from './media/processor';
 import fs from 'fs';
 import { logger } from './utils/logger';
-import { handleInfoCommand } from './bot/commands/info';
 
 // Load environment variables, handle both development and production paths
 const envPaths = [
@@ -82,7 +81,7 @@ app.use(session({
 // Initialize Passport and session management
 app.use(passport.initialize());
 app.use(passport.session());
-setupAuth(app);
+setupAuth();
 
 // Auth routes before protected routes
 app.use('/', authRoutes);
@@ -342,11 +341,6 @@ client.on(Events.MessageCreate, async (message) => {
           
         case 'filtertest':
           await handleFilterTestCommand(message, commandArgs.searchTerm ? commandArgs.searchTerm.split(' ') : []);
-          await saveUserLastCommand(message.author.id, message.author.username, message.content);
-          break;
-          
-        case 'info':
-          await handleInfoCommand(message, commandArgs.searchTerm || '');
           await saveUserLastCommand(message.author.id, message.author.username, message.content);
           break;
           

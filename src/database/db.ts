@@ -14,7 +14,6 @@ interface MediaRow {
   isDeleted?: number;
   thumbnails?: string;
   createdAt?: string;
-  uploaderId?: string;
   answers?: string; // This will be the concatenated string from SQL
 }
 
@@ -69,20 +68,9 @@ export const initDatabase = async (): Promise<void> => {
           normalizedPath TEXT,
           year INTEGER,
           metadata JSON,
-          uploaderId TEXT,
           createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
         )
       `);
-      
-      // Add uploaderId column to existing media table if it doesn't exist
-      db.run(`
-        ALTER TABLE media ADD COLUMN uploaderId TEXT
-      `, (err) => {
-        // Ignore error if column already exists
-        if (err && !err.message.includes('duplicate column name')) {
-          console.error('Error adding uploaderId column:', err);
-        }
-      });
       
       // Create users table if not exists
       db.run(`
@@ -217,7 +205,7 @@ export const findAllMediaPaginated = (
       // Then get the actual data with pagination
       let query = `
         SELECT m.id, m.title, m.filePath, MAX(m.normalizedPath) as normalizedPath, 
-        m.year, m.metadata, m.isDeleted, m.thumbnails, m.createdAt, m.uploaderId,
+        m.year, m.metadata, m.isDeleted, m.thumbnails, m.createdAt,
         GROUP_CONCAT(DISTINCT ma.answer) as answers
         FROM media m
         LEFT JOIN media_answers ma ON ma.mediaId = m.id
@@ -275,10 +263,8 @@ export const findMediaBySearch = (searchTerm: string, requireVideo?: boolean, li
       AND ma.answer = ?
     `;
     
-    // Add video filter if required - check original filePath for video extensions
-    const videoFilter = requireVideo 
-      ? ` AND (m.filePath LIKE '%.mp4' OR m.filePath LIKE '%.avi' OR m.filePath LIKE '%.wmv' OR m.filePath LIKE '%.mkv' OR m.filePath LIKE '%.webm' OR m.filePath LIKE '%.mov')`
-      : '';
+    // Add video filter if required
+    const videoFilter = requireVideo ? ` AND (m.normalizedPath LIKE '%.mp4')` : '';
     const exactQueryWithFilter = exactQuery + videoFilter + ` GROUP BY m.id`;
     
     db.all(exactQueryWithFilter, [trimmedSearch], (err, exactRows: MediaRow[]) => {
@@ -319,9 +305,9 @@ export const findMediaBySearch = (searchTerm: string, requireVideo?: boolean, li
         params.push(param, param);
       }
       
-      // Add video filter if required - check original filePath for video extensions
+      // Add video filter if required
       if (requireVideo) {
-        fuzzyQuery += ` AND (m.filePath LIKE '%.mp4' OR m.filePath LIKE '%.avi' OR m.filePath LIKE '%.wmv' OR m.filePath LIKE '%.mkv' OR m.filePath LIKE '%.webm' OR m.filePath LIKE '%.mov')`;
+        fuzzyQuery += ` AND (m.normalizedPath LIKE '%.mp4')`;
       }
       
       fuzzyQuery += `
@@ -361,9 +347,9 @@ export const getRandomMedia = (limit: number = 1, requireVideo?: boolean): Promi
       WHERE m.isDeleted = 0 OR m.isDeleted IS NULL
     `;
     
-    // Add video filter if required - check original filePath for video extensions
+    // Add video filter if required
     if (requireVideo) {
-      query += ` AND (m.filePath LIKE '%.mp4' OR m.filePath LIKE '%.avi' OR m.filePath LIKE '%.wmv' OR m.filePath LIKE '%.mkv' OR m.filePath LIKE '%.webm' OR m.filePath LIKE '%.mov')`;
+      query += ` AND (m.normalizedPath LIKE '%.mp4')`;
     }
     
     query += `
@@ -394,16 +380,15 @@ export const saveMedia = (
   filePath: string, 
   normalizedPath: string | null = null,
   year: number | null = null,
-  metadata: any = {},
-  uploaderId: string | null = null
+  metadata: any = {}
 ): Promise<number> => {
   return new Promise((resolve, reject) => {
     const query = `
-      INSERT INTO media (title, filePath, normalizedPath, year, metadata, uploaderId)
-      VALUES (?, ?, ?, ?, ?, ?)
+      INSERT INTO media (title, filePath, normalizedPath, year, metadata)
+      VALUES (?, ?, ?, ?, ?)
     `;
     
-    db.run(query, [title, filePath, normalizedPath, year, JSON.stringify(metadata), uploaderId], function(err) {
+    db.run(query, [title, filePath, normalizedPath, year, JSON.stringify(metadata)], function(err) {
       if (err) {
         reject(err);
       } else {
@@ -1037,21 +1022,5 @@ export const getEmoteBinding = (guildId: string, emoteId: string): Promise<Emote
         resolve(row || null);
       }
     });
-  });
-};
-
-export const getUserById = async (userId: string): Promise<{id: string, username: string} | null> => {
-  return new Promise((resolve, reject) => {
-    db.get(
-      `SELECT id, username FROM users WHERE id = ?`,
-      [userId],
-      (err, row: {id: string, username: string} | undefined) => {
-        if (err) {
-          reject(err);
-          return;
-        }
-        resolve(row || null);
-      }
-    );
   });
 };

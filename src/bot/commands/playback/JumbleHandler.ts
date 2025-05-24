@@ -1,6 +1,7 @@
 import { Message, AttachmentBuilder } from 'discord.js';
 import { saveJumbleInfo } from '../../../database/db';
 import { processMedia, isVideoFile, getMediaInfo, ProcessOptions, parseFilterString } from '../../../media/processor';
+import { processFilterChainRobust } from '../../../media/chainProcessor';
 import { safeReply } from '../../utils/helpers';
 import { MediaService, FileService, StatusService } from '../../services';
 import path from 'path';
@@ -15,15 +16,6 @@ import youtubeDl from 'youtube-dl-exec';
 
 // Directory for temporary downloads
 const TEMP_DIR = path.join(process.cwd(), 'temp');
-const UPLOADS_DIR = path.join(process.cwd(), 'uploads');
-
-/**
- * Resolve original file path for jumble operations (uses original files instead of normalized)
- */
-function resolveOriginalMediaPath(media: any): string {
-  // Always use the original file path for jumble operations to get highest quality
-  return path.join(UPLOADS_DIR, path.basename(media.filePath));
-}
 
 export async function handleJumblePlayback(
   message: Message,
@@ -31,7 +23,8 @@ export async function handleJumblePlayback(
   filterString?: string,
   clipOptions?: { duration?: string; start?: string }
 ): Promise<void> {
-  const updateStatus = StatusService.createStatusUpdater(message);
+  const updateStatus = StatusService.createEphemeralStatusUpdater(message);
+  let finalStatusMessage: Message | null = null;
   
   try {
     await updateStatus('Finding video and audio sources for jumble... ⏳');
@@ -83,8 +76,8 @@ export async function handleJumblePlayback(
     
     await updateStatus(`Found "${videoMedia.title}" (video) and "${audioMedia.title}" (audio). Preparing to jumble... ⏳`);
     
-    const videoPath = resolveOriginalMediaPath(videoMedia);
-    const audioPath = resolveOriginalMediaPath(audioMedia);
+    const videoPath = MediaService.resolveMediaPath(videoMedia);
+    const audioPath = MediaService.resolveMediaPath(audioMedia);
     
     if (!MediaService.validateMediaExists(videoPath)) {
       await updateStatus(`Video file "${videoMedia.title}" not found on disk`);
@@ -113,7 +106,7 @@ export async function handleJumblePlayback(
       }
     } catch (error) {
       console.error('Error getting media info:', error);
-      await safeReply(message, `Error analyzing media: ${truncateError(error)}`);
+      await updateStatus(`Error analyzing media: ${truncateError(error)}`);
       return;
     }
     
@@ -176,61 +169,96 @@ export async function handleJumblePlayback(
       await combineVideoAndAudio(videoClipPath, audioClipPath, outputPath);
     } catch (error) {
       console.error('Error processing media clips:', error);
-      await safeReply(message, `Error processing media clips: ${truncateError(error)}`);
+      await updateStatus(`❌ Error processing media clips: ${truncateError(error)}`);
       FileService.cleanupTempFiles([videoClipPath, audioClipPath, outputPath]);
       return;
     }
     
     let finalPath = outputPath;
+    let appliedFilters: string[] = [];
+    let skippedFilters: string[] = [];
+    
     try {
       if (filterString?.trim()) {
         await updateStatus('Applying additional filters... ⏳');
         const finalOutputFilename = `final_jumble_${randomId}.mp4`;
-        const finalOutputPath = path.join(tempDir, finalOutputFilename);
         
-        const options: ProcessOptions = {
-          filters: parseFilterString(filterString.startsWith('{') ? filterString : `{${filterString}}`),
-          enforceDiscordLimit: true
-        };
+        const result = await processFilterChainRobust(
+          outputPath,
+          finalOutputFilename,
+          filterString.startsWith('{') ? filterString : `{${filterString}}`,
+          undefined,
+          async (stage, progress) => {
+            await updateStatus(`${stage} (${Math.round(progress * 100)}%)... ⏳`);
+          },
+          true
+        );
         
-        finalPath = await processMedia(outputPath, finalOutputFilename, options);
+        finalPath = result.path;
+        appliedFilters = result.appliedFilters;
+        skippedFilters = result.skippedFilters;
       } else {
         await updateStatus('Optimizing for Discord... ⏳');
         const finalOutputFilename = `final_jumble_${randomId}.mp4`;
-        const finalOutputPath = path.join(tempDir, finalOutputFilename);
         
-        const options: ProcessOptions = { enforceDiscordLimit: true };
-        finalPath = await processMedia(outputPath, finalOutputFilename, options);
+        const result = await processFilterChainRobust(
+          outputPath,
+          finalOutputFilename,
+          undefined,
+          undefined,
+          async (stage, progress) => {
+            await updateStatus(`${stage} (${Math.round(progress * 100)}%)... ⏳`);
+          },
+          true
+        );
+        
+        finalPath = result.path;
       }
     } catch (error) {
       console.error('Error processing final media:', error);
-      await safeReply(message, `Error optimizing media for Discord: ${truncateError(error)}`);
+      await updateStatus(`❌ Error optimizing media for Discord: ${truncateError(error)}`);
       FileService.cleanupTempFiles([videoClipPath, audioClipPath, outputPath]);
       return;
     }
     
     if (!MediaService.validateMediaExists(finalPath)) {
-      throw new Error('Failed to create final jumble video');
+      await updateStatus('❌ Failed to create final jumble video');
+      FileService.cleanupTempFiles([videoClipPath, audioClipPath, outputPath]);
+      return;
     }
     
     await updateStatus('Jumble complete! Uploading... 📤');
     
     try {
       const attachment = new AttachmentBuilder(finalPath);
+      
+      // Create the final message content
+      let messageContent = `Jumbled video from "${videoMedia.title}" with audio from "${audioMedia.title}" 🎬+🔊`;
+      if (skippedFilters.length > 0) {
+        messageContent += `\n⚠️ Some filters were skipped: ${skippedFilters.join(', ')}`;
+      }
+      
+      // Send the final result to everyone (not ephemeral)
       await safeReply(message, { 
-        content: `Jumbled video from "${videoMedia.title}" with audio from "${audioMedia.title}" 🎬+🔊`,
+        content: messageContent,
         files: [attachment] 
       });
+      
+      // Clean up the ephemeral status message
+      if (!message.interaction && finalStatusMessage) {
+        await StatusService.deleteStatusMessage(finalStatusMessage);
+      }
+      
     } catch (error) {
       console.error('Error sending attachment:', error);
-      await safeReply(message, `Error uploading jumble: ${truncateError(error)}`);
+      await updateStatus(`❌ Error uploading jumble: ${truncateError(error)}`);
     } finally {
       // Cleanup temp files
       FileService.cleanupTempFiles([videoClipPath, audioClipPath, outputPath, finalPath]);
     }
   } catch (error) {
     console.error('Error handling jumble playback:', error);
-    await safeReply(message, `Error creating jumble: ${(error as Error).message}`);
+    await updateStatus(`❌ Error creating jumble: ${(error as Error).message}`);
   }
 }
 
@@ -243,7 +271,7 @@ export async function handleJumbleRemix(
   filterString?: string,
   clipOptions?: { duration?: string; start?: string }
 ): Promise<void> {
-  const updateStatus = StatusService.createStatusUpdater(message);
+  const updateStatus = StatusService.createEphemeralStatusUpdater(message);
   
   try {
     await updateStatus('Processing message media for jumble... ⏳');
@@ -257,12 +285,12 @@ export async function handleJumbleRemix(
       try {
         mediaInfo = await downloadYouTubeVideo(youtubeUrl);
         if (!mediaInfo) {
-          await updateStatus('Failed to download YouTube video. Try a different URL.');
+          await updateStatus('❌ Failed to download YouTube video. Try a different URL.');
           return;
         }
       } catch (error) {
         console.error('YouTube download error:', error);
-        await updateStatus(`Error downloading YouTube video: ${(error as Error).message?.substring(0, 200) || 'Unknown error'}`);
+        await updateStatus(`❌ Error downloading YouTube video: ${(error as Error).message?.substring(0, 200) || 'Unknown error'}`);
         return;
       }
     } else {
@@ -272,14 +300,14 @@ export async function handleJumbleRemix(
         : message;
 
       if (!targetMessage) {
-        await safeReply(message, 'Could not find the message to remix. Make sure you\'re replying to a message with media or provide a YouTube URL.');
+        await updateStatus('❌ Could not find the message to remix. Make sure you\'re replying to a message with media or provide a YouTube URL.');
         return;
       }
       
       // Extract media from the message
       mediaInfo = await extractMediaFromMessage(targetMessage);
       if (!mediaInfo || !mediaInfo.filePath) {
-        await safeReply(message, 'No media found in the message to jumble with. Try replying to a message with media or provide a YouTube URL.');
+        await updateStatus('❌ No media found in the message to jumble with. Try replying to a message with media or provide a YouTube URL.');
         return;
       }
     }
@@ -290,7 +318,7 @@ export async function handleJumbleRemix(
       isMessageVideo = await isVideoFile(mediaInfo.filePath);
     } catch (error) {
       console.error('Error checking if file is video:', error);
-      await safeReply(message, `Error processing media: ${truncateError(error)}`);
+      await updateStatus(`❌ Error processing media: ${truncateError(error)}`);
       return;
     }
     
@@ -299,16 +327,16 @@ export async function handleJumbleRemix(
     // Search for complementary media in the database
     const dbResults = await MediaService.findMedia('', !isMessageVideo, 10); // Find opposite type
     if (dbResults.length === 0) {
-      await updateStatus(`No ${isMessageVideo ? 'audio' : 'video'} sources found in the database to jumble with.`);
+      await updateStatus(`❌ No ${isMessageVideo ? 'audio' : 'video'} sources found in the database to jumble with.`);
       return;
     }
     
     // Select a random media item from the database
     const dbMedia = dbResults[Math.floor(Math.random() * dbResults.length)];
-    const dbMediaPath = resolveOriginalMediaPath(dbMedia); // Use original file instead of normalized
+    const dbMediaPath = MediaService.resolveMediaPath(dbMedia);
     
     if (!MediaService.validateMediaExists(dbMediaPath)) {
-      await updateStatus('The selected media file could not be found on disk.');
+      await updateStatus('❌ The selected media file could not be found on disk.');
       return;
     }
     
@@ -326,12 +354,12 @@ export async function handleJumbleRemix(
       dbMediaDuration = dbMediaInfo.duration || 0;
       
       if (!messageMediaDuration || !dbMediaDuration) {
-        await updateStatus('Could not determine media durations');
+        await updateStatus('❌ Could not determine media durations');
         return;
       }
     } catch (error) {
       console.error('Error getting media info:', error);
-      await safeReply(message, `Error analyzing media: ${truncateError(error)}`);
+      await updateStatus(`❌ Error analyzing media: ${truncateError(error)}`);
       return;
     }
     
@@ -390,41 +418,60 @@ export async function handleJumbleRemix(
       await combineVideoAndAudio(videoClipPath, audioClipPath, outputPath);
     } catch (error) {
       console.error('Error processing media clips:', error);
-      await safeReply(message, `Error processing media clips: ${truncateError(error)}`);
+      await updateStatus(`❌ Error processing media clips: ${truncateError(error)}`);
       FileService.cleanupTempFiles([videoClipPath, audioClipPath, outputPath, messageMediaPath]);
       return;
     }
     
     let finalPath = outputPath;
+    let appliedFilters: string[] = [];
+    let skippedFilters: string[] = [];
+    
     try {
       if (filterString?.trim()) {
         await updateStatus('Applying additional filters... ⏳');
         const finalOutputFilename = `final_jumble_${randomId}.mp4`;
-        const finalOutputPath = path.join(tempDir, finalOutputFilename);
         
-        const options: ProcessOptions = {
-          filters: parseFilterString(filterString.startsWith('{') ? filterString : `{${filterString}}`),
-          enforceDiscordLimit: true
-        };
+        const result = await processFilterChainRobust(
+          outputPath,
+          finalOutputFilename,
+          filterString.startsWith('{') ? filterString : `{${filterString}}`,
+          undefined,
+          async (stage, progress) => {
+            await updateStatus(`${stage} (${Math.round(progress * 100)}%)... ⏳`);
+          },
+          true
+        );
         
-        finalPath = await processMedia(outputPath, finalOutputFilename, options);
+        finalPath = result.path;
+        appliedFilters = result.appliedFilters;
+        skippedFilters = result.skippedFilters;
       } else {
         await updateStatus('Optimizing for Discord... ⏳');
         const finalOutputFilename = `final_jumble_${randomId}.mp4`;
-        const finalOutputPath = path.join(tempDir, finalOutputFilename);
         
-        const options: ProcessOptions = { enforceDiscordLimit: true };
-        finalPath = await processMedia(outputPath, finalOutputFilename, options);
+        const result = await processFilterChainRobust(
+          outputPath,
+          finalOutputFilename,
+          undefined,
+          undefined,
+          async (stage, progress) => {
+            await updateStatus(`${stage} (${Math.round(progress * 100)}%)... ⏳`);
+          },
+          true
+        );
+        
+        finalPath = result.path;
       }
     } catch (error) {
       console.error('Error processing final media:', error);
-      await safeReply(message, `Error optimizing media for Discord: ${truncateError(error)}`);
+      await updateStatus(`❌ Error optimizing media for Discord: ${truncateError(error)}`);
       FileService.cleanupTempFiles([videoClipPath, audioClipPath, outputPath, messageMediaPath]);
       return;
     }
     
     if (!MediaService.validateMediaExists(finalPath)) {
-      await safeReply(message, 'Failed to create final jumble video');
+      await updateStatus('❌ Failed to create final jumble video');
       FileService.cleanupTempFiles([videoClipPath, audioClipPath, outputPath, messageMediaPath]);
       return;
     }
@@ -433,15 +480,24 @@ export async function handleJumbleRemix(
     
     try {
       const attachment = new AttachmentBuilder(finalPath);
+      
+      let messageContent = isMessageVideo 
+        ? `Jumbled video from ${youtubeUrl ? 'YouTube' : 'message'} with audio from "${audioTitle}" 🎬+🔊`
+        : `Jumbled audio from ${youtubeUrl ? 'YouTube' : 'message'} with video from "${videoTitle}" 🔊+🎬`;
+      
+      if (skippedFilters.length > 0) {
+        messageContent += `\n⚠️ Some filters were skipped: ${skippedFilters.join(', ')}`;
+      }
+      
+      // Send the final result to everyone (not ephemeral)
       await safeReply(message, { 
-        content: isMessageVideo 
-          ? `Jumbled video from ${youtubeUrl ? 'YouTube' : 'message'} with audio from "${audioTitle}" 🎬+🔊`
-          : `Jumbled audio from ${youtubeUrl ? 'YouTube' : 'message'} with video from "${videoTitle}" 🔊+🎬`,
+        content: messageContent,
         files: [attachment] 
       });
+      
     } catch (error) {
       console.error('Error sending attachment:', error);
-      await safeReply(message, `Error uploading jumble remix: ${truncateError(error)}`);
+      await updateStatus(`❌ Error uploading jumble remix: ${truncateError(error)}`);
     } finally {
       // Cleanup temp files
       FileService.cleanupTempFiles([videoClipPath, audioClipPath, outputPath, finalPath, messageMediaPath]);
@@ -449,7 +505,7 @@ export async function handleJumbleRemix(
     
   } catch (error) {
     console.error('Error handling jumble remix:', error);
-    await safeReply(message, `Error creating jumble remix: ${truncateError(error)}`);
+    await updateStatus(`❌ Error creating jumble remix: ${truncateError(error)}`);
   }
 }
 

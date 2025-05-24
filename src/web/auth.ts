@@ -2,9 +2,7 @@
 import passport from 'passport';
 import { Strategy as DiscordStrategy, Profile } from 'passport-discord';
 import { Request, Response, NextFunction } from 'express';
-import { getUserById } from '../database/db';
-import express from 'express';
-import session from 'express-session';
+import { db } from '../database/db';
 
 // Define Discord user interface
 interface DiscordUser {
@@ -16,17 +14,7 @@ interface DiscordUser {
 }
 
 // Configure Discord OAuth strategy
-export const setupAuth = (app: express.Application) => {
-  app.use(session({
-    secret: process.env.SESSION_SECRET || 'your-secret-key',
-    resave: false,
-    saveUninitialized: false,
-    cookie: { 
-      secure: false, // Set to true in production with HTTPS
-      maxAge: 24 * 60 * 60 * 1000 // 24 hours
-    }
-  }));
-  
+export const setupAuth = () => {
   // Passport serialization
   passport.serializeUser((user, done) => {
     done(null, user);
@@ -71,8 +59,27 @@ export const setupAuth = (app: express.Application) => {
   }
 };
 
+// Get user from database
+export const getUserById = (id: string): Promise<{ id: string, username: string } | null> => {
+  return new Promise((resolve, reject) => {
+    db.get('SELECT id, username FROM users WHERE id = ?', [id], (err, row) => {
+      if (err) {
+        reject(err);
+        return;
+      }
+      
+      if (!row) {
+        resolve(null);
+        return;
+      }
+      
+      resolve(row as { id: string, username: string });
+    });
+  });
+};
+
 // Auth middleware for protecting routes
-export const isAuthenticated = async (req: express.Request, res: express.Response, next: express.NextFunction) => {
+export const isAuthenticated = (req: Request, res: Response, next: NextFunction) => {
   // Skip auth check if Discord credentials aren't configured
   if (!process.env.DISCORD_CLIENT_ID || !process.env.DISCORD_CLIENT_SECRET) {
     return next();

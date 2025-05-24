@@ -361,6 +361,10 @@ const sendSpecialModesHelp = async (message: Message) => {
 • \`NOW play [search] {jumble}\` - Mix video from one source with audio from another
   Creates unpredictable combinations, often with funny results
 
+**DJ Mode:**
+• \`NOW play [search] {dj}\` - Apply one random audio filter and one random video filter
+  Automatically selects and combines random effects for unique results
+
 You can add other filters to these special modes too!
 \`NOW play [search] multi=4 {vhs,msync}\` - Create a synced VHS-style grid
 `;
