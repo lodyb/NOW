@@ -19,6 +19,7 @@ import { handleWhatWasThatCommand } from './bot/commands/whatWasThat';
 import { handleEffectsCommand } from './bot/commands';
 import { handleRemixCommand } from './bot/commands/remix';
 import { handleFilterTestCommand } from './bot/commands/filtertest';
+import { handlePxCommand, handlePxGuess } from './bot/commands/px';
 import { handleMention } from './llm/mentionHandler';
 import { handleGalleryCommand, handleGalleryReaction, handleGalleryReactionRemove } from './bot/commands/gallery';
 import { handleBindCommand, handleEmotePlayback } from './bot/commands/bind';
@@ -344,6 +345,11 @@ client.on(Events.MessageCreate, async (message) => {
           await saveUserLastCommand(message.author.id, message.author.username, message.content);
           break;
           
+        case 'px':
+          await handlePxCommand(message);
+          await saveUserLastCommand(message.author.id, message.author.username, message.content);
+          break;
+          
         case 'repeat':
           // Handle the repeat command
           try {
@@ -405,6 +411,9 @@ client.on(Events.MessageCreate, async (message) => {
                   case 'filters':
                     await handleEffectsCommand(message);
                     break;
+                  case 'px':
+                    await handlePxCommand(message);
+                    break;
                   default:
                     await safeReply(message, `Cannot repeat command: ${args.command}`);
                 }
@@ -442,9 +451,14 @@ client.on(Events.MessageCreate, async (message) => {
     try {
       const quizAnswerHandled = await handleQuizAnswer(message);
       
-      // If not a quiz answer, check for emotes to trigger audio playback
+      // If not a quiz answer, check for px game guesses
       if (!quizAnswerHandled) {
-        await handleEmotePlayback(message);
+        const pxGuessHandled = await handlePxGuess(message);
+        
+        // If not a px guess, check for emotes to trigger audio playback
+        if (!pxGuessHandled) {
+          await handleEmotePlayback(message);
+        }
       }
     } catch (error) {
       logger.error('Error handling non-command message', error);

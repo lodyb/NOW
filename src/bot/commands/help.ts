@@ -32,6 +32,7 @@ const helpContent: HelpContent = {
       { name: 'NOW upload', description: 'Get a link to upload new media via web interface' },
       { name: 'NOW upload <url> "answer1" "answer2"', description: 'Upload media directly from YouTube or URL' },
       { name: 'NOW upload "answer text"', description: 'Upload media from a replied message' },
+      { name: 'NOW px', description: 'Start a pixel guessing game from random video frames' },
       { name: 'NOW image [search]', description: 'Show a thumbnail from a video' },
       { name: 'NOW waveform [search]', description: 'Show audio waveform visualization' },
       { name: 'NOW spectrogram [search]', description: 'Show audio spectrogram visualization' },
