@@ -263,8 +263,8 @@ export const findMediaBySearch = (searchTerm: string, requireVideo?: boolean, li
       AND ma.answer = ?
     `;
     
-    // Add video filter if required
-    const videoFilter = requireVideo ? ` AND (m.normalizedPath LIKE '%.mp4')` : '';
+    // Add video filter if required - check original filePath for video extensions
+    const videoFilter = requireVideo ? ` AND (m.filePath LIKE '%.mp4' OR m.filePath LIKE '%.webm' OR m.filePath LIKE '%.avi' OR m.filePath LIKE '%.mov' OR m.filePath LIKE '%.mkv' OR m.filePath LIKE '%.wmv')` : '';
     const exactQueryWithFilter = exactQuery + videoFilter + ` GROUP BY m.id`;
     
     db.all(exactQueryWithFilter, [trimmedSearch], (err, exactRows: MediaRow[]) => {
@@ -305,9 +305,9 @@ export const findMediaBySearch = (searchTerm: string, requireVideo?: boolean, li
         params.push(param, param);
       }
       
-      // Add video filter if required
+      // Add video filter if required - check original filePath for video extensions
       if (requireVideo) {
-        fuzzyQuery += ` AND (m.normalizedPath LIKE '%.mp4')`;
+        fuzzyQuery += ` AND (m.filePath LIKE '%.mp4' OR m.filePath LIKE '%.webm' OR m.filePath LIKE '%.avi' OR m.filePath LIKE '%.mov' OR m.filePath LIKE '%.mkv' OR m.filePath LIKE '%.wmv')`;
       }
       
       fuzzyQuery += `
@@ -347,9 +347,9 @@ export const getRandomMedia = (limit: number = 1, requireVideo?: boolean): Promi
       WHERE m.isDeleted = 0 OR m.isDeleted IS NULL
     `;
     
-    // Add video filter if required
+    // Add video filter if required - check original filePath for video extensions
     if (requireVideo) {
-      query += ` AND (m.normalizedPath LIKE '%.mp4')`;
+      query += ` AND (m.filePath LIKE '%.mp4' OR m.filePath LIKE '%.webm' OR m.filePath LIKE '%.avi' OR m.filePath LIKE '%.mov' OR m.filePath LIKE '%.mkv' OR m.filePath LIKE '%.wmv')`;
     }
     
     query += `
