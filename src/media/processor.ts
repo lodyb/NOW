@@ -2100,9 +2100,26 @@ export const getRandomFilters = (count: number = 1): string[] => {
   // Limit count to reasonable range
   count = Math.min(5, Math.max(1, count));
   
-  // Collect all available filter names
-  const audioFilterNames = Object.keys(audioEffects);
-  const videoFilterNames = Object.keys(videoEffects);
+  // Try to use whitelisted filters first
+  let audioFilterNames: string[];
+  let videoFilterNames: string[];
+  
+  try {
+    const { getWhitelistedFilters } = require('./comprehensiveFilterTester');
+    const { audioEffects: whitelistedAudio, videoEffects: whitelistedVideo } = getWhitelistedFilters();
+    
+    if (Object.keys(whitelistedAudio).length > 0 || Object.keys(whitelistedVideo).length > 0) {
+      console.log('Using whitelisted filters for random selection');
+      audioFilterNames = Object.keys(whitelistedAudio);
+      videoFilterNames = Object.keys(whitelistedVideo);
+    } else {
+      throw new Error('No whitelisted filters available');
+    }
+  } catch (error) {
+    console.log('No whitelist available, using all filters for random selection');
+    audioFilterNames = Object.keys(audioEffects);
+    videoFilterNames = Object.keys(videoEffects);
+  }
   
   // Create combined list of all filters
   const allFilters = [...audioFilterNames, ...videoFilterNames];
@@ -2124,19 +2141,37 @@ export const getRandomFilters = (count: number = 1): string[] => {
  * @returns Array with one audio filter and one video filter
  */
 export const getDjFilters = (blacklistedFilters: string[] = []): string[] => {
-  // Filters that are known to be problematic with arbitrary input media
-  const problematicVideoFilters = [
-    'v360_fisheye', 'v360_cube', 'planet', 'tiny_planet', // v360 filters require 360° input
-    'zoom', // zoompan has strict requirements
-    'oscilloscope', // requires specific input
-    'audiowave', 'audiospectrum', 'audiofreq', 'audiovector', // audio visualization filters
-    'haah', 'waaw', 'kaleidoscope' // complex filters that often fail
-  ];
+  // Try to use whitelisted filters first
+  let audioFilterNames: string[];
+  let videoFilterNames: string[];
   
-  const audioFilterNames = Object.keys(audioEffects).filter(name => !blacklistedFilters.includes(name));
-  const videoFilterNames = Object.keys(videoEffects)
-    .filter(name => !blacklistedFilters.includes(name))
-    .filter(name => !problematicVideoFilters.includes(name)); // Exclude problematic filters
+  try {
+    const { getWhitelistedFilters } = require('./comprehensiveFilterTester');
+    const { audioEffects: whitelistedAudio, videoEffects: whitelistedVideo } = getWhitelistedFilters();
+    
+    if (Object.keys(whitelistedAudio).length > 0 || Object.keys(whitelistedVideo).length > 0) {
+      console.log('Using whitelisted filters for DJ selection');
+      audioFilterNames = Object.keys(whitelistedAudio).filter(name => !blacklistedFilters.includes(name));
+      videoFilterNames = Object.keys(whitelistedVideo).filter(name => !blacklistedFilters.includes(name));
+    } else {
+      throw new Error('No whitelisted filters available');
+    }
+  } catch (error) {
+    console.log('No whitelist available, using filtered set for DJ selection');
+    // Filters that are known to be problematic with arbitrary input media
+    const problematicVideoFilters = [
+      'v360_fisheye', 'v360_cube', 'planet', 'tiny_planet', // v360 filters require 360° input
+      'zoom', // zoompan has strict requirements
+      'oscilloscope', // requires specific input
+      'audiowave', 'audiospectrum', 'audiofreq', 'audiovector', // audio visualization filters
+      'haah', 'waaw', 'kaleidoscope' // complex filters that often fail
+    ];
+    
+    audioFilterNames = Object.keys(audioEffects).filter(name => !blacklistedFilters.includes(name));
+    videoFilterNames = Object.keys(videoEffects)
+      .filter(name => !blacklistedFilters.includes(name))
+      .filter(name => !problematicVideoFilters.includes(name)); // Exclude problematic filters
+  }
   
   const selectedFilters: string[] = [];
   
