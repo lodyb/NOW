@@ -64,12 +64,20 @@ export const handlePxCommand = async (message: Message): Promise<void> => {
       // Store the session
       activeSessions.set(channelId, session);
 
-      // Set up automatic cleanup after 5 minutes
-      setTimeout(() => {
+      // Set up automatic timeout after 1 minute
+      setTimeout(async () => {
         if (activeSessions.has(channelId)) {
+          const timeoutSession = activeSessions.get(channelId);
+          if (timeoutSession?.isActive) {
+            try {
+              await safeReply(message, `⏰ **Time's up!** The answer was: **${timeoutSession.currentMedia.title}**`);
+            } catch (error) {
+              console.error('Error sending timeout message:', error);
+            }
+          }
           activeSessions.delete(channelId);
         }
-      }, 5 * 60 * 1000);
+      }, 60 * 1000); // 1 minute timeout
     }
 
   } catch (error) {
