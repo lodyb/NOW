@@ -195,7 +195,7 @@ export async function handleJumblePlayback(
           async (stage, progress) => {
             await updateStatus(`${stage} (${Math.round(progress * 100)}%)... ⏳`);
           },
-          true
+          false // Don't enforce Discord limits for jumble playback
         );
         
         finalPath = result.path;
@@ -213,7 +213,7 @@ export async function handleJumblePlayback(
           async (stage, progress) => {
             await updateStatus(`${stage} (${Math.round(progress * 100)}%)... ⏳`);
           },
-          true
+          false // Don't enforce Discord limits for jumble without filters
         );
         
         finalPath = result.path;
@@ -444,7 +444,7 @@ export async function handleJumbleRemix(
           async (stage, progress) => {
             await updateStatus(`${stage} (${Math.round(progress * 100)}%)... ⏳`);
           },
-          true
+          false // Don't enforce Discord limits for jumble remix
         );
         
         finalPath = result.path;
@@ -462,7 +462,7 @@ export async function handleJumbleRemix(
           async (stage, progress) => {
             await updateStatus(`${stage} (${Math.round(progress * 100)}%)... ⏳`);
           },
-          true
+          false // Don't enforce Discord limits for jumble without filters
         );
         
         finalPath = result.path;

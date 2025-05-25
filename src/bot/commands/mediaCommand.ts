@@ -38,13 +38,11 @@ export async function processMediaCommand(
   message: Message,
   options: MediaCommandOptions
 ): Promise<void> {
-  let statusMessage: Message | null = null;
-  
   try {
     const { searchTerm, filterString, clipOptions, fromReply } = options;
     
-    // Send initial ephemeral status message
-    const updateStatus = StatusService.createEphemeralStatusUpdater(message);
+    // Create deletable status updater
+    const { updateStatus, deleteStatus } = StatusService.createDeletableStatusUpdater(message);
     await updateStatus(`Processing request... ⏳`);
     
     // Get media source based on whether this is a play or remix command
@@ -72,8 +70,15 @@ export async function processMediaCommand(
       const hasClipOptions = !!(clipOptions && (clipOptions.duration || clipOptions.start));
 
       if (!hasFilters && !hasClipOptions && !fromReply && !mediaSource.isTemporary) {
-        // Just use the existing normalized file directly
-        processedPath = mediaSource.filePath;
+        // Use the normalized file for database media when no processing is needed
+        processedPath = MediaService.resolveMediaPath(mediaSource);
+        
+        // Verify the normalized file exists
+        if (!MediaService.validateMediaExists(processedPath)) {
+          // Fall back to original file if normalized doesn't exist
+          processedPath = mediaSource.filePath;
+        }
+        
         await updateStatus(`Found ${searchTerm ? `"${searchTerm}"` : 'media'}, uploading... 📤`);
       } else {
         // Prepare filter string for processing
@@ -106,7 +111,7 @@ export async function processMediaCommand(
               console.error('Error updating status message:', err);
             }
           },
-          true // Always enforce Discord's file size limits
+          false // Don't enforce Discord limits for regular playback commands
         );
 
         processedPath = result.path;
@@ -133,17 +138,14 @@ export async function processMediaCommand(
         messageContent = `⚠️ Some filters were skipped due to errors: ${skippedFilters.join(', ')}`;
       }
 
-      // Send the final result to everyone (not ephemeral)
+      // Send the final result
       await safeReply(message, { 
         content: messageContent || undefined,
         files: [attachment] 
       });
 
-      // Clean up the ephemeral status message since we're done
-      // (For regular messages, we delete the status; for interactions it's already ephemeral)
-      if (!message.interaction && statusMessage) {
-        await StatusService.deleteStatusMessage(statusMessage);
-      }
+      // Delete the status message now that we've posted the final result
+      await deleteStatus();
 
       // Clean up temporary files
       if (needsCleanup) {

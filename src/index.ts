@@ -6,7 +6,7 @@ import dotenv from 'dotenv';
 import session from 'express-session';
 import passport from 'passport';
 import cookieParser from 'cookie-parser';
-import { initDatabase, saveUserLastCommand, getUserLastCommand } from './database/db';
+import { initDatabase, saveUserLastCommand, getUserLastCommand, initializeJumbleTable, initializeDjTable } from './database/db';
 import { parseCommand, safeReply } from './bot/utils/helpers';
 import { handlePlayCommand } from './bot/commands/play';
 import { handleQuizCommand, handleStopCommand, handleQuizAnswer } from './bot/commands/quiz';
@@ -465,6 +465,13 @@ async function init() {
     // Initialize database
     await initDatabase();
     logger.info('Database initialized');
+    
+    // Initialize additional tables
+    await initializeJumbleTable();
+    logger.info('Jumble table initialized');
+    
+    await initializeDjTable();
+    logger.info('DJ table initialized');
     
     // Start the web server
     app.listen(PORT, () => {

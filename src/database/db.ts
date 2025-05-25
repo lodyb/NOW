@@ -686,6 +686,22 @@ export interface JumbleInfo {
   timestamp: number;
 }
 
+// Functions to track and retrieve DJ source information
+export interface DjInfo {
+  userId: string;
+  guildId: string;
+  videoId: number;
+  videoTitle: string;
+  videoStart: number;
+  videoDuration: number;
+  audioId: number;
+  audioTitle: string;
+  audioStart: number;
+  audioDuration: number;
+  timestamp: number;
+  appliedFilters: string[];
+}
+
 export const saveJumbleInfo = (jumbleInfo: JumbleInfo): Promise<void> => {
   return new Promise((resolve, reject) => {
     db.run(
@@ -717,6 +733,38 @@ export const saveJumbleInfo = (jumbleInfo: JumbleInfo): Promise<void> => {
   });
 };
 
+export const saveDjInfo = (djInfo: DjInfo): Promise<void> => {
+  return new Promise((resolve, reject) => {
+    db.run(
+      `INSERT OR REPLACE INTO dj_history 
+      (userId, guildId, videoId, videoTitle, videoStart, videoDuration, audioId, audioTitle, audioStart, audioDuration, timestamp, appliedFilters) 
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        djInfo.userId,
+        djInfo.guildId,
+        djInfo.videoId,
+        djInfo.videoTitle,
+        djInfo.videoStart,
+        djInfo.videoDuration,
+        djInfo.audioId,
+        djInfo.audioTitle,
+        djInfo.audioStart,
+        djInfo.audioDuration,
+        djInfo.timestamp,
+        JSON.stringify(djInfo.appliedFilters)
+      ],
+      function(err) {
+        if (err) {
+          console.error('Error saving DJ info:', err);
+          reject(err);
+        } else {
+          resolve();
+        }
+      }
+    );
+  });
+};
+
 export const getLatestJumbleInfo = (userId: string, guildId: string): Promise<JumbleInfo | null> => {
   return new Promise((resolve, reject) => {
     db.get(
@@ -731,6 +779,35 @@ export const getLatestJumbleInfo = (userId: string, guildId: string): Promise<Ju
           reject(err);
         } else {
           resolve(row ? row as JumbleInfo : null);
+        }
+      }
+    );
+  });
+};
+
+export const getLatestDjInfo = (userId: string, guildId: string): Promise<DjInfo | null> => {
+  return new Promise((resolve, reject) => {
+    db.get(
+      `SELECT * FROM dj_history
+       WHERE userId = ? AND guildId = ?
+       ORDER BY timestamp DESC
+       LIMIT 1`,
+      [userId, guildId],
+      (err, row: any) => {
+        if (err) {
+          console.error('Error retrieving DJ info:', err);
+          reject(err);
+        } else {
+          if (row) {
+            // Parse the appliedFilters JSON
+            const djInfo: DjInfo = {
+              ...row,
+              appliedFilters: row.appliedFilters ? JSON.parse(row.appliedFilters) : []
+            };
+            resolve(djInfo);
+          } else {
+            resolve(null);
+          }
         }
       }
     );
@@ -759,6 +836,35 @@ export const initializeJumbleTable = (): Promise<void> => {
         reject(err);
       } else {
         console.log('jumble_history table initialized');
+        resolve();
+      }
+    });
+  });
+};
+
+// Initialize DJ history table
+export const initializeDjTable = (): Promise<void> => {
+  return new Promise((resolve, reject) => {
+    db.run(`CREATE TABLE IF NOT EXISTS dj_history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+      userId VARCHAR NOT NULL,
+      guildId VARCHAR NOT NULL,
+      videoId INTEGER NOT NULL,
+      videoTitle VARCHAR NOT NULL,
+      videoStart FLOAT NOT NULL,
+      videoDuration FLOAT NOT NULL,
+      audioId INTEGER NOT NULL,
+      audioTitle VARCHAR NOT NULL,
+      audioStart FLOAT NOT NULL,
+      audioDuration FLOAT NOT NULL,
+      timestamp INTEGER NOT NULL,
+      appliedFilters TEXT NOT NULL DEFAULT '[]'
+    )`, (err) => {
+      if (err) {
+        console.error('Error creating dj_history table:', err);
+        reject(err);
+      } else {
+        console.log('dj_history table initialized');
         resolve();
       }
     });

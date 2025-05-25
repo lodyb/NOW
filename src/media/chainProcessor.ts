@@ -298,8 +298,7 @@ export const processFilterChainRobust = async (
       
       const finalOptions: ProcessOptions = {
         enforceDiscordLimit: true,
-        // Add 30-second duration limit for videos to ensure they embed properly in Discord
-        clip: isVideo ? { duration: '30' } : undefined,
+        // Only add 30-second clip for DJ and jumble modes, not regular play commands
         progressCallback: async (stage, progress) => {
           if (progressCallback) {
             await progressCallback('Finalizing', 0.9 + progress * 0.1);

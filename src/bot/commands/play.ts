@@ -1,6 +1,7 @@
 import { Message } from 'discord.js';
 import { processMediaCommand } from './mediaCommand';
 import { handleJumblePlayback } from './playback/JumbleHandler';
+import { handleDjPlayback } from './playback/DjHandler';
 import { safeReply } from '../utils/helpers';
 
 export const handlePlayCommand = async (
@@ -14,6 +15,12 @@ export const handlePlayCommand = async (
     // Check for jumble filter
     if (filterString?.toLowerCase().includes('jumble')) {
       await handleJumblePlayback(message, searchTerm, filterString.replace(/(jumble|{|})/gi, ''), clipOptions);
+      return;
+    }
+
+    // Check for DJ filter
+    if (filterString?.toLowerCase().includes('dj')) {
+      await handleDjPlayback(message, clipOptions);
       return;
     }
 

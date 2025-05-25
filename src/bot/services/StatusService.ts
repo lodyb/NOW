@@ -64,4 +64,43 @@ export class StatusService {
       }
     };
   }
+
+  /**
+   * Create a status updater that returns both the updater function and message reference
+   * This allows the caller to delete the status message when done
+   */
+  static createDeletableStatusUpdater(message: Message): { 
+    updateStatus: StatusCallback; 
+    getStatusMessage: () => Message | null;
+    deleteStatus: () => Promise<void>;
+  } {
+    let statusMessage: Message | null = null;
+    
+    const updateStatus = async (status: string) => {
+      try {
+        if (!statusMessage) {
+          statusMessage = await message.reply(status);
+        } else {
+          await statusMessage.edit(status);
+        }
+      } catch (err) {
+        console.error('Error updating status message:', err);
+      }
+    };
+
+    const getStatusMessage = () => statusMessage;
+    
+    const deleteStatus = async () => {
+      if (statusMessage) {
+        try {
+          await statusMessage.delete();
+          statusMessage = null;
+        } catch (err) {
+          console.error('Error deleting status message:', err);
+        }
+      }
+    };
+
+    return { updateStatus, getStatusMessage, deleteStatus };
+  }
 }
