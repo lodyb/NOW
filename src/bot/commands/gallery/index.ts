@@ -1,6 +1,7 @@
 import { Message, User, AttachmentBuilder, MessageReaction, PartialMessageReaction, PartialUser } from 'discord.js';
 import { safeReply } from '../../utils/helpers';
 import { getUserGalleryItems, saveGalleryItem, checkGalleryItem, removeGalleryItem } from '../../../database/db';
+import { getBaseUrl } from '../../../utils/network';
 import fs from 'fs';
 import path from 'path';
 import fetch from 'node-fetch';
@@ -22,7 +23,7 @@ export const handleGalleryCommand = async (message: Message, targetUser?: User) 
   try {
     // Default to the author if no user is specified
     const user = targetUser || message.author;
-    const baseUrl = process.env.BASE_URL || 'http://localhost:3000';
+    const baseUrl = await getBaseUrl();
     const galleryUrl = `${baseUrl}/gallery/${user.id}`;
     
     await safeReply(message, `🖼️ ${user.id === message.author.id ? 'Your' : `${user.username}'s`} gallery is available at ${galleryUrl}`);

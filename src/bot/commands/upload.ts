@@ -10,6 +10,7 @@ import { Stream } from 'stream';
 import { promisify } from 'util';
 // @ts-ignore
 import youtubeDl from 'youtube-dl-exec';
+import { getBaseUrl } from '../../utils/network';
 
 const TEMP_DIR = path.join(process.cwd(), 'temp');
 const UPLOADS_DIR = path.join(process.cwd(), 'uploads');
@@ -28,11 +29,10 @@ export const handleUploadCommand = async (message: Message, searchTerm?: string)
     
     if (!args.url && !message.reference) {
       // No URL and not a reply - show web upload link
-      const uploadUrl = `http://localhost:3000/?user=${message.author.id}`;
-      await safeReply(message,
-        `You can upload and manage media files here: ${uploadUrl}\n` +
-        `Or use: \`NOW upload <url> "answer1" "answer2"\` to upload directly from Discord.`
-      );
+      const baseUrl = await getBaseUrl();
+      const uploadUrl = `${baseUrl}/?user=${message.author.id}`;
+      
+      await safeReply(message, `📤 **Upload Media**\n\nUse this link to upload your media files:\n${uploadUrl}\n\n*The link includes your user ID for automatic attribution.*`);
       return;
     }
 
