@@ -1,4 +1,4 @@
-import { Message, VoiceBasedChannel } from 'discord.js';
+import { Message, VoiceBasedChannel, TextBasedChannel } from 'discord.js';
 import { 
   joinVoiceChannel, 
   createAudioPlayer, 
@@ -17,6 +17,7 @@ import fs from 'fs';
 import crypto from 'crypto';
 import { generateProgressiveHint, generateRandomUnicodeMask } from '../utils/helpers';
 import { logger } from '../../utils/logger';
+import { EmbedBuilder } from 'discord.js';
 
 // Define storage paths
 const NORMALIZED_DIR = path.join(process.cwd(), 'normalized');
@@ -92,8 +93,8 @@ export const handleStopCommand = async (message: Message) => {
     return;
   }
   
-  endQuizSession(session);
-  await message.reply('Quiz stopped. Final scores:' + formatScores(session));
+  await message.reply('Quiz stopped.');
+  endQuizSession(session, message.channel);
 };
 
 export const handleQuizAnswer = async (message: Message): Promise<boolean> => {
@@ -218,6 +219,17 @@ const startQuizSession = async (
     adapterCreator: voiceChannel.guild.voiceAdapterCreator as unknown as DiscordGatewayAdapterCreator,
   });
   
+  // Monitor voice connection state
+  connection.on('stateChange', (oldState, newState) => {
+    if (newState.status === 'disconnected') {
+      const session = activeSessions.get(voiceChannel.guild.id);
+      if (session && message.channel.isSendable()) {
+        message.channel.send('🔌 Bot disconnected from voice chat. Quiz ended.');
+        endQuizSession(session, message.channel);
+      }
+    }
+  });
+  
   // Create new session
   const session: QuizSession = {
     guildId: voiceChannel.guild.id,
@@ -233,12 +245,28 @@ const startQuizSession = async (
     isActive: true,
     filterString, 
     clipOptions,
-    roundLocked: false // Initialize roundLocked to false
+    roundLocked: false
   };
   
   activeSessions.set(voiceChannel.guild.id, session);
   
   await message.reply(`Starting quiz in ${voiceChannel.name}! Get ready...`);
+  
+  // Monitor voice channel for empty state
+  const checkVoiceMembers = setInterval(() => {
+    const currentSession = activeSessions.get(voiceChannel.guild.id);
+    if (!currentSession || !currentSession.isActive) {
+      clearInterval(checkVoiceMembers);
+      return;
+    }
+    
+    const members = voiceChannel.members.filter(member => !member.user.bot);
+    if (members.size === 0 && message.channel.isSendable()) {
+      message.channel.send('📭 Everyone left the voice chat. Quiz ended.');
+      endQuizSession(currentSession, message.channel);
+      clearInterval(checkVoiceMembers);
+    }
+  }, 5000);
   
   // Start first round
   await nextRound(session, message.channel, filterString, clipOptions);
@@ -290,22 +318,19 @@ const nextRound = async (
       session.lastVisualHint = null;
     });
     
-    // Get the correct file path, considering normalized vs original path
+    // Get the correct file path - prefer uploads for better audio quality
     let filePath: string;
-    if (session.mediaItem.normalizedPath) {
-      // normalizedPath is just the filename
+    if (session.mediaItem.filePath && fs.existsSync(session.mediaItem.filePath)) {
+      // Use original upload file for better quality
+      filePath = session.mediaItem.filePath;
+    } else if (session.mediaItem.normalizedPath) {
+      // Fallback to normalized if upload missing
       filePath = path.join(NORMALIZED_DIR, session.mediaItem.normalizedPath);
-      
-      // Fix duplicated paths if they exist
       filePath = getFixedMediaPath(filePath);
       
-      // If file doesn't exist, try to regenerate it
       if (!fs.existsSync(filePath)) {
         filePath = await ensureNormalizedFileExists(session.mediaItem);
       }
-    } else if (session.mediaItem.filePath) {
-      // filePath is already the full path
-      filePath = session.mediaItem.filePath;
     } else {
       throw new Error('Media item has no file path');
     }
@@ -354,7 +379,7 @@ const nextRound = async (
       const hint = generateProgressiveHint(session.mediaItem.title, session.revealPercentage);
       channel.send(`Hint: ${hint}`).catch(logger.error);
       scheduleHint(session, channel);
-    }, 10000); // First progressive hint after 10 seconds
+    }, 20000); // First progressive hint after 20 seconds
     
     // Play the audio
     const audioPlayer = createAudioPlayer();
@@ -395,13 +420,13 @@ const nextRound = async (
           
           // Continue with regular hint scheduling
           scheduleHint(session, channel);
-        }, 10000); // 10 seconds wait after audio ends
+        }, 20000); // 20 seconds wait after audio ends
       }
     });
   } catch (error) {
     logger.error('Error in quiz round', error);
     await channel.send(`An error occurred: ${(error as Error).message}`);
-    endQuizSession(session);
+    endQuizSession(session, channel);
   }
 };
 
@@ -460,8 +485,7 @@ const scheduleHint = (session: QuizSession, channel: any) => {
         if (session.missedRounds >= 2) {
           // End game after 2 consecutive rounds of inactivity
           await channel.send('Game over! No one has responded for 2 rounds in a row.');
-          await channel.send('Final scores:' + formatScores(session));
-          endQuizSession(session);
+          endQuizSession(session, channel);
         } else {
           setTimeout(() => nextRound(session, channel), 3000);
         }
@@ -480,7 +504,34 @@ const scheduleHint = (session: QuizSession, channel: any) => {
               path.basename(session.mediaItem.normalizedPath) : 
               path.basename(session.mediaItem.filePath);
             
-            // ... existing code for visual hints ...
+            // Determine the type of media and available visual hints
+            const isVideo = baseFilename.endsWith('.mp4');
+            const hintOptions = [];
+            
+            if (isVideo) {
+              // Generate and check full paths to thumbnail files
+              const baseNameWithoutExt = baseFilename.replace('.mp4', '');
+              const thumb0Path = path.join(process.cwd(), 'thumbnails', `${baseNameWithoutExt}_thumb0.jpg`);
+              const thumb1Path = path.join(process.cwd(), 'thumbnails', `${baseNameWithoutExt}_thumb1.jpg`);
+              
+              if (fs.existsSync(thumb0Path)) hintOptions.push(thumb0Path);
+              if (fs.existsSync(thumb1Path)) hintOptions.push(thumb1Path);
+            } else {
+              // Audio file - check for waveform/spectrogram
+              const baseNameWithoutExt = baseFilename.replace('.ogg', '');
+              const waveformPath = path.join(process.cwd(), 'thumbnails', `${baseNameWithoutExt}_waveform.png`);
+              const spectrogramPath = path.join(process.cwd(), 'thumbnails', `${baseNameWithoutExt}_spectrogram.png`);
+              
+              if (fs.existsSync(waveformPath)) hintOptions.push(waveformPath);
+              if (fs.existsSync(spectrogramPath)) hintOptions.push(spectrogramPath);
+            }
+            
+            if (hintOptions.length > 0) {
+              // Randomly select one of the available hints
+              const selectedHint = hintOptions[Math.floor(Math.random() * hintOptions.length)];
+              await channel.send({ content: 'Here\'s a visual hint:', files: [selectedHint] });
+              session.lastVisualHint = selectedHint;
+            }
           } catch (error) {
             logger.error('Error providing visual hint', error);
           }
@@ -499,14 +550,20 @@ const scheduleHint = (session: QuizSession, channel: any) => {
         scheduleHint(session, channel);
       }
     }
-  }, 10000); // 10 seconds between hints
+  }, 20000); // 20 seconds between hints
 };
 
-const endQuizSession = (session: QuizSession) => {
+const endQuizSession = async (session: QuizSession, channel?: any) => {
   session.isActive = false;
   
   if (session.timeout) {
     clearTimeout(session.timeout);
+  }
+  
+  // Show final scores if channel is provided
+  if (channel && session.players.size > 0) {
+    const embed = createScoreEmbed(session);
+    await channel.send({ embeds: [embed] });
   }
   
   try {
@@ -518,17 +575,33 @@ const endQuizSession = (session: QuizSession) => {
   activeSessions.delete(session.guildId);
 };
 
-const formatScores = (session: QuizSession): string => {
+const createScoreEmbed = (session: QuizSession): EmbedBuilder => {
+  const embed = new EmbedBuilder()
+    .setTitle('🏆 Quiz Final Scores')
+    .setColor(0x00AE86)
+    .setTimestamp();
+
   if (session.players.size === 0) {
-    return ' No one scored any points.';
+    embed.setDescription('No one scored any points.');
+    return embed;
   }
-  
+
   const sortedPlayers = [...session.players.entries()]
     .sort((a, b) => b[1] - a[1]);
+
+  // Add fields for each player
+  sortedPlayers.forEach(([userId, score], index) => {
+    const position = index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : `${index + 1}.`;
+    embed.addFields({
+      name: `${position} Player`,
+      value: `<@${userId}>\n**${score}** point${score !== 1 ? 's' : ''}`,
+      inline: true
+    });
+  });
+
+  embed.setFooter({ text: `Total rounds: ${session.currentRound}` });
   
-  return '\n' + sortedPlayers
-    .map(([id, score], index) => `${index + 1}. <@${id}>: ${score} point${score !== 1 ? 's' : ''}`)
-    .join('\n');
+  return embed;
 };
 
 // Helper function to show visual hints
