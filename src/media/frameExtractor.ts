@@ -10,6 +10,19 @@ const execAsync = promisify(exec);
  */
 export async function generateRandomFrame(videoPath: string): Promise<Buffer | null> {
   try {
+    // First check if the file has video streams
+    const probeCmd = `ffprobe -v quiet -select_streams v:0 -show_entries stream=codec_type -of csv="p=0" "${videoPath}"`;
+    try {
+      const { stdout: streamOutput } = await execAsync(probeCmd);
+      if (!streamOutput.trim() || streamOutput.trim() !== 'video') {
+        console.log('File has no video stream, skipping frame extraction');
+        return null;
+      }
+    } catch (probeError) {
+      console.log('Could not probe video streams, file likely has no video');
+      return null;
+    }
+
     // Get video duration first
     const durationCmd = `ffprobe -v quiet -show_entries format=duration -of csv="p=0" "${videoPath}"`;
     const { stdout: durationOutput } = await execAsync(durationCmd);

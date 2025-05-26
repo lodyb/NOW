@@ -24,21 +24,28 @@ export const handlePxCommand = async (message: Message): Promise<void> => {
       return;
     }
 
-    // Get a random video from the database
-    const mediaItems = await MediaService.findMedia(undefined, true, 1);
+    // Get a random video from the database (requireVideo = true)
+    const mediaItems = await MediaService.findMedia(undefined, true, 10);
     
     if (!mediaItems || mediaItems.length === 0) {
       await safeReply(message, '❌ No video media found in the database.');
       return;
     }
 
-    const selectedMedia = mediaItems[0];
+    // Try multiple videos until we find one that works
+    let selectedMedia = null;
+    let frameBuffer = null;
     
-    // Generate a random frame from the video
-    const frameBuffer = await generateRandomFrame(MediaService.resolveMediaPath(selectedMedia));
+    for (const media of mediaItems) {
+      frameBuffer = await generateRandomFrame(MediaService.resolveMediaPath(media));
+      if (frameBuffer) {
+        selectedMedia = media;
+        break;
+      }
+    }
     
-    if (!frameBuffer) {
-      await safeReply(message, '❌ Failed to extract frame from video.');
+    if (!selectedMedia || !frameBuffer) {
+      await safeReply(message, '❌ Failed to extract frame from any video.');
       return;
     }
 
