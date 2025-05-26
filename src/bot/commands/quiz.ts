@@ -118,46 +118,21 @@ export const handleQuizAnswer = async (message: Message): Promise<boolean> => {
     return true;
   }
   
-  // Special case handling for number series (like "classics of game 072")
+  // Check if answer is reasonable length (at least 30% of shortest correct answer)
+  const minRequiredLength = Math.min(...session.correctAnswers.map(a => a.length)) * 0.3;
+  if (answer.length < minRequiredLength) {
+    return false; // Answer too short, likely not a real attempt
+  }
+  
+  // Check each correct answer with strict character-level distance
   const correctMatch = session.correctAnswers.find(correctAnswer => {
     const correctLower = correctAnswer.toLowerCase();
     
-    // If the correct answer has numbers at the end
-    const correctBase = correctLower.replace(/\s+\d+$/, '');
-    const answerBase = answer.replace(/\s+\d+$/, '');
+    // Calculate Levenshtein distance
+    const distance = calculateLevenshteinDistance(answer, correctLower);
+    const maxAllowedDistance = Math.min(2, Math.floor(correctLower.length * 0.1)); // Max 2 chars or 10% of length
     
-    // Allow just the base text to match if the correct answer has numbers at the end
-    // This handles cases like "classics of game" matching "classics of game 072"
-    if (correctBase !== correctLower && answerBase === correctBase) {
-      return true;
-    }
-    
-    // Standard word-by-word matching with typo tolerance
-    // Split into words
-    const correctWords = correctLower.split(/\s+/);
-    const answerWords = answer.split(/\s+/);
-    
-    // Must have at least 75% of the words (rounded down)
-    if (answerWords.length < Math.floor(correctWords.length * 0.75)) {
-      return false;
-    }
-    
-    // Check each correct word is present with typo tolerance
-    const fuse = new Fuse(answerWords, {
-      includeScore: true,
-      threshold: 0.3
-    });
-    
-    // Each correct word must have a match in the answer
-    return correctWords.every(correctWord => {
-      // Skip matching numbers at the end if they're in the correct words
-      if (/^\d+$/.test(correctWord) && correctWords.indexOf(correctWord) === correctWords.length - 1) {
-        return true;
-      }
-      
-      const result = fuse.search(correctWord);
-      return result.length > 0 && result[0].score! < 0.4;
-    });
+    return distance <= maxAllowedDistance;
   });
   
   if (correctMatch) {
@@ -166,6 +141,35 @@ export const handleQuizAnswer = async (message: Message): Promise<boolean> => {
   }
   
   return false;
+};
+
+// Helper function to calculate Levenshtein distance (edit distance)
+const calculateLevenshteinDistance = (str1: string, str2: string): number => {
+  const matrix = Array(str2.length + 1).fill(null).map(() => Array(str1.length + 1).fill(null));
+  
+  for (let i = 0; i <= str1.length; i++) {
+    matrix[0][i] = i;
+  }
+  
+  for (let j = 0; j <= str2.length; j++) {
+    matrix[j][0] = j;
+  }
+  
+  for (let j = 1; j <= str2.length; j++) {
+    for (let i = 1; i <= str1.length; i++) {
+      if (str1[i - 1] === str2[j - 1]) {
+        matrix[j][i] = matrix[j - 1][i - 1];
+      } else {
+        matrix[j][i] = Math.min(
+          matrix[j - 1][i] + 1,     // deletion
+          matrix[j][i - 1] + 1,     // insertion
+          matrix[j - 1][i - 1] + 1  // substitution
+        );
+      }
+    }
+  }
+  
+  return matrix[str2.length][str1.length];
 };
 
 const awardPoint = async (message: Message, session: QuizSession) => {

@@ -104,10 +104,27 @@ export const handlePxGuess = async (message: Message): Promise<boolean> => {
     return true;
   }
 
-  // Check against media title and answers
+  // Check against media title and answers with strict matching
   const mediaTitle = session.currentMedia.title.toLowerCase();
   
-  if (guess.includes(mediaTitle) || mediaTitle.includes(guess)) {
+  // First check exact match
+  if (guess === mediaTitle) {
+    await safeReply(message, `🎉 Correct! It was **${session.currentMedia.title}**`);
+    activeSessions.delete(channelId);
+    return true;
+  }
+  
+  // Check if guess is reasonable length (at least 30% of title length)
+  const minRequiredLength = Math.floor(mediaTitle.length * 0.3);
+  if (guess.length < minRequiredLength) {
+    return true; // Consider it a guess attempt but don't award points
+  }
+  
+  // Check with strict character-level distance (same as quiz)
+  const distance = calculateLevenshteinDistance(guess, mediaTitle);
+  const maxAllowedDistance = Math.min(2, Math.floor(mediaTitle.length * 0.1)); // Max 2 chars or 10% of length
+  
+  if (distance <= maxAllowedDistance) {
     await safeReply(message, `🎉 Correct! It was **${session.currentMedia.title}**`);
     activeSessions.delete(channelId);
     return true;
@@ -124,4 +141,33 @@ export const handlePxGuess = async (message: Message): Promise<boolean> => {
   }
 
   return true;
+};
+
+// Helper function to calculate Levenshtein distance (edit distance)
+const calculateLevenshteinDistance = (str1: string, str2: string): number => {
+  const matrix = Array(str2.length + 1).fill(null).map(() => Array(str1.length + 1).fill(null));
+  
+  for (let i = 0; i <= str1.length; i++) {
+    matrix[0][i] = i;
+  }
+  
+  for (let j = 0; j <= str2.length; j++) {
+    matrix[j][0] = j;
+  }
+  
+  for (let j = 1; j <= str2.length; j++) {
+    for (let i = 1; i <= str1.length; i++) {
+      if (str1[i - 1] === str2[j - 1]) {
+        matrix[j][i] = matrix[j - 1][i - 1];
+      } else {
+        matrix[j][i] = Math.min(
+          matrix[j - 1][i] + 1,     // deletion
+          matrix[j][i - 1] + 1,     // insertion
+          matrix[j - 1][i - 1] + 1  // substitution
+        );
+      }
+    }
+  }
+  
+  return matrix[str2.length][str1.length];
 };
