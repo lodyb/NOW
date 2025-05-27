@@ -28,6 +28,8 @@ interface RadioSession {
   nextFilters: string[];
   isProcessingNext: boolean;
   effectQueue: EffectRender[];
+  playbackStartTime: number;
+  currentTrackDuration: number;
 }
 
 interface EffectRender {
@@ -230,7 +232,9 @@ const startRadioSession = async (message: Message, voiceChannel: VoiceBasedChann
     currentFilters: [],
     nextFilters: [],
     isProcessingNext: false,
-    effectQueue: []
+    effectQueue: [],
+    playbackStartTime: 0,
+    currentTrackDuration: 0,
   };
   
   activeSessions.set(voiceChannel.guild.id, session);
@@ -302,6 +306,18 @@ const playNext = async (session: RadioSession, channel: any) => {
       playNext(session, channel);
       return;
     }
+
+    // Get track duration and set playback timing
+    try {
+      const { getMediaInfo } = await import('../../media/processor');
+      const mediaInfo = await getMediaInfo(filePath);
+      session.currentTrackDuration = mediaInfo.duration;
+      session.playbackStartTime = Date.now();
+    } catch (error) {
+      console.error('Error getting media duration:', error);
+      session.currentTrackDuration = 0;
+      session.playbackStartTime = Date.now();
+    }
     
     const resource = createAudioResource(filePath);
     session.audioPlayer.play(resource);
@@ -345,12 +361,18 @@ const prepareNextTrack = async (session: RadioSession) => {
 };
 
 const queueRewindEffect = async (session: RadioSession) => {
-  const rewindPath = await createRewindEffect(session.currentMedia);
+  const rewindPath = await createRewindEffect(session.currentMedia, session);
+  
+  // Calculate effect duration based on current playback position
+  const currentTime = (Date.now() - session.playbackStartTime) / 1000;
+  const rewindDuration = Math.min(currentTime, session.currentTrackDuration, 30);
+  const rewindSpeed = Math.max(4, Math.min(16, rewindDuration / 2));
+  const effectDuration = Math.max(1000, (rewindDuration / rewindSpeed) * 1000); // Convert to ms
   
   const rewindEffect: EffectRender = {
     type: 'rewind',
     filePath: rewindPath,
-    duration: 2000, // 2 seconds
+    duration: effectDuration,
     onComplete: () => {
       // Restart current track from beginning
       session.nextMedia = session.currentMedia;
@@ -367,15 +389,56 @@ const queueRewindEffect = async (session: RadioSession) => {
   }
 };
 
-const createRewindEffect = async (media: any): Promise<string> => {
+const createRewindEffect = async (media: any, session: RadioSession): Promise<string> => {
   const outputPath = path.join(TEMP_EFFECTS_DIR, `rewind_${Date.now()}.ogg`);
   const inputPath = MediaService.resolveMediaPath(media);
   
+  // Calculate current playback position
+  const currentTime = (Date.now() - session.playbackStartTime) / 1000;
+  const rewindDuration = Math.min(currentTime, session.currentTrackDuration, 30); // Cap at 30s for performance
+  
+  if (rewindDuration < 1) {
+    // If we're very early in the track, just do a simple reverse effect
+    return new Promise((resolve, reject) => {
+      const ffmpeg = spawn('ffmpeg', [
+        '-i', inputPath,
+        '-af', 'areverse,atempo=4,aecho=0.5:0.5:300:0.2,afade=t=out:st=1.5:d=0.5',
+        '-t', '2',
+        '-f', 'ogg',
+        '-y',
+        outputPath
+      ]);
+      
+      ffmpeg.on('close', (code) => {
+        if (code === 0) {
+          resolve(outputPath);
+        } else {
+          reject(new Error(`Simple rewind effect creation failed with code ${code}`));
+        }
+      });
+      
+      ffmpeg.on('error', reject);
+    });
+  }
+  
+  // Create a sophisticated rewind effect that samples the entire track
+  // from current position back to beginning, accelerated
   return new Promise((resolve, reject) => {
+    const rewindSpeed = Math.max(4, Math.min(16, rewindDuration / 2)); // Adaptive speed based on content
+    
     const ffmpeg = spawn('ffmpeg', [
       '-i', inputPath,
-      '-af', 'areverse,atempo=8,aecho=0.5:0.5:500:0.3,afade=t=out:st=1.5:d=0.5',
-      '-t', '2',
+      '-ss', '0', // Start from beginning
+      '-t', rewindDuration.toString(), // Take content up to current position
+      '-af', [
+        'areverse', // Reverse the audio
+        `atempo=${rewindSpeed}`, // Speed up significantly
+        'aecho=0.3:0.3:125:0.15,aecho=0.2:0.2:250:0.1', // Add echo for tape-like effect
+        'highpass=f=200', // Remove some low frequencies for clarity
+        'lowpass=f=8000', // Remove harsh highs
+        'volume=0.8', // Slightly reduce volume
+        'afade=t=in:st=0:d=0.1,afade=t=out:st=' + (rewindDuration/rewindSpeed - 0.3) + ':d=0.3'
+      ].join(','),
       '-f', 'ogg',
       '-y',
       outputPath
@@ -385,7 +448,7 @@ const createRewindEffect = async (media: any): Promise<string> => {
       if (code === 0) {
         resolve(outputPath);
       } else {
-        reject(new Error(`Rewind effect creation failed with code ${code}`));
+        reject(new Error(`Advanced rewind effect creation failed with code ${code}`));
       }
     });
     
