@@ -1,4 +1,4 @@
-import { Message } from 'discord.js';
+import { Message, ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
 import { MediaService, MediaFile } from '../services/MediaService';
 import { generateRandomFrame } from '../../media/frameExtractor';
 import { safeReply } from '../utils/helpers';
@@ -77,7 +77,11 @@ export const handlePxCommand = async (message: Message): Promise<void> => {
           const timeoutSession = activeSessions.get(channelId);
           if (timeoutSession?.isActive) {
             try {
-              await safeReply(message, `⏰ **Time's up!** The answer was: **${timeoutSession.currentMedia.title}**`);
+              const replayRow = createReplayButton();
+              await safeReply(message, {
+                content: `⏰ **Time's up!** The answer was: **${timeoutSession.currentMedia.title}**`,
+                components: [replayRow]
+              });
             } catch (error) {
               console.error('Error sending timeout message:', error);
             }
@@ -93,6 +97,16 @@ export const handlePxCommand = async (message: Message): Promise<void> => {
   }
 };
 
+// Function to create replay button
+const createReplayButton = () => {
+  const replayButton = new ButtonBuilder()
+    .setCustomId('px_replay')
+    .setLabel('🔄 Play Again')
+    .setStyle(ButtonStyle.Primary);
+
+  return new ActionRowBuilder<ButtonBuilder>().addComponents(replayButton);
+};
+
 // Function to handle guesses (called from main message handler)
 export const handlePxGuess = async (message: Message): Promise<boolean> => {
   const channelId = message.channel.id;
@@ -106,7 +120,11 @@ export const handlePxGuess = async (message: Message): Promise<boolean> => {
   
   // Check for give up
   if (guess === 'give up') {
-    await safeReply(message, `🏳️ The answer was: **${session.currentMedia.title}**`);
+    const replayRow = createReplayButton();
+    await safeReply(message, {
+      content: `🏳️ The answer was: **${session.currentMedia.title}**`,
+      components: [replayRow]
+    });
     activeSessions.delete(channelId);
     return true;
   }
@@ -116,7 +134,11 @@ export const handlePxGuess = async (message: Message): Promise<boolean> => {
   
   // First check exact match
   if (guess === mediaTitle) {
-    await safeReply(message, `🎉 Correct! It was **${session.currentMedia.title}**`);
+    const replayRow = createReplayButton();
+    await safeReply(message, {
+      content: `🎉 Correct! It was **${session.currentMedia.title}**`,
+      components: [replayRow]
+    });
     activeSessions.delete(channelId);
     return true;
   }
@@ -132,7 +154,11 @@ export const handlePxGuess = async (message: Message): Promise<boolean> => {
   const maxAllowedDistance = Math.min(2, Math.floor(mediaTitle.length * 0.1)); // Max 2 chars or 10% of length
   
   if (distance <= maxAllowedDistance) {
-    await safeReply(message, `🎉 Correct! It was **${session.currentMedia.title}**`);
+    const replayRow = createReplayButton();
+    await safeReply(message, {
+      content: `🎉 Correct! It was **${session.currentMedia.title}**`,
+      components: [replayRow]
+    });
     activeSessions.delete(channelId);
     return true;
   }

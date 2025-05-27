@@ -150,6 +150,38 @@ async function getReplyChainContext(message: Message, maxDepth: number = 5): Pro
   return contextChain;
 }
 
+// Add interaction handler for buttons
+client.on(Events.InteractionCreate, async (interaction) => {
+  if (!interaction.isButton()) return;
+  
+  try {
+    if (interaction.customId === 'px_replay') {
+      // Handle px replay button
+      await interaction.deferReply();
+      
+      // Create a fake message object for the px command
+      const fakeMessage = {
+        ...interaction.message,
+        author: interaction.user,
+        guild: interaction.guild,
+        channel: interaction.channel,
+        reply: async (content: any) => {
+          return await interaction.followUp(content);
+        }
+      } as any;
+      
+      await handlePxCommand(fakeMessage);
+    }
+  } catch (error) {
+    console.error('Error handling button interaction:', error);
+    if (!interaction.replied && !interaction.deferred) {
+      await interaction.reply({ content: 'An error occurred while processing your request.', ephemeral: true });
+    } else {
+      await interaction.followUp({ content: 'An error occurred while processing your request.', ephemeral: true });
+    }
+  }
+});
+
 // Message handling
 client.on(Events.MessageCreate, async (message) => {
   // Ignore bot messages

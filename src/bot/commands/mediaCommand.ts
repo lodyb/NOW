@@ -111,7 +111,7 @@ export async function processMediaCommand(
               console.error('Error updating status message:', err);
             }
           },
-          false // Don't enforce Discord limits for regular playback commands
+          true // Enforce Discord limits for filtered play commands
         );
 
         processedPath = result.path;
