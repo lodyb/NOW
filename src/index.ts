@@ -29,7 +29,7 @@ import { setupAuth, isAuthenticated } from './web/auth';
 import { generateThumbnailsForExistingMedia, scanAndProcessUnprocessedMedia } from './media/processor';
 import fs from 'fs';
 import { logger } from './utils/logger';
-import { handleRadioCommand, handleQueueCommand, handleRadioStop, isRadioActiveInGuild } from './bot/commands/radio';
+import { handleRadioCommand, handleQueueCommand, handleRadioStop, handlePlayingCommand, isRadioActiveInGuild } from './bot/commands/radio';
 import { migrateMultilineAnswers } from './database/migrations';
 
 // Load environment variables, handle both development and production paths
@@ -321,7 +321,12 @@ client.on(Events.MessageCreate, async (message) => {
           break;
           
         case 'queue':
-          await handleQueueCommand(message, commandArgs.searchTerm || '');
+          await handleQueueCommand(message, commandArgs.searchTerm);
+          await saveUserLastCommand(message.author.id, message.author.username, message.content);
+          break;
+          
+        case 'playing':
+          await handlePlayingCommand(message);
           await saveUserLastCommand(message.author.id, message.author.username, message.content);
           break;
           

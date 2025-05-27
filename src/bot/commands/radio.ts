@@ -52,7 +52,7 @@ export const handleRadioCommand = async (message: Message) => {
   }
 };
 
-export const handleQueueCommand = async (message: Message, searchTerm: string) => {
+export const handleQueueCommand = async (message: Message, searchTerm?: string) => {
   if (!message.guild || !activeSessions.has(message.guild.id)) {
     await message.reply('No radio session active. Start one with `NOW radio`');
     return;
@@ -60,6 +60,27 @@ export const handleQueueCommand = async (message: Message, searchTerm: string) =
   
   const session = activeSessions.get(message.guild.id)!;
   
+  // Show current queue if no search term
+  if (!searchTerm) {
+    if (session.queue.length === 0) {
+      await message.reply('📻 Queue is empty - playing random tracks');
+      return;
+    }
+    
+    const queueList = session.queue
+      .slice(0, 10) // Show first 10 items
+      .map((media, index) => {
+        const title = media.answers?.[0] || media.title;
+        return `${index + 1}. ${title}`;
+      })
+      .join('\n');
+    
+    const remaining = session.queue.length > 10 ? `\n... and ${session.queue.length - 10} more` : '';
+    await message.reply(`📻 **Queue (${session.queue.length} tracks):**\n\`\`\`\n${queueList}${remaining}\n\`\`\``);
+    return;
+  }
+  
+  // Add to queue if search term provided
   try {
     const mediaItems = await MediaService.findMedia(searchTerm, false, 1);
     
@@ -80,6 +101,23 @@ export const handleQueueCommand = async (message: Message, searchTerm: string) =
     logger.error('Error queuing media', error);
     await message.reply('Failed to queue media');
   }
+};
+
+export const handlePlayingCommand = async (message: Message) => {
+  if (!message.guild || !activeSessions.has(message.guild.id)) {
+    await message.reply('No radio session active. Start one with `NOW radio`');
+    return;
+  }
+  
+  const session = activeSessions.get(message.guild.id)!;
+  
+  if (!session.currentMedia) {
+    await message.reply('📻 Nothing currently playing');
+    return;
+  }
+  
+  const primaryAnswer = session.currentMedia.answers?.[0] || session.currentMedia.title;
+  await message.reply(`🎵 Now playing: **${primaryAnswer}**`);
 };
 
 export const handleRadioStop = async (message: Message) => {
@@ -156,17 +194,11 @@ const playNext = async (session: RadioSession, channel: any) => {
     }
     
     if (!fs.existsSync(filePath)) {
-      await channel.send(`Skipping missing file: ${nextMedia.title}`);
       playNext(session, channel);
       return;
     }
     
-    const primaryAnswer = nextMedia.answers && nextMedia.answers.length > 0 
-      ? nextMedia.answers[0] 
-      : nextMedia.title;
-    
-    await channel.send(`🎵 Now playing: **${primaryAnswer}**`);
-    
+    // Remove the automatic "Now playing" message
     const resource = createAudioResource(filePath);
     session.audioPlayer.play(resource);
     

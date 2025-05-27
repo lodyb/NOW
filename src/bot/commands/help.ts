@@ -40,7 +40,9 @@ const helpContent: HelpContent = {
       { name: '@NOW [message]', description: 'Talk to the AI assistant' },
       { name: 'NOW help [topic]', description: 'Show help for a specific topic' },
       { name: 'NOW radio', description: 'Start continuous music playback in voice channel' },
-      { name: 'NOW queue [search]', description: 'Add media to the radio queue' }
+      { name: 'NOW queue [search]', description: 'Add media to the radio queue' },
+      { name: 'NOW playing', description: 'Show what\'s currently playing in radio' },
+      { name: 'NOW queue', description: 'Show current radio queue' }
     ],
     footer: 'Type `NOW help [topic]` for more details on a topic.\nAvailable topics: filters, quiz, play, radio, mahjong, ai, bind, upload'
   },
@@ -155,8 +157,10 @@ const helpContent: HelpContent = {
     title: '📻 Radio Commands',
     description: 'Continuous music playback in voice channels:',
     commands: [
-      { name: 'NOW radio', description: 'Start continuous music playback in your voice channel' },
+      { name: 'NOW radio', description: 'Start continuous music playbook in your voice channel' },
+      { name: 'NOW queue', description: 'Show current queue' },
       { name: 'NOW queue [search]', description: 'Add media to the radio queue' },
+      { name: 'NOW playing', description: 'Show what\'s currently playing' },
       { name: 'NOW stop', description: 'Stop the radio and clear the queue' }
     ],
     footer: 'Radio plays random media continuously when the queue is empty. Use queue to add specific songs next!'
