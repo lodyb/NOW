@@ -408,75 +408,78 @@ const createRewindEffect = async (media: any, session: RadioSession): Promise<st
   
   // Calculate current playback position
   const currentTime = (Date.now() - session.playbackStartTime) / 1000;
-  const rewindDuration = Math.min(currentTime, session.currentTrackDuration, 30); // Cap at 30s for performance
+  const rewindDuration = Math.min(currentTime, session.currentTrackDuration, 15); // Reduced cap for reliability
   
-  if (rewindDuration < 1) {
-    // If we're very early in the track, just do a simple reverse effect
+  if (rewindDuration < 0.5) {
+    // Very early in track - simple short reverse
     return new Promise((resolve, reject) => {
       const ffmpeg = spawn('ffmpeg', [
         '-i', inputPath,
-        '-af', 'areverse,atempo=2.0,aecho=0.5:0.5:300:0.2,afade=t=out:st=0.8:d=0.2',
-        '-t', '1',
+        '-af', 'areverse,aecho=0.3:0.3:100:0.2',
+        '-t', '0.8',
         '-f', 'ogg',
         '-y',
         outputPath
       ]);
       
       ffmpeg.on('close', (code) => {
-        if (code === 0) {
-          resolve(outputPath);
-        } else {
-          reject(new Error(`Simple rewind effect creation failed with code ${code}`));
-        }
+        if (code === 0) resolve(outputPath);
+        else reject(new Error(`Simple rewind failed: ${code}`));
       });
       
       ffmpeg.on('error', reject);
     });
   }
   
-  // Create rewind effect with proper atempo chaining
+  // Extract the segment we want to rewind, then reverse it
+  const startTime = Math.max(0, currentTime - rewindDuration);
+  
   return new Promise((resolve, reject) => {
-    const targetSpeed = Math.max(4, Math.min(16, rewindDuration / 2));
+    // First pass: extract segment and reverse
+    const tempReversed = path.join(TEMP_EFFECTS_DIR, `temp_reversed_${Date.now()}.ogg`);
     
-    // Chain atempo filters for speeds > 2.0
-    let atempoChain = '';
-    let remainingSpeed = targetSpeed;
-    while (remainingSpeed > 2.0) {
-      atempoChain += 'atempo=2.0,';
-      remainingSpeed /= 2.0;
-    }
-    if (remainingSpeed > 1.0) {
-      atempoChain += `atempo=${remainingSpeed.toFixed(2)},`;
-    }
-    
-    const filterChain = [
-      'areverse', // Reverse the audio
-      atempoChain + 'aecho=0.3:0.3:125:0.15', // Speed up + echo
-      'volume=1.2', // Boost volume slightly
-      'afade=t=in:st=0:d=0.05,afade=t=out:st=' + Math.max(0.5, (rewindDuration/targetSpeed - 0.2)) + ':d=0.1'
-    ].join(',');
-    
-    console.log(`Creating rewind with filter: ${filterChain}`);
-    
-    const ffmpeg = spawn('ffmpeg', [
+    const extractAndReverse = spawn('ffmpeg', [
       '-i', inputPath,
-      '-ss', '0',
+      '-ss', startTime.toString(),
       '-t', rewindDuration.toString(),
-      '-af', filterChain,
+      '-af', 'areverse',
       '-f', 'ogg',
       '-y',
-      outputPath
+      tempReversed
     ]);
     
-    ffmpeg.on('close', (code) => {
-      if (code === 0) {
-        resolve(outputPath);
-      } else {
-        reject(new Error(`Advanced rewind effect creation failed with code ${code}`));
+    extractAndReverse.on('close', (code) => {
+      if (code !== 0) {
+        reject(new Error(`Segment extraction failed: ${code}`));
+        return;
       }
+      
+      // Second pass: speed up with simpler approach
+      const speedMultiplier = Math.min(8, Math.max(2, rewindDuration / 2)); // Cap at 8x
+      
+      const speedUp = spawn('ffmpeg', [
+        '-i', tempReversed,
+        '-af', `asetrate=44100*${speedMultiplier},aresample=44100,aecho=0.2:0.2:80:0.15,volume=1.1`,
+        '-f', 'ogg',
+        '-y',
+        outputPath
+      ]);
+      
+      speedUp.on('close', (speedCode) => {
+        // Clean up temp file
+        fs.unlink(tempReversed, () => {});
+        
+        if (speedCode === 0) {
+          resolve(outputPath);
+        } else {
+          reject(new Error(`Speed adjustment failed: ${speedCode}`));
+        }
+      });
+      
+      speedUp.on('error', reject);
     });
     
-    ffmpeg.on('error', reject);
+    extractAndReverse.on('error', reject);
   });
 };
 
@@ -642,8 +645,6 @@ export const isRadioActiveInGuild = (guildId: string): boolean => {
 };
 
 const updateBotNickname = async (session: RadioSession, media: any) => {
-  if (!session.isActive || !session.connection) return;
-  
   try {
     const guild = session.connection.joinConfig?.guildId;
     if (!guild) return;
@@ -654,12 +655,15 @@ const updateBotNickname = async (session: RadioSession, media: any) => {
     
     if (!guildObj || !guildObj.members.me) return;
     
-    // Use primary answer or title
-    const displayName = media.answers?.[0] || media.title;
-    const newNickname = displayName.length > 32 ? displayName.substring(0, 29) + '...' : displayName;
+    // Get the first answer or use title
+    const displayName = media.answers?.[0]?.answer || media.title || 'Unknown';
+    const nickname = `📻${displayName}`;
     
-    await guildObj.members.me.setNickname(newNickname);
-    console.log(`Updated bot nickname to: ${newNickname}`);
+    // Discord nickname limit is 32 characters
+    const truncatedNickname = nickname.length > 32 ? nickname.substring(0, 29) + '...' : nickname;
+    
+    await guildObj.members.me.setNickname(truncatedNickname);
+    console.log(`Updated bot nickname to: ${truncatedNickname}`);
   } catch (error) {
     console.error('Failed to update bot nickname:', error);
   }
