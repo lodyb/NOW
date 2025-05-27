@@ -28,6 +28,7 @@ interface RadioSession {
   queue: any[];
   currentMedia: any;
   nextMedia: any;
+  nextMediaPath: string | null; // Pre-processed file path
   isActive: boolean;
   audioPlayer: any;
   currentFilters: string[];
@@ -36,6 +37,7 @@ interface RadioSession {
   effectQueue: EffectRender[];
   playbackStartTime: number;
   currentTrackDuration: number;
+  skipRequested: boolean; // Flag for skip handling
 }
 
 interface EffectRender {
@@ -134,10 +136,28 @@ export const handleSkipCommand = async (message: Message) => {
   }
 
   const session = activeSessions.get(message.guild.id)!;
-  await message.reply('⏭️ Skipping...');
+  session.skipRequested = true;
   
-  // Force next track immediately
-  session.audioPlayer.stop();
+  await message.reply('⏭️ Preparing next track...');
+  
+  // If next track isn't ready, prepare it first
+  if (!session.nextMediaPath && !session.isProcessingNext) {
+    await prepareNextTrack(session);
+  }
+  
+  // Wait for next track to be ready before skipping
+  const waitForReady = setInterval(() => {
+    if (session.nextMediaPath || !session.isProcessingNext) {
+      clearInterval(waitForReady);
+      session.audioPlayer.stop();
+    }
+  }, 100);
+  
+  // Fallback timeout
+  setTimeout(() => {
+    clearInterval(waitForReady);
+    session.audioPlayer.stop();
+  }, 5000);
 };
 
 export const handleQueueCommand = async (message: Message, searchTerm?: string) => {
@@ -312,6 +332,7 @@ const startRadioSession = async (message: Message, voiceChannel: VoiceBasedChann
     queue: [],
     currentMedia: null,
     nextMedia: null,
+    nextMediaPath: null,
     isActive: true,
     audioPlayer,
     currentFilters: [],
@@ -320,6 +341,7 @@ const startRadioSession = async (message: Message, voiceChannel: VoiceBasedChann
     effectQueue: [],
     playbackStartTime: 0,
     currentTrackDuration: 0,
+    skipRequested: false,
   };
   
   activeSessions.set(voiceChannel.guild.id, session);
@@ -356,12 +378,22 @@ const handleTrackEnd = async (session: RadioSession, channel: any) => {
 const playNext = async (session: RadioSession, channel: any) => {
   try {
     let nextMedia = session.nextMedia;
-    let isFromQueue = false;
+    let filePath = session.nextMediaPath;
     
-    if (!nextMedia) {
+    // If we have a pre-processed track ready, use it
+    if (nextMedia && filePath && fs.existsSync(filePath)) {
+      logger.debug(`Using pre-processed track: ${filePath}`);
+      
+      // Remove from queue if it came from there
+      if (session.queue.length > 0 && 
+          ((session.queue[0].id && nextMedia.id && session.queue[0].id === nextMedia.id) ||
+           (session.queue[0].title === nextMedia.title && session.queue[0].filePath === nextMedia.filePath))) {
+        session.queue.shift();
+      }
+    } else {
+      // Fallback to normal track selection and processing
       if (session.queue.length > 0) {
         nextMedia = session.queue.shift();
-        isFromQueue = true;
       } else {
         const randomMedia = await getRandomMedia(1);
         if (randomMedia.length === 0) {
@@ -370,36 +402,21 @@ const playNext = async (session: RadioSession, channel: any) => {
         }
         nextMedia = randomMedia[0];
       }
-    } else {
-      // If we're using a prepared nextMedia, we need to remove it from queue if it came from there
-      if (session.queue.length > 0 && 
-          ((session.queue[0].id && nextMedia.id && session.queue[0].id === nextMedia.id) ||
-           (session.queue[0].title === nextMedia.title && session.queue[0].filePath === nextMedia.filePath))) {
-        session.queue.shift();
-        isFromQueue = true;
+      
+      // Process the track now
+      if (session.currentFilters.length > 0) {
+        filePath = await getOrCreateFilteredVersion(nextMedia, session.currentFilters);
+      } else {
+        filePath = await getNormalizedAudioPath(nextMedia);
       }
     }
     
     session.currentMedia = nextMedia;
     session.currentFilters = session.nextFilters.slice();
     session.nextMedia = null;
+    session.nextMediaPath = null;
     session.nextFilters = [];
-    
-    let filePath: string;
-    
-    if (session.currentFilters.length > 0) {
-      // Use original path for filters, then apply normalization after
-      const originalPath = MediaService.resolveMediaPath(nextMedia);
-      if (!MediaService.validateMediaExists(originalPath) && nextMedia.filePath) {
-        filePath = nextMedia.filePath;
-      } else {
-        filePath = originalPath;
-      }
-      filePath = await getOrCreateFilteredVersion(nextMedia, session.currentFilters);
-    } else {
-      // Apply loudness normalization for consistent volume
-      filePath = await getNormalizedAudioPath(nextMedia);
-    }
+    session.skipRequested = false;
     
     if (!fs.existsSync(filePath)) {
       playNext(session, channel);
@@ -413,7 +430,6 @@ const playNext = async (session: RadioSession, channel: any) => {
       session.currentTrackDuration = mediaInfo.duration;
       session.playbackStartTime = Date.now();
     } catch (error) {
-      console.error('Error getting media duration:', error);
       session.currentTrackDuration = 0;
       session.playbackStartTime = Date.now();
     }
@@ -421,11 +437,10 @@ const playNext = async (session: RadioSession, channel: any) => {
     const resource = createAudioResource(filePath);
     session.audioPlayer.play(resource);
     
-    // Update bot nickname with currently playing media
     await updateBotNickname(session, nextMedia);
     
-    // Start preparing next track in background
-    prepareNextTrack(session);
+    // Start preparing next track immediately
+    setImmediate(() => prepareNextTrack(session));
     
   } catch (error) {
     logger.error('Error playing next track', error);
@@ -451,10 +466,17 @@ const prepareNextTrack = async (session: RadioSession) => {
     
     session.nextMedia = nextMedia;
     
-    // Pre-render with filters if needed
+    // Pre-process the next track completely
+    let filePath: string;
     if (session.nextFilters.length > 0) {
-      await getOrCreateFilteredVersion(nextMedia, session.nextFilters);
+      filePath = await getOrCreateFilteredVersion(nextMedia, session.nextFilters);
+    } else {
+      filePath = await getNormalizedAudioPath(nextMedia);
     }
+    
+    session.nextMediaPath = filePath;
+    logger.debug(`Next track prepared: ${filePath}`);
+    
   } catch (error) {
     logger.error('Error preparing next track', error);
   } finally {
