@@ -341,8 +341,8 @@ client.on(Events.MessageCreate, async (message) => {
           break;
           
         case 'filter':
-          if (commandArgs.searchTerm) {
-            await handleFilterCommand(message, commandArgs.searchTerm);
+          if (commandArgs.filterString) {
+            await handleFilterCommand(message, commandArgs.filterString);
             await saveUserLastCommand(message.author.id, message.author.username, message.content);
           } else {
             await safeReply(message, 'Please specify a filter. Example: `NOW filter {bass=10,reverb}`');
