@@ -785,7 +785,7 @@ const downloadYouTubeVideo = async (url: string): Promise<{ title: string; fileP
     }
 
     // Check filesize if available (150MB = 157286400 bytes)
-    const filesize = info.filesize || info.filesize_approx;
+    const filesize = (info as any).filesize || (info as any).filesize_approx;
     if (filesize && filesize > 157286400) {
       throw new Error(`Video too large (${Math.round(filesize / 1024 / 1024)}MB). Maximum allowed: 150MB`);
     }
