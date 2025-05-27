@@ -319,10 +319,12 @@ const handleTrackEnd = async (session: RadioSession, channel: any) => {
 const playNext = async (session: RadioSession, channel: any) => {
   try {
     let nextMedia = session.nextMedia;
+    let isFromQueue = false;
     
     if (!nextMedia) {
       if (session.queue.length > 0) {
         nextMedia = session.queue.shift();
+        isFromQueue = true;
       } else {
         const randomMedia = await getRandomMedia(1);
         if (randomMedia.length === 0) {
@@ -330,6 +332,12 @@ const playNext = async (session: RadioSession, channel: any) => {
           return;
         }
         nextMedia = randomMedia[0];
+      }
+    } else {
+      // If we're using a prepared nextMedia, we need to remove it from queue if it came from there
+      if (session.queue.length > 0 && session.queue[0] === nextMedia) {
+        session.queue.shift();
+        isFromQueue = true;
       }
     }
     
