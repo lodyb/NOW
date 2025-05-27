@@ -818,22 +818,28 @@ const getNormalizedAudioPath = async (media: any): Promise<string> => {
 
 const normalizeAudioLoudness = async (inputPath: string, outputPath: string): Promise<void> => {
   return new Promise((resolve, reject) => {
-    // First pass: analyze loudness
+    logger.debug(`Starting loudness analysis for: ${inputPath}`);
+    
+    // First pass: analyze loudness (using -16 LUFS which is more standard)
     const analyzeProcess = spawn('ffmpeg', [
       '-i', inputPath,
-      '-af', 'loudnorm=I=-3:TP=-1:LRA=7:print_format=json',
+      '-af', 'loudnorm=I=-16:TP=-1:LRA=7:print_format=json',
       '-f', 'null',
       '-'
     ]);
     
     let analysisOutput = '';
+    let errorOutput = '';
     
     analyzeProcess.stderr.on('data', (data) => {
-      analysisOutput += data.toString();
+      const output = data.toString();
+      analysisOutput += output;
+      errorOutput += output;
     });
     
     analyzeProcess.on('close', (code) => {
       if (code !== 0) {
+        logger.error(`Loudness analysis failed with code ${code}. Error: ${errorOutput}`);
         reject(new Error(`Loudness analysis failed with code ${code}`));
         return;
       }
@@ -842,15 +848,17 @@ const normalizeAudioLoudness = async (inputPath: string, outputPath: string): Pr
         // Extract loudness stats from JSON output
         const jsonMatch = analysisOutput.match(/\{[\s\S]*\}/);
         if (!jsonMatch) {
+          logger.error(`No loudness stats found. Output: ${analysisOutput}`);
           throw new Error('No loudness stats found in analysis');
         }
         
         const stats = JSON.parse(jsonMatch[0]);
+        logger.debug(`Loudness stats: ${JSON.stringify(stats)}`);
         
-        // Second pass: apply normalization
+        // Second pass: apply normalization to -16 LUFS (good for music)
         const normalizeProcess = spawn('ffmpeg', [
           '-i', inputPath,
-          '-af', `loudnorm=I=-3:TP=-1:LRA=7:measured_I=${stats.input_i}:measured_TP=${stats.input_tp}:measured_LRA=${stats.input_lra}:measured_thresh=${stats.input_thresh}:offset=${stats.target_offset}:linear=true`,
+          '-af', `loudnorm=I=-16:TP=-1:LRA=7:measured_I=${stats.input_i}:measured_TP=${stats.input_tp}:measured_LRA=${stats.input_lra}:measured_thresh=${stats.input_thresh}:offset=${stats.target_offset}:linear=true`,
           '-c:a', 'libopus',
           '-b:a', '128k',
           '-f', 'ogg',
@@ -858,22 +866,36 @@ const normalizeAudioLoudness = async (inputPath: string, outputPath: string): Pr
           outputPath
         ]);
         
+        let normalizeError = '';
+        normalizeProcess.stderr.on('data', (data) => {
+          normalizeError += data.toString();
+        });
+        
         normalizeProcess.on('close', (normalizeCode) => {
           if (normalizeCode === 0) {
+            logger.debug(`Loudness normalization completed: ${outputPath}`);
             resolve();
           } else {
+            logger.error(`Loudness normalization failed with code ${normalizeCode}. Error: ${normalizeError}`);
             reject(new Error(`Loudness normalization failed with code ${normalizeCode}`));
           }
         });
         
-        normalizeProcess.on('error', reject);
+        normalizeProcess.on('error', (error) => {
+          logger.error(`Normalization process error: ${error}`);
+          reject(error);
+        });
         
       } catch (error) {
+        logger.error(`Failed to parse loudness stats: ${error}. Output: ${analysisOutput}`);
         reject(new Error(`Failed to parse loudness stats: ${error}`));
       }
     });
     
-    analyzeProcess.on('error', reject);
+    analyzeProcess.on('error', (error) => {
+      logger.error(`Analysis process error: ${error}`);
+      reject(error);
+    });
   });
 };
 
