@@ -29,7 +29,7 @@ import { setupAuth, isAuthenticated } from './web/auth';
 import { generateThumbnailsForExistingMedia, scanAndProcessUnprocessedMedia } from './media/processor';
 import fs from 'fs';
 import { logger } from './utils/logger';
-import { handleRadioCommand, handleQueueCommand, handleRadioStop, handlePlayingCommand, isRadioActiveInGuild } from './bot/commands/radio';
+import { handleRadioCommand, handleQueueCommand, handleRadioStop, handlePlayingCommand, handleRewindCommand, handleFilterCommand, handleSkipCommand, isRadioActiveInGuild } from './bot/commands/radio';
 import { migrateMultilineAnswers } from './database/migrations';
 
 // Load environment variables, handle both development and production paths
@@ -328,6 +328,25 @@ client.on(Events.MessageCreate, async (message) => {
         case 'playing':
           await handlePlayingCommand(message);
           await saveUserLastCommand(message.author.id, message.author.username, message.content);
+          break;
+          
+        case 'rewind':
+          await handleRewindCommand(message);
+          await saveUserLastCommand(message.author.id, message.author.username, message.content);
+          break;
+          
+        case 'skip':
+          await handleSkipCommand(message);
+          await saveUserLastCommand(message.author.id, message.author.username, message.content);
+          break;
+          
+        case 'filter':
+          if (commandArgs.searchTerm) {
+            await handleFilterCommand(message, commandArgs.searchTerm);
+            await saveUserLastCommand(message.author.id, message.author.username, message.content);
+          } else {
+            await safeReply(message, 'Please specify a filter. Example: `NOW filter {bass=10,reverb}`');
+          }
           break;
           
         case 'stop':

@@ -10,6 +10,7 @@ import {
 import { getRandomMedia } from '../../database/db';
 import { MediaService } from '../services/MediaService';
 import { logger } from '../../utils/logger';
+import { spawn, ChildProcess } from 'child_process';
 import path from 'path';
 import fs from 'fs';
 
@@ -19,11 +20,29 @@ interface RadioSession {
   connection: VoiceConnection;
   queue: any[];
   currentMedia: any;
+  nextMedia: any;
   isActive: boolean;
   audioPlayer: any;
+  currentFilters: string[];
+  nextFilters: string[];
+  isProcessingNext: boolean;
+  effectQueue: EffectRender[];
+}
+
+interface EffectRender {
+  type: 'rewind' | 'filter_transition' | 'crossfade';
+  filePath: string;
+  duration: number;
+  onComplete?: () => void;
 }
 
 const activeSessions = new Map<string, RadioSession>();
+const TEMP_EFFECTS_DIR = path.join(process.cwd(), 'temp', 'radio_effects');
+
+// Ensure effects directory exists
+if (!fs.existsSync(TEMP_EFFECTS_DIR)) {
+  fs.mkdirSync(TEMP_EFFECTS_DIR, { recursive: true });
+}
 
 export const handleRadioCommand = async (message: Message) => {
   if (!message.guild) {
@@ -50,6 +69,53 @@ export const handleRadioCommand = async (message: Message) => {
     logger.error('Error starting radio', error);
     await message.reply(`Failed to start radio: ${(error as Error).message}`);
   }
+};
+
+export const handleRewindCommand = async (message: Message) => {
+  if (!message.guild || !activeSessions.has(message.guild.id)) {
+    await message.reply('No radio session active');
+    return;
+  }
+
+  const session = activeSessions.get(message.guild.id)!;
+  if (!session.currentMedia) {
+    await message.reply('Nothing currently playing');
+    return;
+  }
+
+  await message.reply('⏪ Rewinding...');
+  await queueRewindEffect(session);
+};
+
+export const handleFilterCommand = async (message: Message, filterString: string) => {
+  if (!message.guild || !activeSessions.has(message.guild.id)) {
+    await message.reply('No radio session active');
+    return;
+  }
+
+  const session = activeSessions.get(message.guild.id)!;
+  const filters = parseFilters(filterString);
+  
+  session.nextFilters = filters;
+  await message.reply(`🎛️ Filter "${filterString}" will apply to next track`);
+  
+  // Pre-render next track with filters
+  if (!session.isProcessingNext) {
+    prepareNextTrack(session);
+  }
+};
+
+export const handleSkipCommand = async (message: Message) => {
+  if (!message.guild || !activeSessions.has(message.guild.id)) {
+    await message.reply('No radio session active');
+    return;
+  }
+
+  const session = activeSessions.get(message.guild.id)!;
+  await message.reply('⏭️ Skipping...');
+  
+  // Force next track immediately
+  session.audioPlayer.stop();
 };
 
 export const handleQueueCommand = async (message: Message, searchTerm?: string) => {
@@ -148,8 +214,13 @@ const startRadioSession = async (message: Message, voiceChannel: VoiceBasedChann
     connection,
     queue: [],
     currentMedia: null,
+    nextMedia: null,
     isActive: true,
-    audioPlayer
+    audioPlayer,
+    currentFilters: [],
+    nextFilters: [],
+    isProcessingNext: false,
+    effectQueue: []
   };
   
   activeSessions.set(voiceChannel.guild.id, session);
@@ -163,7 +234,7 @@ const startRadioSession = async (message: Message, voiceChannel: VoiceBasedChann
   
   audioPlayer.on(AudioPlayerStatus.Idle, () => {
     if (session.isActive) {
-      playNext(session, message.channel);
+      handleTrackEnd(session, message.channel);
     }
   });
   
@@ -171,26 +242,50 @@ const startRadioSession = async (message: Message, voiceChannel: VoiceBasedChann
   playNext(session, message.channel);
 };
 
+const handleTrackEnd = async (session: RadioSession, channel: any) => {
+  // Check if we have effects queued
+  if (session.effectQueue.length > 0) {
+    const effect = session.effectQueue.shift()!;
+    await playEffect(session, effect);
+    return;
+  }
+  
+  // Normal track progression
+  playNext(session, channel);
+};
+
 const playNext = async (session: RadioSession, channel: any) => {
   try {
-    let nextMedia;
+    let nextMedia = session.nextMedia;
     
-    if (session.queue.length > 0) {
-      nextMedia = session.queue.shift();
-    } else {
-      const randomMedia = await getRandomMedia(1);
-      if (randomMedia.length === 0) {
-        await channel.send('No media available');
-        return;
+    if (!nextMedia) {
+      if (session.queue.length > 0) {
+        nextMedia = session.queue.shift();
+      } else {
+        const randomMedia = await getRandomMedia(1);
+        if (randomMedia.length === 0) {
+          await channel.send('No media available');
+          return;
+        }
+        nextMedia = randomMedia[0];
       }
-      nextMedia = randomMedia[0];
     }
     
     session.currentMedia = nextMedia;
+    session.currentFilters = session.nextFilters.slice();
+    session.nextMedia = null;
+    session.nextFilters = [];
     
-    let filePath = MediaService.resolveMediaPath(nextMedia);
-    if (!MediaService.validateMediaExists(filePath) && nextMedia.filePath) {
-      filePath = nextMedia.filePath;
+    let filePath: string;
+    
+    if (session.currentFilters.length > 0) {
+      // Use pre-rendered filtered version
+      filePath = await getOrCreateFilteredVersion(nextMedia, session.currentFilters);
+    } else {
+      filePath = MediaService.resolveMediaPath(nextMedia);
+      if (!MediaService.validateMediaExists(filePath) && nextMedia.filePath) {
+        filePath = nextMedia.filePath;
+      }
     }
     
     if (!fs.existsSync(filePath)) {
@@ -198,14 +293,172 @@ const playNext = async (session: RadioSession, channel: any) => {
       return;
     }
     
-    // Remove the automatic "Now playing" message
     const resource = createAudioResource(filePath);
     session.audioPlayer.play(resource);
+    
+    // Start preparing next track in background
+    prepareNextTrack(session);
     
   } catch (error) {
     logger.error('Error playing next track', error);
     setTimeout(() => playNext(session, channel), 3000);
   }
+};
+
+const prepareNextTrack = async (session: RadioSession) => {
+  if (session.isProcessingNext) return;
+  
+  session.isProcessingNext = true;
+  
+  try {
+    let nextMedia;
+    
+    if (session.queue.length > 0) {
+      nextMedia = session.queue[0]; // Don't shift yet
+    } else {
+      const randomMedia = await getRandomMedia(1);
+      if (randomMedia.length === 0) return;
+      nextMedia = randomMedia[0];
+    }
+    
+    session.nextMedia = nextMedia;
+    
+    // Pre-render with filters if needed
+    if (session.nextFilters.length > 0) {
+      await getOrCreateFilteredVersion(nextMedia, session.nextFilters);
+    }
+  } catch (error) {
+    logger.error('Error preparing next track', error);
+  } finally {
+    session.isProcessingNext = false;
+  }
+};
+
+const queueRewindEffect = async (session: RadioSession) => {
+  const rewindPath = await createRewindEffect(session.currentMedia);
+  
+  const rewindEffect: EffectRender = {
+    type: 'rewind',
+    filePath: rewindPath,
+    duration: 2000, // 2 seconds
+    onComplete: () => {
+      // Restart current track from beginning
+      session.nextMedia = session.currentMedia;
+      session.nextFilters = session.currentFilters.slice();
+    }
+  };
+  
+  session.effectQueue.push(rewindEffect);
+  
+  // If nothing playing, start effect immediately
+  if (session.audioPlayer.state.status === AudioPlayerStatus.Idle) {
+    const effect = session.effectQueue.shift()!;
+    await playEffect(session, effect);
+  }
+};
+
+const createRewindEffect = async (media: any): Promise<string> => {
+  const outputPath = path.join(TEMP_EFFECTS_DIR, `rewind_${Date.now()}.ogg`);
+  const inputPath = MediaService.resolveMediaPath(media);
+  
+  return new Promise((resolve, reject) => {
+    const ffmpeg = spawn('ffmpeg', [
+      '-i', inputPath,
+      '-af', 'areverse,atempo=8,aecho=0.5:0.5:500:0.3,afade=t=out:st=1.5:d=0.5',
+      '-t', '2',
+      '-f', 'ogg',
+      '-y',
+      outputPath
+    ]);
+    
+    ffmpeg.on('close', (code) => {
+      if (code === 0) {
+        resolve(outputPath);
+      } else {
+        reject(new Error(`Rewind effect creation failed with code ${code}`));
+      }
+    });
+    
+    ffmpeg.on('error', reject);
+  });
+};
+
+const playEffect = async (session: RadioSession, effect: EffectRender) => {
+  const resource = createAudioResource(effect.filePath);
+  session.audioPlayer.play(resource);
+  
+  // Clean up effect file after playing
+  setTimeout(() => {
+    fs.unlink(effect.filePath, () => {});
+  }, effect.duration + 1000);
+  
+  if (effect.onComplete) {
+    effect.onComplete();
+  }
+};
+
+const getOrCreateFilteredVersion = async (media: any, filters: string[]): Promise<string> => {
+  const filterHash = filters.join('_').replace(/[^a-zA-Z0-9]/g, '_');
+  const outputPath = path.join(TEMP_EFFECTS_DIR, `filtered_${media.id}_${filterHash}.ogg`);
+  
+  if (fs.existsSync(outputPath)) {
+    return outputPath;
+  }
+  
+  const inputPath = MediaService.resolveMediaPath(media);
+  const filterArgs = buildFilterArgs(filters);
+  
+  return new Promise((resolve, reject) => {
+    const ffmpeg = spawn('ffmpeg', [
+      '-i', inputPath,
+      ...filterArgs,
+      '-f', 'ogg',
+      '-y',
+      outputPath
+    ]);
+    
+    ffmpeg.on('close', (code) => {
+      if (code === 0) {
+        resolve(outputPath);
+      } else {
+        reject(new Error(`Filter processing failed with code ${code}`));
+      }
+    });
+    
+    ffmpeg.on('error', reject);
+  });
+};
+
+const parseFilters = (filterString: string): string[] => {
+  return filterString.replace(/[{}]/g, '').split(',').map(f => f.trim());
+};
+
+const buildFilterArgs = (filters: string[]): string[] => {
+  // Convert filter strings to FFmpeg arguments
+  const args: string[] = [];
+  
+  for (const filter of filters) {
+    if (filter.includes('=')) {
+      const [key, value] = filter.split('=');
+      args.push('-af', `${key}=${value}`);
+    } else {
+      // Predefined effects
+      switch (filter) {
+        case 'reverse':
+          args.push('-af', 'areverse');
+          break;
+        case 'echo':
+          args.push('-af', 'aecho=0.6:0.3:1000:0.5');
+          break;
+        case 'chipmunk':
+          args.push('-af', 'asetrate=44100*1.5,aresample=44100');
+          break;
+        // Add more predefined effects as needed
+      }
+    }
+  }
+  
+  return args;
 };
 
 const endRadioSession = (session: RadioSession) => {
@@ -217,6 +470,11 @@ const endRadioSession = (session: RadioSession) => {
   } catch (error) {
     logger.error('Error disconnecting radio', error);
   }
+  
+  // Clean up any pending effect files
+  session.effectQueue.forEach(effect => {
+    fs.unlink(effect.filePath, () => {});
+  });
   
   activeSessions.delete(session.guildId);
 };
