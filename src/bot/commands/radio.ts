@@ -335,7 +335,9 @@ const playNext = async (session: RadioSession, channel: any) => {
       }
     } else {
       // If we're using a prepared nextMedia, we need to remove it from queue if it came from there
-      if (session.queue.length > 0 && session.queue[0] === nextMedia) {
+      if (session.queue.length > 0 && 
+          ((session.queue[0].id && nextMedia.id && session.queue[0].id === nextMedia.id) ||
+           (session.queue[0].title === nextMedia.title && session.queue[0].filePath === nextMedia.filePath))) {
         session.queue.shift();
         isFromQueue = true;
       }
