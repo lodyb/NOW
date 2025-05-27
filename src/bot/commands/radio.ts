@@ -382,11 +382,8 @@ const queueRewindEffect = async (session: RadioSession) => {
   
   session.effectQueue.push(rewindEffect);
   
-  // If nothing playing, start effect immediately
-  if (session.audioPlayer.state.status === AudioPlayerStatus.Idle) {
-    const effect = session.effectQueue.shift()!;
-    await playEffect(session, effect);
-  }
+  // Stop current playback immediately to trigger the effect
+  session.audioPlayer.stop();
 };
 
 const createRewindEffect = async (media: any, session: RadioSession): Promise<string> => {
