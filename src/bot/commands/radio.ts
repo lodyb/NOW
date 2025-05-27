@@ -47,10 +47,14 @@ interface EffectRender {
 
 const activeSessions = new Map<string, RadioSession>();
 const TEMP_EFFECTS_DIR = path.join(process.cwd(), 'temp', 'radio_effects');
+const NORMALIZED_CACHE_DIR = path.join(process.cwd(), 'temp', 'radio_normalized');
 
-// Ensure effects directory exists
+// Ensure directories exist
 if (!fs.existsSync(TEMP_EFFECTS_DIR)) {
   fs.mkdirSync(TEMP_EFFECTS_DIR, { recursive: true });
+}
+if (!fs.existsSync(NORMALIZED_CACHE_DIR)) {
+  fs.mkdirSync(NORMALIZED_CACHE_DIR, { recursive: true });
 }
 
 export const handleRadioCommand = async (message: Message) => {
@@ -384,12 +388,17 @@ const playNext = async (session: RadioSession, channel: any) => {
     let filePath: string;
     
     if (session.currentFilters.length > 0) {
+      // Use original path for filters, then apply normalization after
+      const originalPath = MediaService.resolveMediaPath(nextMedia);
+      if (!MediaService.validateMediaExists(originalPath) && nextMedia.filePath) {
+        filePath = nextMedia.filePath;
+      } else {
+        filePath = originalPath;
+      }
       filePath = await getOrCreateFilteredVersion(nextMedia, session.currentFilters);
     } else {
-      filePath = MediaService.resolveMediaPath(nextMedia);
-      if (!MediaService.validateMediaExists(filePath) && nextMedia.filePath) {
-        filePath = nextMedia.filePath;
-      }
+      // Apply loudness normalization for consistent volume
+      filePath = await getNormalizedAudioPath(nextMedia);
     }
     
     if (!fs.existsSync(filePath)) {
@@ -612,20 +621,36 @@ const getOrCreateFilteredVersion = async (media: any, filters: string[]): Promis
   const inputPath = MediaService.resolveMediaPath(media);
   const filterArgs = buildFilterArgs(filters);
   
+  // Create filtered version first
+  const tempFilteredPath = path.join(TEMP_EFFECTS_DIR, `temp_filtered_${Date.now()}.ogg`);
+  
   return new Promise((resolve, reject) => {
     const ffmpeg = spawn('ffmpeg', [
       '-i', inputPath,
       ...filterArgs,
       '-f', 'ogg',
       '-y',
-      outputPath
+      tempFilteredPath
     ]);
     
-    ffmpeg.on('close', (code) => {
-      if (code === 0) {
-        resolve(outputPath);
-      } else {
+    ffmpeg.on('close', async (code) => {
+      if (code !== 0) {
         reject(new Error(`Filter processing failed with code ${code}`));
+        return;
+      }
+      
+      try {
+        // Apply loudness normalization to filtered audio
+        await normalizeAudioLoudness(tempFilteredPath, outputPath);
+        
+        // Clean up temp file
+        fs.unlink(tempFilteredPath, () => {});
+        
+        resolve(outputPath);
+      } catch (error) {
+        // Clean up temp file on error
+        fs.unlink(tempFilteredPath, () => {});
+        reject(error);
       }
     });
     
@@ -731,10 +756,6 @@ const endRadioSession = (session: RadioSession) => {
   activeSessions.delete(session.guildId);
 };
 
-export const isRadioActiveInGuild = (guildId: string): boolean => {
-  return activeSessions.has(guildId);
-};
-
 const updateBotNickname = async (session: RadioSession, media: any) => {
   try {
     const guild = session.connection.joinConfig?.guildId;
@@ -746,15 +767,11 @@ const updateBotNickname = async (session: RadioSession, media: any) => {
     
     if (!guildObj || !guildObj.members.me) return;
     
-    // Get the first answer or use title
     const displayName = media.answers?.[0]?.answer || media.title || 'Unknown';
     const nickname = `📻${displayName}`;
-    
-    // Discord nickname limit is 32 characters
     const truncatedNickname = nickname.length > 32 ? nickname.substring(0, 29) + '...' : nickname;
     
     await guildObj.members.me.setNickname(truncatedNickname);
-    console.log(`Updated bot nickname to: ${truncatedNickname}`);
   } catch (error) {
     console.error('Failed to update bot nickname:', error);
   }
@@ -772,10 +789,96 @@ const resetBotNickname = async (session: RadioSession) => {
     if (!guildObj || !guildObj.members.me) return;
     
     await guildObj.members.me.setNickname('froget');
-    console.log('Reset bot nickname to: froget');
   } catch (error) {
     console.error('Failed to reset bot nickname:', error);
   }
+};
+
+const getNormalizedAudioPath = async (media: any): Promise<string> => {
+  const mediaId = media.id || crypto.createHash('md5').update(media.filePath).digest('hex');
+  const normalizedPath = path.join(NORMALIZED_CACHE_DIR, `normalized_${mediaId}.ogg`);
+  
+  if (fs.existsSync(normalizedPath)) {
+    return normalizedPath;
+  }
+  
+  const inputPath = MediaService.resolveMediaPath(media);
+  if (!fs.existsSync(inputPath) && media.filePath) {
+    return media.filePath;
+  }
+  
+  try {
+    await normalizeAudioLoudness(inputPath, normalizedPath);
+    return normalizedPath;
+  } catch (error) {
+    logger.error('Failed to normalize audio', error);
+    return inputPath;
+  }
+};
+
+const normalizeAudioLoudness = async (inputPath: string, outputPath: string): Promise<void> => {
+  return new Promise((resolve, reject) => {
+    // First pass: analyze loudness
+    const analyzeProcess = spawn('ffmpeg', [
+      '-i', inputPath,
+      '-af', 'loudnorm=I=-3:TP=-1:LRA=7:print_format=json',
+      '-f', 'null',
+      '-'
+    ]);
+    
+    let analysisOutput = '';
+    
+    analyzeProcess.stderr.on('data', (data) => {
+      analysisOutput += data.toString();
+    });
+    
+    analyzeProcess.on('close', (code) => {
+      if (code !== 0) {
+        reject(new Error(`Loudness analysis failed with code ${code}`));
+        return;
+      }
+      
+      try {
+        // Extract loudness stats from JSON output
+        const jsonMatch = analysisOutput.match(/\{[\s\S]*\}/);
+        if (!jsonMatch) {
+          throw new Error('No loudness stats found in analysis');
+        }
+        
+        const stats = JSON.parse(jsonMatch[0]);
+        
+        // Second pass: apply normalization
+        const normalizeProcess = spawn('ffmpeg', [
+          '-i', inputPath,
+          '-af', `loudnorm=I=-3:TP=-1:LRA=7:measured_I=${stats.input_i}:measured_TP=${stats.input_tp}:measured_LRA=${stats.input_lra}:measured_thresh=${stats.input_thresh}:offset=${stats.target_offset}:linear=true`,
+          '-c:a', 'libopus',
+          '-b:a', '128k',
+          '-f', 'ogg',
+          '-y',
+          outputPath
+        ]);
+        
+        normalizeProcess.on('close', (normalizeCode) => {
+          if (normalizeCode === 0) {
+            resolve();
+          } else {
+            reject(new Error(`Loudness normalization failed with code ${normalizeCode}`));
+          }
+        });
+        
+        normalizeProcess.on('error', reject);
+        
+      } catch (error) {
+        reject(new Error(`Failed to parse loudness stats: ${error}`));
+      }
+    });
+    
+    analyzeProcess.on('error', reject);
+  });
+};
+
+export const isRadioActiveInGuild = (guildId: string): boolean => {
+  return activeSessions.has(guildId);
 };
 
 // Helper function to check if a string is a YouTube URL
