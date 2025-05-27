@@ -136,28 +136,35 @@ export const handleSkipCommand = async (message: Message) => {
   }
 
   const session = activeSessions.get(message.guild.id)!;
-  session.skipRequested = true;
   
+  // If next track is ready, skip immediately
+  if (session.nextMediaPath && fs.existsSync(session.nextMediaPath)) {
+    await message.reply('⏭️ Skipping...');
+    session.audioPlayer.stop();
+    return;
+  }
+  
+  // Otherwise prepare next track first
+  session.skipRequested = true;
   await message.reply('⏭️ Preparing next track...');
   
-  // If next track isn't ready, prepare it first
-  if (!session.nextMediaPath && !session.isProcessingNext) {
+  if (!session.isProcessingNext) {
     await prepareNextTrack(session);
   }
   
-  // Wait for next track to be ready before skipping
-  const waitForReady = setInterval(() => {
-    if (session.nextMediaPath || !session.isProcessingNext) {
-      clearInterval(waitForReady);
+  // Wait for preparation to complete
+  const checkReady = () => {
+    if (session.nextMediaPath && fs.existsSync(session.nextMediaPath)) {
       session.audioPlayer.stop();
+    } else if (!session.isProcessingNext) {
+      // Fallback if processing failed
+      session.audioPlayer.stop();
+    } else {
+      setTimeout(checkReady, 100);
     }
-  }, 100);
+  };
   
-  // Fallback timeout
-  setTimeout(() => {
-    clearInterval(waitForReady);
-    session.audioPlayer.stop();
-  }, 5000);
+  checkReady();
 };
 
 export const handleQueueCommand = async (message: Message, searchTerm?: string) => {
@@ -403,9 +410,9 @@ const playNext = async (session: RadioSession, channel: any) => {
         nextMedia = randomMedia[0];
       }
       
-      // Process the track now
-      if (session.currentFilters.length > 0) {
-        filePath = await getOrCreateFilteredVersion(nextMedia, session.currentFilters);
+      // Process the track now with next filters (which become current)
+      if (session.nextFilters.length > 0) {
+        filePath = await getOrCreateFilteredVersion(nextMedia, session.nextFilters);
       } else {
         filePath = await getNormalizedAudioPath(nextMedia);
       }
