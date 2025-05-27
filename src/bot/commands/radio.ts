@@ -211,6 +211,14 @@ export const handleQueueCommand = async (message: Message, searchTerm?: string) 
       }
     }
 
+    // If no database match, try music library
+    if (!mediaItem) {
+      const musicResults = await MediaService.searchMusicLibrary(searchTerm, 1);
+      if (musicResults.length > 0) {
+        mediaItem = musicResults[0];
+      }
+    }
+
     if (!mediaItem) {
       await statusMessage.edit(`❌ No media found for "${searchTerm}"`);
       return;
