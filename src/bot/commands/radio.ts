@@ -361,29 +361,43 @@ const prepareNextTrack = async (session: RadioSession) => {
 };
 
 const queueRewindEffect = async (session: RadioSession) => {
-  const rewindPath = await createRewindEffect(session.currentMedia, session);
-  
-  // Calculate effect duration based on current playback position
-  const currentTime = (Date.now() - session.playbackStartTime) / 1000;
-  const rewindDuration = Math.min(currentTime, session.currentTrackDuration, 30);
-  const rewindSpeed = Math.max(4, Math.min(16, rewindDuration / 2));
-  const effectDuration = Math.max(1000, (rewindDuration / rewindSpeed) * 1000); // Convert to ms
-  
-  const rewindEffect: EffectRender = {
-    type: 'rewind',
-    filePath: rewindPath,
-    duration: effectDuration,
-    onComplete: () => {
-      // Restart current track from beginning
-      session.nextMedia = session.currentMedia;
-      session.nextFilters = session.currentFilters.slice();
-    }
-  };
-  
-  session.effectQueue.push(rewindEffect);
-  
-  // Stop current playback immediately to trigger the effect
-  session.audioPlayer.stop();
+  try {
+    console.log('Creating rewind effect...');
+    const rewindPath = await createRewindEffect(session.currentMedia, session);
+    console.log('Rewind effect created:', rewindPath);
+    
+    // Calculate effect duration based on current playback position
+    const currentTime = (Date.now() - session.playbackStartTime) / 1000;
+    const rewindDuration = Math.min(currentTime, session.currentTrackDuration, 30);
+    const rewindSpeed = Math.max(4, Math.min(16, rewindDuration / 2));
+    const effectDuration = Math.max(1000, (rewindDuration / rewindSpeed) * 1000); // Convert to ms
+    
+    console.log(`Rewind stats: currentTime=${currentTime}s, rewindDuration=${rewindDuration}s, speed=${rewindSpeed}x, effectDuration=${effectDuration}ms`);
+    
+    const rewindEffect: EffectRender = {
+      type: 'rewind',
+      filePath: rewindPath,
+      duration: effectDuration,
+      onComplete: () => {
+        console.log('Rewind effect completed, restarting track');
+        // Restart current track from beginning
+        session.nextMedia = session.currentMedia;
+        session.nextFilters = session.currentFilters.slice();
+      }
+    };
+    
+    session.effectQueue.push(rewindEffect);
+    console.log('Rewind effect queued, stopping current playback');
+    
+    // Stop current playback immediately to trigger the effect
+    session.audioPlayer.stop();
+  } catch (error) {
+    console.error('Error creating rewind effect:', error);
+    // Fallback: just restart the track
+    session.nextMedia = session.currentMedia;
+    session.nextFilters = session.currentFilters.slice();
+    session.audioPlayer.stop();
+  }
 };
 
 const createRewindEffect = async (media: any, session: RadioSession): Promise<string> => {
@@ -454,15 +468,28 @@ const createRewindEffect = async (media: any, session: RadioSession): Promise<st
 };
 
 const playEffect = async (session: RadioSession, effect: EffectRender) => {
+  console.log(`Playing effect: ${effect.type} from ${effect.filePath}`);
+  
+  if (!fs.existsSync(effect.filePath)) {
+    console.error(`Effect file not found: ${effect.filePath}`);
+    if (effect.onComplete) {
+      effect.onComplete();
+    }
+    return;
+  }
+  
   const resource = createAudioResource(effect.filePath);
   session.audioPlayer.play(resource);
+  console.log(`Effect started, duration: ${effect.duration}ms`);
   
   // Clean up effect file after playing
   setTimeout(() => {
+    console.log(`Cleaning up effect file: ${effect.filePath}`);
     fs.unlink(effect.filePath, () => {});
   }, effect.duration + 1000);
   
   if (effect.onComplete) {
+    console.log('Triggering effect onComplete callback');
     effect.onComplete();
   }
 };
