@@ -189,6 +189,26 @@ export const handleQueueCommand = async (message: Message, searchTerm?: string) 
         };
       }
     }
+    // Check if it's a supported video URL (YouTube, Twitch, etc.)
+    else if (isSupportedVideoUrl(searchTerm)) {
+      // Delete the original message to prevent URL embed
+      try {
+        await message.delete();
+      } catch (error) {
+        // Ignore if we can't delete (permissions, etc.)
+      }
+      
+      const downloadedMedia = await downloadYouTubeVideo(searchTerm);
+      if (downloadedMedia) {
+        mediaItem = {
+          id: null,
+          title: downloadedMedia.title,
+          filePath: downloadedMedia.filePath,
+          isTemporary: true,
+          answers: [downloadedMedia.title]
+        };
+      }
+    }
     // Check if it's a direct media URL
     else if (isDirectMediaUrl(searchTerm)) {
       const downloadedMedia = await downloadDirectMedia(searchTerm);
@@ -762,6 +782,12 @@ const resetBotNickname = async (session: RadioSession) => {
 const isYouTubeUrl = (url: string): boolean => {
   const youtubeRegex = /^(https?:\/\/)?(www\.)?(youtube\.com|youtu\.?be)\/.+$/;
   return youtubeRegex.test(url);
+};
+
+// Helper function to check if a string is a supported video URL (YouTube, Twitch, etc.)
+const isSupportedVideoUrl = (url: string): boolean => {
+  const supportedRegex = /^(https?:\/\/)?(www\.)?(youtube\.com|youtu\.?be|twitch\.tv)\/.+$/;
+  return supportedRegex.test(url);
 };
 
 // Helper function to download and extract video info from YouTube URL
