@@ -162,10 +162,10 @@ export const handlePxGuess = async (message: Message): Promise<boolean> => {
     return true; // Consider it a guess attempt but don't award points
   }
   
-  // Check each valid answer with strict character-level distance
+  // Check each valid answer with fuzzy matching
   const correctMatch = validAnswers.find((validAnswer: string) => {
     const distance = calculateLevenshteinDistance(guess, validAnswer);
-    const maxAllowedDistance = Math.min(2, Math.floor(validAnswer.length * 0.1)); // Max 2 chars or 10% of length
+    const maxAllowedDistance = Math.min(2, Math.floor(validAnswer.length * 0.15)); // Allow up to 15% character errors
     return distance <= maxAllowedDistance;
   });
   
