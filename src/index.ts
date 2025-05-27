@@ -30,6 +30,7 @@ import { generateThumbnailsForExistingMedia, scanAndProcessUnprocessedMedia } fr
 import fs from 'fs';
 import { logger } from './utils/logger';
 import { handleRadioCommand, handleQueueCommand, handleRadioStop, isRadioActiveInGuild } from './bot/commands/radio';
+import { migrateMultilineAnswers } from './database/migrations';
 
 // Load environment variables, handle both development and production paths
 const envPaths = [
@@ -534,6 +535,10 @@ async function init() {
     
     await initializeDjTable();
     logger.info('DJ table initialized');
+    
+    // Run migrations
+    await migrateMultilineAnswers();
+    logger.info('Database migrations completed');
     
     // Start the web server
     app.listen(PORT, () => {

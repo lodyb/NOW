@@ -69,6 +69,13 @@ export const handleUploadCommand = async (message: Message, searchTerm?: string)
       const defaultAnswer = mediaInfo.title || path.basename(mediaInfo.filePath, extension);
       answers = [defaultAnswer.replace(/[-_]/g, ' ')];
     }
+    
+    // Split any answers that contain newlines
+    answers = answers.flatMap(answer => 
+      answer.split(/\r?\n/)
+        .map(a => a.trim())
+        .filter(a => a.length > 0)
+    );
 
     // Save to database
     const mediaId = await saveMedia(
