@@ -7,6 +7,9 @@ export interface MediaFile {
   title: string;
   filePath: string;
   normalizedPath?: string;
+  answers: string[];
+  thumbnails: string[];
+  metadata?: any;
 }
 
 export class MediaService {

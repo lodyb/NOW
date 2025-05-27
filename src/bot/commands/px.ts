@@ -78,8 +78,11 @@ export const handlePxCommand = async (message: Message): Promise<void> => {
           if (timeoutSession?.isActive) {
             try {
               const replayRow = createReplayButton();
+              const primaryAnswer = timeoutSession.currentMedia.answers && timeoutSession.currentMedia.answers.length > 0 
+                ? timeoutSession.currentMedia.answers[0] 
+                : timeoutSession.currentMedia.title;
               await safeReply(message, {
-                content: `⏰ **Time's up!** The answer was: **${timeoutSession.currentMedia.title}**`,
+                content: `⏰ **Time's up!** The answer was: **${primaryAnswer}**`,
                 components: [replayRow]
               });
             } catch (error) {
@@ -118,45 +121,58 @@ export const handlePxGuess = async (message: Message): Promise<boolean> => {
 
   const guess = message.content.toLowerCase().trim();
   
+  // Get the primary answer (first answer) for display
+  const primaryAnswer = session.currentMedia.answers && session.currentMedia.answers.length > 0 
+    ? session.currentMedia.answers[0] 
+    : session.currentMedia.title;
+  
+  // Get all valid answers for checking
+  const validAnswers = session.currentMedia.answers && session.currentMedia.answers.length > 0
+    ? session.currentMedia.answers.map((a: any) => {
+        const answerText = typeof a === 'string' ? a : a.answer;
+        return answerText.toLowerCase();
+      })
+    : [session.currentMedia.title.toLowerCase()];
+  
   // Check for give up
   if (guess === 'give up') {
     const replayRow = createReplayButton();
     await safeReply(message, {
-      content: `🏳️ The answer was: **${session.currentMedia.title}**`,
+      content: `🏳️ The answer was: **${primaryAnswer}**`,
       components: [replayRow]
     });
     activeSessions.delete(channelId);
     return true;
   }
 
-  // Check against media title and answers with strict matching
-  const mediaTitle = session.currentMedia.title.toLowerCase();
-  
-  // First check exact match
-  if (guess === mediaTitle) {
+  // Check against all valid answers with exact matching first
+  if (validAnswers.some((answer: string) => guess === answer)) {
     const replayRow = createReplayButton();
     await safeReply(message, {
-      content: `🎉 Correct! It was **${session.currentMedia.title}**`,
+      content: `🎉 Correct! It was **${primaryAnswer}**`,
       components: [replayRow]
     });
     activeSessions.delete(channelId);
     return true;
   }
   
-  // Check if guess is reasonable length (at least 30% of title length)
-  const minRequiredLength = Math.floor(mediaTitle.length * 0.3);
+  // Check if guess is reasonable length (at least 30% of shortest answer length)
+  const minRequiredLength = Math.floor(Math.min(...validAnswers.map((a: string) => a.length)) * 0.3);
   if (guess.length < minRequiredLength) {
     return true; // Consider it a guess attempt but don't award points
   }
   
-  // Check with strict character-level distance (same as quiz)
-  const distance = calculateLevenshteinDistance(guess, mediaTitle);
-  const maxAllowedDistance = Math.min(2, Math.floor(mediaTitle.length * 0.1)); // Max 2 chars or 10% of length
+  // Check each valid answer with strict character-level distance
+  const correctMatch = validAnswers.find((validAnswer: string) => {
+    const distance = calculateLevenshteinDistance(guess, validAnswer);
+    const maxAllowedDistance = Math.min(2, Math.floor(validAnswer.length * 0.1)); // Max 2 chars or 10% of length
+    return distance <= maxAllowedDistance;
+  });
   
-  if (distance <= maxAllowedDistance) {
+  if (correctMatch) {
     const replayRow = createReplayButton();
     await safeReply(message, {
-      content: `🎉 Correct! It was **${session.currentMedia.title}**`,
+      content: `🎉 Correct! It was **${primaryAnswer}**`,
       components: [replayRow]
     });
     activeSessions.delete(channelId);
@@ -167,10 +183,10 @@ export const handlePxGuess = async (message: Message): Promise<boolean> => {
   session.hintsGiven++;
   
   if (session.hintsGiven === 3) {
-    const hint = session.currentMedia.title.substring(0, Math.ceil(session.currentMedia.title.length * 0.3));
+    const hint = primaryAnswer.substring(0, Math.ceil(primaryAnswer.length * 0.3));
     await safeReply(message, `💡 Hint: The title starts with "${hint}..."`);
   } else if (session.hintsGiven === 6) {
-    await safeReply(message, `💡 Hint: The full title is **${session.currentMedia.title.length}** characters long`);
+    await safeReply(message, `💡 Hint: The full title is **${primaryAnswer.length}** characters long`);
   }
 
   return true;
