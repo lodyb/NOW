@@ -14,6 +14,12 @@ import { spawn, ChildProcess } from 'child_process';
 import path from 'path';
 import fs from 'fs';
 import { audioEffects, videoEffects } from '../../media/processor';
+// @ts-ignore
+import youtubeDl from 'youtube-dl-exec';
+import crypto from 'crypto';
+import fetch from 'node-fetch';
+import { Stream } from 'stream';
+import { promisify } from 'util';
 
 interface RadioSession {
   guildId: string;
@@ -157,27 +163,69 @@ export const handleQueueCommand = async (message: Message, searchTerm?: string) 
     await message.reply(`📻 **Queue (${session.queue.length} tracks):**\n\`\`\`\n${queueList}${remaining}\n\`\`\``);
     return;
   }
-  
-  // Add to queue if search term provided
+
+  const statusMessage = await message.reply('Processing... ⏳');
+
   try {
-    const mediaItems = await MediaService.findMedia(searchTerm, false, 1);
-    
-    if (mediaItems.length === 0) {
-      await message.reply(`No media found for "${searchTerm}"`);
+    let mediaItem;
+
+    // Check for attachments in current message first
+    if (message.attachments.size > 0) {
+      const downloadedMedia = await extractMediaFromAttachment(message.attachments.first()!);
+      if (downloadedMedia) {
+        mediaItem = downloadedMedia;
+      }
+    }
+    // Check if it's a YouTube URL
+    else if (isYouTubeUrl(searchTerm)) {
+      const downloadedMedia = await downloadYouTubeVideo(searchTerm);
+      if (downloadedMedia) {
+        mediaItem = {
+          id: null,
+          title: downloadedMedia.title,
+          filePath: downloadedMedia.filePath,
+          isTemporary: true,
+          answers: [downloadedMedia.title]
+        };
+      }
+    }
+    // Check if it's a direct media URL
+    else if (isDirectMediaUrl(searchTerm)) {
+      const downloadedMedia = await downloadDirectMedia(searchTerm);
+      if (downloadedMedia) {
+        mediaItem = downloadedMedia;
+      }
+    }
+    // Check for attachments in replied message
+    else if (message.reference?.messageId) {
+      const downloadedMedia = await extractMediaFromReply(message);
+      if (downloadedMedia) {
+        mediaItem = downloadedMedia;
+      }
+    }
+    // Fall back to database search
+    else {
+      const mediaItems = await MediaService.findMedia(searchTerm, false, 1);
+      if (mediaItems.length > 0) {
+        mediaItem = mediaItems[0];
+      }
+    }
+
+    if (!mediaItem) {
+      await statusMessage.edit(`❌ No media found for "${searchTerm}"`);
       return;
     }
+
+    session.queue.push(mediaItem);
     
-    const media = mediaItems[0];
-    session.queue.push(media);
+    const primaryAnswer = mediaItem.answers && mediaItem.answers.length > 0 
+      ? (typeof mediaItem.answers[0] === 'string' ? mediaItem.answers[0] : mediaItem.answers[0].answer)
+      : mediaItem.title;
     
-    const primaryAnswer = media.answers && media.answers.length > 0 
-      ? media.answers[0] 
-      : media.title;
-    
-    await message.reply(`🎵 Added "${primaryAnswer}" to queue (position ${session.queue.length})`);
+    await statusMessage.edit(`🎵 Added "${primaryAnswer}" to queue (position ${session.queue.length})`);
   } catch (error) {
     logger.error('Error queuing media', error);
-    await message.reply('Failed to queue media');
+    await statusMessage.edit(`❌ Failed to queue media: ${(error as Error).message}`);
   }
 };
 
@@ -685,4 +733,113 @@ const resetBotNickname = async (session: RadioSession) => {
   } catch (error) {
     console.error('Failed to reset bot nickname:', error);
   }
+};
+
+// Helper function to check if a string is a YouTube URL
+const isYouTubeUrl = (url: string): boolean => {
+  const youtubeRegex = /^(https?:\/\/)?(www\.)?(youtube\.com|youtu\.?be)\/.+$/;
+  return youtubeRegex.test(url);
+};
+
+// Helper function to download and extract video info from YouTube URL
+const downloadYouTubeVideo = async (url: string): Promise<{ title: string; filePath: string } | null> => {
+  try {
+    const output = await youtubeDl(url, {
+      dumpSingleJson: true,
+      noWarnings: true,
+      defaultSearch: 'ytsearch',
+      format: 'best[ext=mp4]/best'
+    });
+
+    // Type guard to check if output has the expected properties
+    if (output && typeof output === 'object' && 'title' in output && output.title) {
+      // Generate a unique filename
+      const id = crypto.randomBytes(8).toString('hex');
+      const ext = ('ext' in output && output.ext) ? output.ext : 'mp4';
+      const tempFilePath = path.join(TEMP_EFFECTS_DIR, `yt_${id}.${ext}`);
+      
+      // Download the actual file
+      await youtubeDl(url, {
+        output: tempFilePath,
+        format: 'best[ext=mp4]/best'
+      });
+      
+      return {
+        title: output.title as string,
+        filePath: tempFilePath
+      };
+    }
+    return null;
+  } catch (error) {
+    logger.error('YouTube download failed:', error);
+    return null;
+  }
+};
+
+// Helper function to check if a string is a direct media URL
+const isDirectMediaUrl = (url: string): boolean => {
+  const mediaExtensions = /\.(mp3|wav|ogg|m4a|flac|aac|wma|webm|mp4|avi|mov|mkv|flv|wmv|mpg|mpeg|3gp|3g2|ra|ram|aiff|aif|dsf|dff|cda|midi|mid|kar|opus|alac|vqf|wv|tak|ape|mac|mmf|spx|ogg2|oga|ogx|opus2|mka|m4b|aac2|aiff2|dsf2|dff2|wv2|tak2|ape2|mac2|mmf2|spx2)$/i;
+  return mediaExtensions.test(url);
+};
+
+// Helper function to download media from a direct URL
+const downloadDirectMedia = async (url: string) => {
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`HTTP error! Status: ${response.status}`);
+  
+  const buffer = await response.buffer();
+  const title = path.basename(url);
+  
+  // Generate a unique ID for the media item
+  const id = crypto.randomBytes(16).toString('hex');
+  
+  // Save the file temporarily
+  const tempFilePath = path.join(TEMP_EFFECTS_DIR, `${id}_${title}`);
+  fs.writeFileSync(tempFilePath, buffer);
+  
+  return {
+    id,
+    title,
+    filePath: tempFilePath,
+    isTemporary: true,
+    answers: [{ answer: title }]
+  };
+};
+
+// Helper function to extract media from a replied message
+const extractMediaFromReply = async (message: Message) => {
+  if (!message.reference?.messageId) return null;
+  
+  const repliedMessage = await message.channel.messages.fetch(message.reference.messageId);
+  
+  if (repliedMessage.attachments.size > 0) {
+    const attachment = repliedMessage.attachments.first();
+    if (attachment) {
+      return await extractMediaFromAttachment(attachment);
+    }
+  }
+  
+  return null;
+};
+
+// Helper function to extract media from a direct message attachment
+const extractMediaFromAttachment = async (attachment: any) => {
+  const response = await fetch(attachment.url);
+  const buffer = await response.buffer();
+  const title = attachment.name || 'downloaded_media';
+  
+  // Generate a unique ID for the media item
+  const id = crypto.randomBytes(16).toString('hex');
+  
+  // Save the file temporarily
+  const tempFilePath = path.join(TEMP_EFFECTS_DIR, `${id}_${title}`);
+  fs.writeFileSync(tempFilePath, buffer);
+  
+  return {
+    id,
+    title,
+    filePath: tempFilePath,
+    isTemporary: true,
+    answers: [{ answer: title }]
+  };
 };
