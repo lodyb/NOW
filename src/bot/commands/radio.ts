@@ -293,7 +293,6 @@ const playNext = async (session: RadioSession, channel: any) => {
     let filePath: string;
     
     if (session.currentFilters.length > 0) {
-      // Use pre-rendered filtered version
       filePath = await getOrCreateFilteredVersion(nextMedia, session.currentFilters);
     } else {
       filePath = MediaService.resolveMediaPath(nextMedia);
@@ -321,6 +320,9 @@ const playNext = async (session: RadioSession, channel: any) => {
     
     const resource = createAudioResource(filePath);
     session.audioPlayer.play(resource);
+    
+    // Update bot nickname with currently playing media
+    await updateBotNickname(session, nextMedia);
     
     // Start preparing next track in background
     prepareNextTrack(session);
@@ -413,8 +415,8 @@ const createRewindEffect = async (media: any, session: RadioSession): Promise<st
     return new Promise((resolve, reject) => {
       const ffmpeg = spawn('ffmpeg', [
         '-i', inputPath,
-        '-af', 'areverse,atempo=4,aecho=0.5:0.5:300:0.2,afade=t=out:st=1.5:d=0.5',
-        '-t', '2',
+        '-af', 'areverse,atempo=2.0,aecho=0.5:0.5:300:0.2,afade=t=out:st=0.8:d=0.2',
+        '-t', '1',
         '-f', 'ogg',
         '-y',
         outputPath
@@ -432,24 +434,35 @@ const createRewindEffect = async (media: any, session: RadioSession): Promise<st
     });
   }
   
-  // Create a sophisticated rewind effect that samples the entire track
-  // from current position back to beginning, accelerated
+  // Create rewind effect with proper atempo chaining
   return new Promise((resolve, reject) => {
-    const rewindSpeed = Math.max(4, Math.min(16, rewindDuration / 2)); // Adaptive speed based on content
+    const targetSpeed = Math.max(4, Math.min(16, rewindDuration / 2));
+    
+    // Chain atempo filters for speeds > 2.0
+    let atempoChain = '';
+    let remainingSpeed = targetSpeed;
+    while (remainingSpeed > 2.0) {
+      atempoChain += 'atempo=2.0,';
+      remainingSpeed /= 2.0;
+    }
+    if (remainingSpeed > 1.0) {
+      atempoChain += `atempo=${remainingSpeed.toFixed(2)},`;
+    }
+    
+    const filterChain = [
+      'areverse', // Reverse the audio
+      atempoChain + 'aecho=0.3:0.3:125:0.15', // Speed up + echo
+      'volume=1.2', // Boost volume slightly
+      'afade=t=in:st=0:d=0.05,afade=t=out:st=' + Math.max(0.5, (rewindDuration/targetSpeed - 0.2)) + ':d=0.1'
+    ].join(',');
+    
+    console.log(`Creating rewind with filter: ${filterChain}`);
     
     const ffmpeg = spawn('ffmpeg', [
       '-i', inputPath,
-      '-ss', '0', // Start from beginning
-      '-t', rewindDuration.toString(), // Take content up to current position
-      '-af', [
-        'areverse', // Reverse the audio
-        `atempo=${rewindSpeed}`, // Speed up significantly
-        'aecho=0.3:0.3:125:0.15,aecho=0.2:0.2:250:0.1', // Add echo for tape-like effect
-        'highpass=f=200', // Remove some low frequencies for clarity
-        'lowpass=f=8000', // Remove harsh highs
-        'volume=0.8', // Slightly reduce volume
-        'afade=t=in:st=0:d=0.1,afade=t=out:st=' + (rewindDuration/rewindSpeed - 0.3) + ':d=0.3'
-      ].join(','),
+      '-ss', '0',
+      '-t', rewindDuration.toString(),
+      '-af', filterChain,
       '-f', 'ogg',
       '-y',
       outputPath
@@ -618,9 +631,54 @@ const endRadioSession = (session: RadioSession) => {
     fs.unlink(effect.filePath, () => {});
   });
   
+  // Reset bot nickname
+  resetBotNickname(session);
+  
   activeSessions.delete(session.guildId);
 };
 
 export const isRadioActiveInGuild = (guildId: string): boolean => {
   return activeSessions.has(guildId);
+};
+
+const updateBotNickname = async (session: RadioSession, media: any) => {
+  if (!session.isActive || !session.connection) return;
+  
+  try {
+    const guild = session.connection.joinConfig?.guildId;
+    if (!guild) return;
+    
+    const bot = await import('../../index');
+    const client = bot.client;
+    const guildObj = client.guilds.cache.get(guild);
+    
+    if (!guildObj || !guildObj.members.me) return;
+    
+    // Use primary answer or title
+    const displayName = media.answers?.[0] || media.title;
+    const newNickname = displayName.length > 32 ? displayName.substring(0, 29) + '...' : displayName;
+    
+    await guildObj.members.me.setNickname(newNickname);
+    console.log(`Updated bot nickname to: ${newNickname}`);
+  } catch (error) {
+    console.error('Failed to update bot nickname:', error);
+  }
+};
+
+const resetBotNickname = async (session: RadioSession) => {
+  try {
+    const guild = session.connection.joinConfig?.guildId;
+    if (!guild) return;
+    
+    const bot = await import('../../index');
+    const client = bot.client;
+    const guildObj = client.guilds.cache.get(guild);
+    
+    if (!guildObj || !guildObj.members.me) return;
+    
+    await guildObj.members.me.setNickname('froget');
+    console.log('Reset bot nickname to: froget');
+  } catch (error) {
+    console.error('Failed to reset bot nickname:', error);
+  }
 };

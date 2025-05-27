@@ -105,7 +105,7 @@ app.get('/health', (req, res) => {
 });
 
 // Create a new Discord client
-const client = new Client({
+export const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMessages,
