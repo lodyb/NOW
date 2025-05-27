@@ -226,6 +226,11 @@ export const handleQueueCommand = async (message: Message, searchTerm?: string) 
 
     session.queue.push(mediaItem);
     
+    // Clear any prepared random track so queued items play next
+    if (session.nextMedia && (!session.queue.length || session.nextMedia !== session.queue[0])) {
+      session.nextMedia = null;
+    }
+    
     const primaryAnswer = mediaItem.answers && mediaItem.answers.length > 0 
       ? (typeof mediaItem.answers[0] === 'string' ? mediaItem.answers[0] : mediaItem.answers[0].answer)
       : mediaItem.title;
@@ -762,35 +767,47 @@ const isYouTubeUrl = (url: string): boolean => {
 // Helper function to download and extract video info from YouTube URL
 const downloadYouTubeVideo = async (url: string): Promise<{ title: string; filePath: string } | null> => {
   try {
-    const output = await youtubeDl(url, {
+    // First, get video info without downloading
+    const info = await youtubeDl(url, {
       dumpSingleJson: true,
       noWarnings: true,
-      defaultSearch: 'ytsearch',
-      format: 'best[ext=mp4]/best'
+      defaultSearch: 'ytsearch'
     });
 
-    // Type guard to check if output has the expected properties
-    if (output && typeof output === 'object' && 'title' in output && output.title) {
-      // Generate a unique filename
-      const id = crypto.randomBytes(8).toString('hex');
-      const ext = ('ext' in output && output.ext) ? output.ext : 'mp4';
-      const tempFilePath = path.join(TEMP_EFFECTS_DIR, `yt_${id}.${ext}`);
-      
-      // Download the actual file
-      await youtubeDl(url, {
-        output: tempFilePath,
-        format: 'best[ext=mp4]/best'
-      });
-      
-      return {
-        title: output.title as string,
-        filePath: tempFilePath
-      };
+    if (!info || typeof info !== 'object' || !('title' in info) || !info.title) {
+      return null;
     }
-    return null;
+
+    // Check duration (20 minutes = 1200 seconds)
+    const duration = info.duration as number;
+    if (duration && duration > 1200) {
+      throw new Error(`Video too long (${Math.round(duration / 60)} minutes). Maximum allowed: 20 minutes`);
+    }
+
+    // Check filesize if available (150MB = 157286400 bytes)
+    const filesize = info.filesize || info.filesize_approx;
+    if (filesize && filesize > 157286400) {
+      throw new Error(`Video too large (${Math.round(filesize / 1024 / 1024)}MB). Maximum allowed: 150MB`);
+    }
+
+    // Generate a unique filename
+    const id = crypto.randomBytes(8).toString('hex');
+    const ext = ('ext' in info && info.ext) ? info.ext : 'mp4';
+    const tempFilePath = path.join(TEMP_EFFECTS_DIR, `yt_${id}.${ext}`);
+    
+    // Download the actual file
+    await youtubeDl(url, {
+      output: tempFilePath,
+      format: 'best[ext=mp4]/best'
+    });
+    
+    return {
+      title: info.title as string,
+      filePath: tempFilePath
+    };
   } catch (error) {
     logger.error('YouTube download failed:', error);
-    return null;
+    throw error;
   }
 };
 
