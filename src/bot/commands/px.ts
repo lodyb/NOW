@@ -10,6 +10,7 @@ interface PxGameSession {
   isActive: boolean;
   startTime: number;
   hintsGiven: number;
+  timeoutId?: NodeJS.Timeout;
 }
 
 const activeSessions = new Map<string, PxGameSession>();
@@ -20,8 +21,12 @@ export const handlePxCommand = async (message: Message): Promise<void> => {
     
     // Check if there's already an active session
     if (activeSessions.has(channelId)) {
-      await safeReply(message, '🎮 A pixel game is already active in this channel! Try guessing the current image first.');
-      return;
+      // Clear existing timeout before deleting session
+      const existingSession = activeSessions.get(channelId);
+      if (existingSession?.timeoutId) {
+        clearTimeout(existingSession.timeoutId);
+      }
+      activeSessions.delete(channelId);
     }
 
     // Get a random video from the database (requireVideo = true)
@@ -72,7 +77,7 @@ export const handlePxCommand = async (message: Message): Promise<void> => {
       activeSessions.set(channelId, session);
 
       // Set up automatic timeout after 1 minute
-      setTimeout(async () => {
+      const timeoutId = setTimeout(async () => {
         if (activeSessions.has(channelId)) {
           const timeoutSession = activeSessions.get(channelId);
           if (timeoutSession?.isActive) {
@@ -92,6 +97,9 @@ export const handlePxCommand = async (message: Message): Promise<void> => {
           activeSessions.delete(channelId);
         }
       }, 60 * 1000); // 1 minute timeout
+
+      // Update session with timeout ID
+      session.timeoutId = timeoutId;
     }
 
   } catch (error) {
@@ -136,6 +144,10 @@ export const handlePxGuess = async (message: Message): Promise<boolean> => {
   
   // Check for give up
   if (guess === 'give up') {
+    // Clear timeout before ending session
+    if (session.timeoutId) {
+      clearTimeout(session.timeoutId);
+    }
     const replayRow = createReplayButton();
     await safeReply(message, {
       content: `🏳️ The answer was: **${primaryAnswer}**`,
@@ -147,6 +159,10 @@ export const handlePxGuess = async (message: Message): Promise<boolean> => {
 
   // Check against all valid answers with exact matching first
   if (validAnswers.some((answer: string) => guess === answer)) {
+    // Clear timeout before ending session
+    if (session.timeoutId) {
+      clearTimeout(session.timeoutId);
+    }
     const replayRow = createReplayButton();
     await safeReply(message, {
       content: `🎉 Correct! It was **${primaryAnswer}**`,
@@ -170,6 +186,10 @@ export const handlePxGuess = async (message: Message): Promise<boolean> => {
   });
   
   if (correctMatch) {
+    // Clear timeout before ending session
+    if (session.timeoutId) {
+      clearTimeout(session.timeoutId);
+    }
     const replayRow = createReplayButton();
     await safeReply(message, {
       content: `🎉 Correct! It was **${primaryAnswer}**`,
