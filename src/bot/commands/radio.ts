@@ -13,6 +13,7 @@ import { logger } from '../../utils/logger';
 import { spawn, ChildProcess } from 'child_process';
 import path from 'path';
 import fs from 'fs';
+import { audioEffects, videoEffects } from '../../media/processor';
 
 interface RadioSession {
   guildId: string;
@@ -94,6 +95,15 @@ export const handleFilterCommand = async (message: Message, filterString: string
   }
 
   const session = activeSessions.get(message.guild.id)!;
+  
+  // Check for clear/reset commands
+  const cleanFilter = filterString.replace(/[{}]/g, '').trim().toLowerCase();
+  if (cleanFilter === 'clear' || cleanFilter === 'reset' || cleanFilter === 'none') {
+    session.nextFilters = [];
+    await message.reply('🎛️ Filters cleared - next track will play without effects');
+    return;
+  }
+  
   const filters = parseFilters(filterString);
   
   session.nextFilters = filters;
@@ -440,20 +450,65 @@ const buildFilterArgs = (filters: string[]): string[] => {
   for (const filter of filters) {
     if (filter.includes('=')) {
       const [key, value] = filter.split('=');
-      args.push('-af', `${key}=${value}`);
+      
+      // Check if it's a known audio effect with the value
+      if (key in audioEffects) {
+        // For bass, treble, etc. that accept values
+        switch (key) {
+          case 'bass':
+            const bassGain = Number(value);
+            if (!isNaN(bassGain) && bassGain >= -20 && bassGain <= 20) {
+              args.push('-af', `bass=g=${bassGain}`);
+            }
+            break;
+          case 'treble':
+            const trebleGain = Number(value);
+            if (!isNaN(trebleGain) && trebleGain >= -20 && trebleGain <= 20) {
+              args.push('-af', `treble=g=${trebleGain}`);
+            }
+            break;
+          case 'volume':
+          case 'vol':
+          case 'amplify':
+            const vol = Number(value);
+            if (!isNaN(vol) && vol > 0 && vol <= 5) {
+              args.push('-af', `volume=${vol}`);
+            }
+            break;
+          case 'speed':
+          case 'tempo':
+            const speed = Number(value);
+            if (!isNaN(speed) && speed > 0.5 && speed < 2.0) {
+              args.push('-af', `atempo=${speed}`);
+            }
+            break;
+          default:
+            // Pass through other key=value filters
+            args.push('-af', `${key}=${value}`);
+        }
+      } else {
+        // Pass through unknown key=value filters
+        args.push('-af', `${key}=${value}`);
+      }
     } else {
-      // Predefined effects
-      switch (filter) {
-        case 'reverse':
-          args.push('-af', 'areverse');
-          break;
-        case 'echo':
-          args.push('-af', 'aecho=0.6:0.3:1000:0.5');
-          break;
-        case 'chipmunk':
-          args.push('-af', 'asetrate=44100*1.5,aresample=44100');
-          break;
-        // Add more predefined effects as needed
+      // Check if it's a known audio effect
+      if (filter in audioEffects) {
+        args.push('-af', audioEffects[filter]);
+      } else if (filter in videoEffects) {
+        args.push('-vf', videoEffects[filter]);
+      } else {
+        // Fallback for unknown filters
+        switch (filter) {
+          case 'reverse':
+            args.push('-af', 'areverse');
+            break;
+          case 'echo':
+            args.push('-af', 'aecho=0.6:0.3:1000:0.5');
+            break;
+          case 'chipmunk':
+            args.push('-af', 'asetrate=44100*1.5,aresample=44100');
+            break;
+        }
       }
     }
   }
