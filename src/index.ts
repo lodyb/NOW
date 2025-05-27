@@ -29,6 +29,7 @@ import { setupAuth, isAuthenticated } from './web/auth';
 import { generateThumbnailsForExistingMedia, scanAndProcessUnprocessedMedia } from './media/processor';
 import fs from 'fs';
 import { logger } from './utils/logger';
+import { handleRadioCommand, handleQueueCommand, handleRadioStop, isRadioActiveInGuild } from './bot/commands/radio';
 
 // Load environment variables, handle both development and production paths
 const envPaths = [
@@ -313,8 +314,23 @@ client.on(Events.MessageCreate, async (message) => {
           await saveUserLastCommand(message.author.id, message.author.username, message.content);
           break;
           
+        case 'radio':
+          await handleRadioCommand(message);
+          await saveUserLastCommand(message.author.id, message.author.username, message.content);
+          break;
+          
+        case 'queue':
+          await handleQueueCommand(message, commandArgs.searchTerm || '');
+          await saveUserLastCommand(message.author.id, message.author.username, message.content);
+          break;
+          
         case 'stop':
-          await handleStopCommand(message);
+          // Check if radio is active first, then quiz
+          if (isRadioActiveInGuild(message.guild?.id || '')) {
+            await handleRadioStop(message);
+          } else {
+            await handleStopCommand(message);
+          }
           await saveUserLastCommand(message.author.id, message.author.username, message.content);
           break;
           

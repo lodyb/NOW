@@ -38,9 +38,11 @@ const helpContent: HelpContent = {
       { name: 'NOW spectrogram [search]', description: 'Show audio spectrogram visualization' },
       { name: 'NOW mahjong [tiles]', description: 'Analyze a Riichi Mahjong hand' },
       { name: '@NOW [message]', description: 'Talk to the AI assistant' },
-      { name: 'NOW help [topic]', description: 'Show help for a specific topic' }
+      { name: 'NOW help [topic]', description: 'Show help for a specific topic' },
+      { name: 'NOW radio', description: 'Start continuous music playback in voice channel' },
+      { name: 'NOW queue [search]', description: 'Add media to the radio queue' }
     ],
-    footer: 'Type `NOW help [topic]` for more details on a topic.\nAvailable topics: filters, quiz, play, mahjong, ai, bind, upload'
+    footer: 'Type `NOW help [topic]` for more details on a topic.\nAvailable topics: filters, quiz, play, radio, mahjong, ai, bind, upload'
   },
   
   filters: {
@@ -147,7 +149,18 @@ const helpContent: HelpContent = {
       { name: 'NOW upload https://youtu.be/dQw4w9WgXcQ', description: 'Upload YouTube video using its title as the answer' }
     ],
     footer: 'YouTube URLs are automatically detected and downloaded with video titles.\nDirect media URLs (.mp4, .mp3, etc.) are also supported.\nAnswers in quotes become searchable terms for the quiz and play commands.\nIf no answers are provided, the filename or YouTube title is used automatically.\nUploaded media is automatically processed for Discord compatibility.'
-  }
+  },
+  
+  radio: {
+    title: '📻 Radio Commands',
+    description: 'Continuous music playback in voice channels:',
+    commands: [
+      { name: 'NOW radio', description: 'Start continuous music playback in your voice channel' },
+      { name: 'NOW queue [search]', description: 'Add media to the radio queue' },
+      { name: 'NOW stop', description: 'Stop the radio and clear the queue' }
+    ],
+    footer: 'Radio plays random media continuously when the queue is empty. Use queue to add specific songs next!'
+  },
 };
 
 export const handleHelpCommand = async (message: Message, helpTopic?: string) => {
@@ -159,7 +172,7 @@ export const handleHelpCommand = async (message: Message, helpTopic?: string) =>
     if (!Object.prototype.hasOwnProperty.call(helpContent, topic)) {
       await safeReply(
         message, 
-        `Unknown help topic: "${topic}". Available topics: general, filters, quiz, play, mahjong, ai`
+        `Unknown help topic: "${topic}". Available topics: general, filters, quiz, play, radio, mahjong, ai`
       );
       return;
     }
