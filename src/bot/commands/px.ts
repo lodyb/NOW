@@ -19,10 +19,14 @@ export const handlePxCommand = async (message: Message): Promise<void> => {
   try {
     const channelId = message.channel.id;
     
-    // Check if there's already an active session
+    // Check if there's already an active session - if so, ignore the request
     if (activeSessions.has(channelId)) {
-      // Clear existing timeout before deleting session
       const existingSession = activeSessions.get(channelId);
+      if (existingSession?.isActive) {
+        await safeReply(message, '🎯 A pixel game is already active in this channel! Finish the current game first.');
+        return;
+      }
+      // If session exists but isn't active, clean it up
       if (existingSession?.timeoutId) {
         clearTimeout(existingSession.timeoutId);
       }
