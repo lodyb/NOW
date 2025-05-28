@@ -4,6 +4,7 @@ import path from 'path';
 import fs from 'fs';
 import crypto from 'crypto';
 import { spawn } from 'child_process';
+import fetch from 'node-fetch';
 
 const TTS_CACHE_DIR = path.join(process.cwd(), 'temp', 'tts_cache');
 
@@ -78,26 +79,45 @@ export class VoiceAnnouncementService {
       const outputPath = path.join(TTS_CACHE_DIR, `tts_${cacheKey}.wav`);
       
       try {
-        // Use HTTP request to persistent TTS server
+        // Use HTTP request to persistent TTS server with timeout
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
+        
         const response = await fetch(`http://localhost:5002/api/tts?text=${encodeURIComponent(text)}`, {
           method: 'GET',
-          headers: { 'Accept': 'audio/wav' }
+          headers: { 
+            'Accept': 'audio/wav',
+            'User-Agent': 'Discord-Bot/1.0'
+          },
+          signal: controller.signal
         });
+        
+        clearTimeout(timeoutId);
         
         if (response.ok) {
           const arrayBuffer = await response.arrayBuffer();
-          fs.writeFileSync(outputPath, Buffer.from(arrayBuffer));
-          
-          this.ttsCache.set(cacheKey, outputPath);
-          const duration = await this.getAudioDuration(outputPath);
-          logger.debug(`Generated TTS audio via server: ${outputPath}, duration: ${duration}ms`);
-          return { path: outputPath, duration };
+          if (arrayBuffer.byteLength > 0) {
+            fs.writeFileSync(outputPath, Buffer.from(arrayBuffer));
+            
+            this.ttsCache.set(cacheKey, outputPath);
+            const duration = await this.getAudioDuration(outputPath);
+            logger.debug(`Generated TTS audio via server: ${outputPath}, duration: ${duration}ms`);
+            return { path: outputPath, duration };
+          } else {
+            logger.debug('TTS server returned empty response');
+            return this.generateTTSAudioFallback(text, outputPath, cacheKey);
+          }
         } else {
-          logger.debug(`TTS server request failed with status ${response.status}`);
+          const errorText = await response.text().catch(() => 'Unknown error');
+          logger.debug(`TTS server request failed with status ${response.status}: ${errorText}`);
           return this.generateTTSAudioFallback(text, outputPath, cacheKey);
         }
       } catch (error) {
-        logger.debug(`TTS server error: ${error}, falling back to Python TTS`);
+        if ((error as { name?: string }).name === 'AbortError') {
+          logger.debug('TTS server request timed out, falling back to Python TTS');
+        } else {
+          logger.debug(`TTS server error: ${error}, falling back to Python TTS`);
+        }
         return this.generateTTSAudioFallback(text, outputPath, cacheKey);
       }
     } catch (error) {
@@ -205,10 +225,10 @@ export class VoiceAnnouncementService {
   static async generateRadioIntro(): Promise<string | null> {
     try {
       const prompts = [
-        'You\'re starting a radio show. Give a quick 10-word energetic intro announcement.',
-        'You\'re a radio DJ going live. Make a brief 8-word welcome announcement.',
-        'Radio station starting up. Give a short 12-word catchy intro.',
-        'You\'re launching a music stream. Make a punchy 10-word opening announcement.'
+        'You\'re starting a radio show. Give a quick 6-word energetic intro.',
+        'You\'re a radio DJ going live. Make a brief 5-word welcome.',
+        'Radio station starting up. Give a short 7-word catchy intro.',
+        'You\'re launching a music stream. Make a punchy 6-word opening.'
       ];
       
       const prompt = prompts[Math.floor(Math.random() * prompts.length)] + ' Be conversational and natural. No quotes or formatting.';
@@ -301,13 +321,13 @@ export class VoiceAnnouncementService {
       const nextInfo = nextMedia ? this.extractMediaInfo(nextMedia) : { title: nextTitle, answers: [nextTitle] };
       
       const prompts = [
-        `DJ here! Someone skipped "${this.processText(currentTitle)}" to get to "${this.processText(nextInfo.title)}". ${nextInfo.duration ? `Coming up is ${nextInfo.duration} of ` : ''}Make a witty 12-word quip about this impatient skip!`,
-        `Radio personality speaking! Listener couldn't wait through "${this.processText(currentTitle)}" and jumped to "${this.processText(nextInfo.title)}". ${nextInfo.answers.length > 1 ? `Also known as ${nextInfo.answers.slice(1, 3).map(a => this.processText(a)).join(' or ')}. ` : ''}Give a sassy 10-word comment!`,
-        `DJ booth update! Track skipped from "${this.processText(currentTitle)}" straight to "${this.processText(nextInfo.title)}". ${nextInfo.duration ? `This ${nextInfo.duration} track ` : ''}Make a quick 8-word remark about the skip!`,
-        `Radio host here! Someone was eager to hear "${this.processText(nextInfo.title)}" instead of "${this.processText(currentTitle)}". ${nextInfo.answers.length > 0 ? `Fun fact: it's also called ${this.processText(nextInfo.answers[Math.floor(Math.random() * nextInfo.answers.length)])}. ` : ''}Say something clever in 12 words!`
+        `DJ here! Someone skipped to "${this.processText(nextInfo.title)}". Make a witty 6-word quip!`,
+        `Radio update! Jumped to "${this.processText(nextInfo.title)}"! Give a sassy 5-word comment!`,
+        `DJ booth! Skipped to "${this.processText(nextInfo.title)}"! Make a quick 7-word remark!`,
+        `Radio host! Fast-forwarded to "${this.processText(nextInfo.title)}"! Say something clever in 6 words!`
       ];
       
-      const prompt = prompts[Math.floor(Math.random() * prompts.length)] + ' Be conversational and natural. No quotes.';
+      const prompt = prompts[Math.floor(Math.random() * prompts.length)] + ' Be natural. No quotes.';
       
       const response = await runInference(prompt);
       
@@ -315,7 +335,7 @@ export class VoiceAnnouncementService {
         let announcement = response.text.trim()
           .replace(/^["']|["']$/g, '')
           .replace(/\n/g, ' ')
-          .substring(0, 200);
+          .substring(0, 100);
         
         announcement = this.processAnnouncementText(announcement);
         
@@ -339,13 +359,13 @@ export class VoiceAnnouncementService {
       const processedUsername = this.processText(username);
       
       const prompts = [
-        `DJ announcement! ${processedUsername} just requested "${this.processText(info.title)}"! ${info.duration ? `This ${info.duration} track ` : ''}${info.answers.length > 1 ? `also goes by ${info.answers.slice(1, 2).map(a => this.processText(a)).join(' or ')}. ` : ''}Give them a fun 12-word shoutout!`,
-        `Radio update! ${processedUsername} queued up "${this.processText(info.title)}" for us! ${info.answers.length > 0 ? `Fun fact: some call it ${this.processText(info.answers[Math.floor(Math.random() * info.answers.length)])}. ` : ''}Make a friendly 10-word mention!`,
-        `Station news! ${processedUsername} wants to hear "${this.processText(info.title)}"! ${info.duration ? `Coming up: ${info.duration} of audio goodness. ` : ''}Say something nice in 8 words!`,
-        `DJ here! ${processedUsername} made an excellent choice with "${this.processText(info.title)}"! ${info.answers.length > 1 ? `It's also known as ${info.answers.slice(1, 3).map(a => this.processText(a)).join(' and ')}. ` : ''}Give a personable 12-word response!`
+        `DJ! ${processedUsername} requested "${this.processText(info.title)}"! Give them a fun 6-word shoutout!`,
+        `Radio! ${processedUsername} queued "${this.processText(info.title)}"! Make a friendly 5-word mention!`,
+        `Station! ${processedUsername} wants "${this.processText(info.title)}"! Say something nice in 7 words!`,
+        `DJ! ${processedUsername} chose "${this.processText(info.title)}"! Give a 6-word response!`
       ];
       
-      const prompt = prompts[Math.floor(Math.random() * prompts.length)] + ' Be conversational and natural. No quotes.';
+      const prompt = prompts[Math.floor(Math.random() * prompts.length)] + ' Be natural. No quotes.';
       
       const response = await runInference(prompt);
       
@@ -353,7 +373,7 @@ export class VoiceAnnouncementService {
         let announcement = response.text.trim()
           .replace(/^["']|["']$/g, '')
           .replace(/\n/g, ' ')
-          .substring(0, 250);
+          .substring(0, 120);
         
         announcement = this.processAnnouncementText(announcement);
         
@@ -472,22 +492,22 @@ export class VoiceAnnouncementService {
     queuedBy?: string
   ): string {
     const prompts = [
-      `Radio DJ here! Just finished "${this.processText(currentInfo.title)}" and up next is "${this.processText(nextInfo.title)}"! ${nextInfo.duration ? `This ${nextInfo.duration} track ` : ''}${nextInfo.answers.length > 1 ? `also known as ${nextInfo.answers.slice(1, 3).map(a => this.processText(a)).join(' or ')}. ` : ''}${queuedBy ? `Requested by ${this.processText(queuedBy)}! ` : ''}Make a witty 15-word transition with a pun or fun fact!`,
+      `DJ here! From "${this.processText(currentInfo.title)}" to "${this.processText(nextInfo.title)}"! ${queuedBy ? `${this.processText(queuedBy)} requested this. ` : ''}Make a 8-word transition!`,
       
-      `DJ booth update! Transitioning from "${this.processText(currentInfo.title)}" to "${this.processText(nextInfo.title)}"! ${currentInfo.answers.length > 1 ? `That was also called ${this.processText(currentInfo.answers[1])}. ` : ''}${nextInfo.duration ? `Coming up: ${nextInfo.duration} of ` : ''}${queuedBy ? `This one's for ${this.processText(queuedBy)} who requested it. ` : ''}Give a clever 12-word intro!`,
+      `Radio update! "${this.processText(nextInfo.title)}" is up next! ${nextInfo.duration ? `${nextInfo.duration} track. ` : ''}${queuedBy ? `Thanks ${this.processText(queuedBy)}! ` : ''}Give a 6-word intro!`,
       
-      `Radio personality speaking! From "${this.processText(currentInfo.title)}" we're moving to "${this.processText(nextInfo.title)}"! ${nextInfo.answers.length > 0 ? `Fun fact: it goes by ${this.processText(nextInfo.answers[Math.floor(Math.random() * nextInfo.answers.length)])} too. ` : ''}${queuedBy ? `Special thanks to ${this.processText(queuedBy)} for the request! ` : ''}Make a punny 15-word comment!`,
+      `DJ booth! Moving to "${this.processText(nextInfo.title)}"! ${queuedBy ? `${this.processText(queuedBy)}'s choice. ` : ''}Make a 7-word comment!`,
       
-      `Station DJ here! We've wrapped "${this.processText(currentInfo.title)}" and now it's time for "${this.processText(nextInfo.title)}"! ${nextInfo.duration ? `Get ready for ${nextInfo.duration} of audio magic. ` : ''}${nextInfo.answers.length > 1 ? `Some folks call it ${nextInfo.answers.slice(1, 2).map(a => this.processText(a)).join(' or ')}. ` : ''}${queuedBy ? `Shoutout to ${this.processText(queuedBy)} for this choice! ` : ''}Give a witty 12-word bridge!`
+      `Radio time! "${this.processText(nextInfo.title)}" coming up! ${queuedBy ? `Shoutout ${this.processText(queuedBy)}! ` : ''}Give a 5-word bridge!`
     ];
     
     let basePrompt = prompts[Math.floor(Math.random() * prompts.length)];
     
     if (filterInfo) {
-      basePrompt += ` Note: ${filterInfo} will be applied for extra flavor.`;
+      basePrompt += ` Note: ${filterInfo} applied.`;
     }
     
-    basePrompt += ' Be conversational, punny, and natural. No quotes or formatting.';
+    basePrompt += ' Be natural. No quotes.';
     
     return basePrompt;
   }
