@@ -147,35 +147,48 @@ export const handleSkipCommand = async (message: Message) => {
 
   const session = activeSessions.get(message.guild.id)!;
   
-  // Generate skip announcement if voice announcements are enabled
-  if (session.voiceAnnouncementsEnabled && session.nextItem?.type === 'media') {
-    try {
-      const currentTitle = session.currentItem?.media?.answers?.[0] || session.currentItem?.media?.title || 'current track';
-      const nextTitle = session.nextItem.media?.answers?.[0] || session.nextItem.media?.title || 'next track';
-      
-      const skipText = await VoiceAnnouncementService.generateSkipAnnouncement(currentTitle, nextTitle);
-      if (skipText) {
-        const ttsResult = await VoiceAnnouncementService.generateTTSAudio(skipText);
-        if (ttsResult) {
-          // Insert skip announcement before the next track
-          const skipAnnouncement: QueueItem = {
-            type: 'announcement',
-            id: `skip_${Date.now()}`,
-            text: skipText,
-            processedPath: ttsResult.path,
-            duration: ttsResult.duration,
-            isProcessed: true
-          };
-          session.queue.unshift(skipAnnouncement);
-        }
-      }
-    } catch (error) {
-      logger.debug('Failed to generate skip announcement');
-    }
-  }
-  
   await message.reply('⏭️ Skipping...');
-  session.audioPlayer.stop();
+  
+  // If we have a pre-processed next item ready, skip immediately with TTS
+  if (session.nextItem?.processedPath && fs.existsSync(session.nextItem.processedPath)) {
+    
+    // Generate skip announcement if voice announcements are enabled
+    if (session.voiceAnnouncementsEnabled && session.nextItem.type === 'media') {
+      try {
+        const currentTitle = session.currentItem?.media?.answers?.[0] || session.currentItem?.media?.title || 'current track';
+        const nextTitle = session.nextItem.media?.answers?.[0] || session.nextItem.media?.title || 'next track';
+        
+        const skipText = await VoiceAnnouncementService.generateSkipAnnouncement(currentTitle, nextTitle, session.nextItem.media);
+        if (skipText) {
+          const ttsResult = await VoiceAnnouncementService.generateTTSAudio(skipText);
+          if (ttsResult) {
+            // Play skip announcement immediately
+            session.audioPlayer.stop();
+            
+            await updateBotNickname(session, null, '🗣️Skip');
+            const resource = createAudioResource(ttsResult.path);
+            session.audioPlayer.play(resource);
+            
+            // Play next track after announcement
+            setTimeout(() => {
+              playNextTrack(session);
+            }, ttsResult.duration + 300);
+            
+            return;
+          }
+        }
+      } catch (error) {
+        logger.debug('Failed to generate skip announcement, skipping directly');
+      }
+    }
+    
+    // No announcement - skip directly to prepared track
+    session.audioPlayer.stop();
+    setTimeout(() => playNextTrack(session), 100);
+  } else {
+    // Next track not ready - stop and let playNext handle it
+    session.audioPlayer.stop();
+  }
 };
 
 export const handleQueueCommand = async (message: Message, searchTerm?: string) => {
@@ -294,17 +307,23 @@ export const handleQueueCommand = async (message: Message, searchTerm?: string) 
       isProcessed: false
     });
     
+    // Clear any prepared random track so queued items play next
+    if (session.nextItem && (!session.queue.length || session.nextItem.media !== session.queue[0].media)) {
+      session.nextItem = null;
+    }
+    
     const primaryAnswer = mediaItem.answers && mediaItem.answers.length > 0 
       ? (typeof mediaItem.answers[0] === 'string' ? mediaItem.answers[0] : mediaItem.answers[0].answer)
       : mediaItem.title;
+    
+    await statusMessage.edit(`🎵 Added "${primaryAnswer}" to queue (position ${session.queue.length})`);
     
     // Generate queue request announcement
     if (session.voiceAnnouncementsEnabled) {
       try {
         const username = message.author.username || message.author.displayName || 'Someone';
-        const trackTitle = primaryAnswer;
         
-        const queueText = await VoiceAnnouncementService.generateQueueAnnouncement(username, trackTitle);
+        const queueText = await VoiceAnnouncementService.generateQueueAnnouncement(username, primaryAnswer, mediaItem);
         if (queueText) {
           const ttsResult = await VoiceAnnouncementService.generateTTSAudio(queueText);
           if (ttsResult) {
@@ -325,13 +344,6 @@ export const handleQueueCommand = async (message: Message, searchTerm?: string) 
         logger.debug('Failed to generate queue announcement');
       }
     }
-    
-    // Clear any prepared random track so queued items play next
-    if (session.nextItem && (!session.queue.length || session.nextItem.media !== session.queue[0].media)) {
-      session.nextItem = null;
-    }
-    
-    await statusMessage.edit(`🎵 Added "${primaryAnswer}" to queue (position ${session.queue.length})`);
   } catch (error) {
     logger.error('Error queuing media', error);
     await statusMessage.edit(`❌ Failed to queue media: ${(error as Error).message}`);
@@ -454,9 +466,6 @@ const playNext = async (session: RadioSession, channel: any) => {
       } catch (error) {
         logger.debug('Failed to generate radio intro, continuing with first track');
       }
-      
-      // If intro TTS failed, start first track immediately
-      prepareFirstTrack(session, channel);
     }
     
     let nextItem = session.nextItem;
@@ -519,7 +528,7 @@ const playNext = async (session: RadioSession, channel: any) => {
         const announcementText = await VoiceAnnouncementService.generateRadioAnnouncement(
           session.currentItem.media,
           nextItem.media,
-          session.currentItem.filters && session.currentItem.filters.length > 0 ? `Filters: ${session.currentItem.filters.join(', ')}` : undefined
+          nextItem.filters && nextItem.filters.length > 0 ? `Filters: ${nextItem.filters.join(', ')}` : undefined
         );
         
         if (announcementText) {
@@ -633,7 +642,7 @@ const prepareNextTrack = async (session: RadioSession) => {
       };
     }
     
-    // Process the media item
+    // Process the item
     let processedPath: string;
     
     if (nextItem.type === 'announcement') {
@@ -657,48 +666,7 @@ const prepareNextTrack = async (session: RadioSession) => {
       }
     }
     
-    // Generate TTS transition announcement for media items
-    if (nextItem.type === 'media' && session.currentItem?.type === 'media' && session.voiceAnnouncementsEnabled) {
-      try {
-        const announcementText = await VoiceAnnouncementService.generateRadioAnnouncement(
-          session.currentItem.media,
-          nextItem.media,
-          nextItem.filters && nextItem.filters.length > 0 ? `Filters: ${nextItem.filters.join(', ')}` : undefined
-        );
-        
-        if (announcementText) {
-          const ttsResult = await VoiceAnnouncementService.generateTTSAudio(announcementText);
-          if (ttsResult) {
-            // Queue TTS first, then media
-            const ttsItem: QueueItem = {
-              type: 'announcement',
-              id: `transition_${Date.now()}`,
-              text: announcementText,
-              processedPath: ttsResult.path,
-              duration: ttsResult.duration,
-              isProcessed: true
-            };
-            
-            // Insert TTS before the media item in queue
-            if (session.queue.length > 0 && session.queue[0].id === nextItem.id) {
-              session.queue.unshift(ttsItem);
-            } else {
-              // For random media, set up both items
-              session.nextItem = ttsItem;
-              // Queue the media after TTS
-              session.queue.unshift(nextItem);
-            }
-            
-            logger.debug('Prepared TTS transition and queued media');
-            return;
-          }
-        }
-      } catch (error) {
-        logger.debug('Failed to generate transition TTS, playing media directly');
-      }
-    }
-    
-    // Store processed item (no TTS transition)
+    // Store processed item
     session.nextItem = {
       ...nextItem,
       processedPath,
@@ -1314,30 +1282,26 @@ const downloadYouTubeVideo = async (url: string): Promise<{ title: string; fileP
       throw new Error(`Video too long (${Math.round(duration / 60)} minutes). Maximum allowed: 20 minutes`);
     }
 
+    // Check filesize if available (150MB = 157286400 bytes)
+    const filesize = (info as any).filesize || (info as any).filesize_approx;
+    if (filesize && filesize > 157286400) {
+      throw new Error(`Video too large (${Math.round(filesize / 1024 / 1024)}MB). Maximum allowed: 150MB`);
+    }
+
     // Generate a unique filename
     const id = crypto.randomBytes(8).toString('hex');
-    const tempFilePath = path.join(TEMP_EFFECTS_DIR, `yt_${id}.%(ext)s`);
+    const ext = ('ext' in info && info.ext) ? info.ext : 'mp4';
+    const tempFilePath = path.join(TEMP_EFFECTS_DIR, `yt_${id}.${ext}`);
     
-    // Download audio-only for better bandwidth efficiency
+    // Download the actual file
     await youtubeDl(url, {
       output: tempFilePath,
-      format: 'bestaudio[ext=m4a]/bestaudio[ext=mp3]/bestaudio/worst[height<=360]',
-      extractAudio: true,
-      audioFormat: 'mp3',
-      audioQuality: 96
+      format: 'best[ext=mp4]/best'
     });
-    
-    // Find the actual downloaded file
-    const downloadedFiles = fs.readdirSync(TEMP_EFFECTS_DIR).filter(f => f.startsWith(`yt_${id}`));
-    const actualFile = downloadedFiles[0];
-    
-    if (!actualFile) {
-      throw new Error('Downloaded file not found');
-    }
     
     return {
       title: info.title as string,
-      filePath: path.join(TEMP_EFFECTS_DIR, actualFile)
+      filePath: tempFilePath
     };
   } catch (error) {
     logger.error('YouTube download failed:', error);

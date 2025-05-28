@@ -21,22 +21,25 @@ export class VoiceAnnouncementService {
   static async generateRadioAnnouncement(
     currentMedia: any,
     nextMedia: any,
-    filterInfo?: string
+    filterInfo?: string,
+    queuedBy?: string
   ): Promise<string | null> {
     try {
-      const currentTitle = this.getMediaTitle(currentMedia);
-      const nextTitle = this.getMediaTitle(nextMedia);
+      const currentInfo = this.extractMediaInfo(currentMedia);
+      const nextInfo = this.extractMediaInfo(nextMedia);
       
-      const prompt = this.buildAnnouncementPrompt(currentTitle, nextTitle, filterInfo);
+      const prompt = this.buildEnhancedAnnouncementPrompt(currentInfo, nextInfo, filterInfo, queuedBy);
       
       const response = await runInference(prompt);
       
       if (response && response.text && response.text.trim()) {
-        // Clean up the response - remove quotes and keep it short
         let announcement = response.text.trim()
-          .replace(/^["']|["']$/g, '') // Remove leading/trailing quotes
-          .replace(/\n/g, ' ') // Replace newlines with spaces
-          .substring(0, 200); // Keep it under 200 chars for TTS
+          .replace(/^["']|["']$/g, '')
+          .replace(/\n/g, ' ')
+          .substring(0, 250);
+        
+        // Process the announcement text
+        announcement = this.processAnnouncementText(announcement);
         
         logger.debug(`Generated radio announcement: ${announcement}`);
         return announcement;
@@ -255,72 +258,6 @@ export class VoiceAnnouncementService {
     }
   }
 
-  /**
-   * Generate a skip announcement
-   */
-  static async generateSkipAnnouncement(currentTitle: string, nextTitle: string): Promise<string | null> {
-    try {
-      const prompts = [
-        `You're a radio DJ. Someone just skipped from "${currentTitle}" to "${nextTitle}". Make a brief 10-word quip about the skip.`,
-        `You're a witty radio host. A listener skipped from "${currentTitle}" to "${nextTitle}". Give a short 8-word comment.`,
-        `You're a sassy DJ. Track was skipped from "${currentTitle}" to "${nextTitle}". Make a quick 12-word remark.`,
-        `You're a quirky radio personality. Someone couldn't wait and skipped to "${nextTitle}". Say something funny in 10 words.`
-      ];
-      
-      const prompt = prompts[Math.floor(Math.random() * prompts.length)] + ' Be conversational and natural. No quotes or formatting.';
-      
-      const response = await runInference(prompt);
-      
-      if (response && response.text && response.text.trim()) {
-        let announcement = response.text.trim()
-          .replace(/^["']|["']$/g, '')
-          .replace(/\n/g, ' ')
-          .substring(0, 150);
-        
-        logger.debug(`Generated skip announcement: ${announcement}`);
-        return announcement;
-      }
-      
-      return null;
-    } catch (error) {
-      logger.error('Failed to generate skip announcement');
-      return null;
-    }
-  }
-
-  /**
-   * Generate a queue request announcement
-   */
-  static async generateQueueAnnouncement(username: string, trackTitle: string): Promise<string | null> {
-    try {
-      const prompts = [
-        `You're a radio DJ. ${username} just requested "${trackTitle}". Make a brief 12-word announcement about their request.`,
-        `You're a friendly radio host. ${username} queued up "${trackTitle}". Give a short 10-word shoutout.`,
-        `You're a chatty DJ. ${username} wants to hear "${trackTitle}". Make a quick 8-word mention.`,
-        `You're a personable radio personality. ${username} requested "${trackTitle}". Say something nice in 12 words.`
-      ];
-      
-      const prompt = prompts[Math.floor(Math.random() * prompts.length)] + ' Be conversational and natural. No quotes or formatting.';
-      
-      const response = await runInference(prompt);
-      
-      if (response && response.text && response.text.trim()) {
-        let announcement = response.text.trim()
-          .replace(/^["']|["']$/g, '')
-          .replace(/\n/g, ' ')
-          .substring(0, 200);
-        
-        logger.debug(`Generated queue announcement: ${announcement}`);
-        return announcement;
-      }
-      
-      return null;
-    } catch (error) {
-      logger.error('Failed to generate queue announcement');
-      return null;
-    }
-  }
-
   private static getMediaTitle(media: any): string {
     if (!media) return 'unknown track';
     
@@ -352,6 +289,205 @@ export class VoiceAnnouncementService {
     }
     
     basePrompt += ' Be conversational and natural. No quotes or formatting.';
+    
+    return basePrompt;
+  }
+
+  /**
+   * Generate a skip announcement
+   */
+  static async generateSkipAnnouncement(currentTitle: string, nextTitle: string, nextMedia?: any): Promise<string | null> {
+    try {
+      const nextInfo = nextMedia ? this.extractMediaInfo(nextMedia) : { title: nextTitle, answers: [nextTitle] };
+      
+      const prompts = [
+        `DJ here! Someone skipped "${this.processText(currentTitle)}" to get to "${this.processText(nextInfo.title)}". ${nextInfo.duration ? `Coming up is ${nextInfo.duration} of ` : ''}Make a witty 12-word quip about this impatient skip!`,
+        `Radio personality speaking! Listener couldn't wait through "${this.processText(currentTitle)}" and jumped to "${this.processText(nextInfo.title)}". ${nextInfo.answers.length > 1 ? `Also known as ${nextInfo.answers.slice(1, 3).map(a => this.processText(a)).join(' or ')}. ` : ''}Give a sassy 10-word comment!`,
+        `DJ booth update! Track skipped from "${this.processText(currentTitle)}" straight to "${this.processText(nextInfo.title)}". ${nextInfo.duration ? `This ${nextInfo.duration} track ` : ''}Make a quick 8-word remark about the skip!`,
+        `Radio host here! Someone was eager to hear "${this.processText(nextInfo.title)}" instead of "${this.processText(currentTitle)}". ${nextInfo.answers.length > 0 ? `Fun fact: it's also called ${this.processText(nextInfo.answers[Math.floor(Math.random() * nextInfo.answers.length)])}. ` : ''}Say something clever in 12 words!`
+      ];
+      
+      const prompt = prompts[Math.floor(Math.random() * prompts.length)] + ' Be conversational and natural. No quotes.';
+      
+      const response = await runInference(prompt);
+      
+      if (response && response.text && response.text.trim()) {
+        let announcement = response.text.trim()
+          .replace(/^["']|["']$/g, '')
+          .replace(/\n/g, ' ')
+          .substring(0, 200);
+        
+        announcement = this.processAnnouncementText(announcement);
+        
+        logger.debug(`Generated skip announcement: ${announcement}`);
+        return announcement;
+      }
+      
+      return null;
+    } catch (error) {
+      logger.error('Failed to generate skip announcement');
+      return null;
+    }
+  }
+
+  /**
+   * Generate a queue request announcement
+   */
+  static async generateQueueAnnouncement(username: string, trackTitle: string, mediaInfo?: any): Promise<string | null> {
+    try {
+      const info = mediaInfo ? this.extractMediaInfo(mediaInfo) : { title: trackTitle, answers: [trackTitle] };
+      const processedUsername = this.processText(username);
+      
+      const prompts = [
+        `DJ announcement! ${processedUsername} just requested "${this.processText(info.title)}"! ${info.duration ? `This ${info.duration} track ` : ''}${info.answers.length > 1 ? `also goes by ${info.answers.slice(1, 2).map(a => this.processText(a)).join(' or ')}. ` : ''}Give them a fun 12-word shoutout!`,
+        `Radio update! ${processedUsername} queued up "${this.processText(info.title)}" for us! ${info.answers.length > 0 ? `Fun fact: some call it ${this.processText(info.answers[Math.floor(Math.random() * info.answers.length)])}. ` : ''}Make a friendly 10-word mention!`,
+        `Station news! ${processedUsername} wants to hear "${this.processText(info.title)}"! ${info.duration ? `Coming up: ${info.duration} of audio goodness. ` : ''}Say something nice in 8 words!`,
+        `DJ here! ${processedUsername} made an excellent choice with "${this.processText(info.title)}"! ${info.answers.length > 1 ? `It's also known as ${info.answers.slice(1, 3).map(a => this.processText(a)).join(' and ')}. ` : ''}Give a personable 12-word response!`
+      ];
+      
+      const prompt = prompts[Math.floor(Math.random() * prompts.length)] + ' Be conversational and natural. No quotes.';
+      
+      const response = await runInference(prompt);
+      
+      if (response && response.text && response.text.trim()) {
+        let announcement = response.text.trim()
+          .replace(/^["']|["']$/g, '')
+          .replace(/\n/g, ' ')
+          .substring(0, 250);
+        
+        announcement = this.processAnnouncementText(announcement);
+        
+        logger.debug(`Generated queue announcement: ${announcement}`);
+        return announcement;
+      }
+      
+      return null;
+    } catch (error) {
+      logger.error('Failed to generate queue announcement');
+      return null;
+    }
+  }
+
+  /**
+   * Extract comprehensive media information
+   */
+  private static extractMediaInfo(media: any): { title: string; answers: string[]; duration?: string } {
+    const answers = media.answers ? 
+      (Array.isArray(media.answers) ? 
+        media.answers.map((a: any) => typeof a === 'string' ? a : a.answer) :
+        [media.answers]) :
+      [];
+    
+    const title = answers[0] || media.title || 'unknown track';
+    
+    // Estimate duration if available from metadata
+    let duration: string | undefined;
+    if (media.metadata?.duration) {
+      const seconds = Math.round(media.metadata.duration);
+      if (seconds < 60) {
+        duration = `${seconds} seconds`;
+      } else if (seconds < 3600) {
+        const mins = Math.floor(seconds / 60);
+        duration = `${mins} minute${mins !== 1 ? 's' : ''}`;
+      } else {
+        const hours = Math.floor(seconds / 3600);
+        const mins = Math.floor((seconds % 3600) / 60);
+        duration = `${hours}h ${mins}m`;
+      }
+    }
+    
+    return { title, answers, duration };
+  }
+
+  /**
+   * Process text to convert emojis and foreign characters
+   */
+  private static processText(text: string): string {
+    if (!text) return '';
+    
+    // Convert emojis to text descriptions
+    let processed = text
+      .replace(/🎵/g, 'music note')
+      .replace(/🎶/g, 'musical notes')
+      .replace(/🎤/g, 'microphone')
+      .replace(/🎧/g, 'headphones')
+      .replace(/🎼/g, 'musical score')
+      .replace(/🎹/g, 'piano')
+      .replace(/🥁/g, 'drum')
+      .replace(/🎺/g, 'trumpet')
+      .replace(/🎸/g, 'guitar')
+      .replace(/🎻/g, 'violin')
+      .replace(/📻/g, 'radio')
+      .replace(/🔊/g, 'loud speaker')
+      .replace(/🔉/g, 'speaker')
+      .replace(/🔈/g, 'quiet speaker')
+      .replace(/❤️/g, 'heart')
+      .replace(/💖/g, 'sparkling heart')
+      .replace(/⭐/g, 'star')
+      .replace(/✨/g, 'sparkles')
+      .replace(/🌟/g, 'glowing star')
+      .replace(/🎮/g, 'game controller')
+      .replace(/🎯/g, 'bullseye')
+      .replace(/🎪/g, 'circus tent')
+      .replace(/🎭/g, 'performing arts')
+      .replace(/🎨/g, 'artist palette')
+      .replace(/🎬/g, 'clapper board')
+      .replace(/📺/g, 'television')
+      .replace(/📱/g, 'mobile phone')
+      .replace(/💻/g, 'laptop')
+      .replace(/🖥️/g, 'desktop computer');
+    
+    // Basic romaji conversion for common Japanese characters
+    processed = processed
+      .replace(/を/g, 'wo')
+      .replace(/は/g, 'wa')
+      .replace(/の/g, 'no')
+      .replace(/が/g, 'ga')
+      .replace(/で/g, 'de')
+      .replace(/に/g, 'ni')
+      .replace(/と/g, 'to')
+      .replace(/か/g, 'ka')
+      .replace(/た/g, 'ta')
+      .replace(/さ/g, 'sa')
+      .replace(/な/g, 'na')
+      .replace(/ま/g, 'ma')
+      .replace(/や/g, 'ya')
+      .replace(/ら/g, 'ra')
+      .replace(/わ/g, 'wa');
+    
+    return processed;
+  }
+
+  /**
+   * Process final announcement text
+   */
+  private static processAnnouncementText(text: string): string {
+    return this.processText(text);
+  }
+
+  private static buildEnhancedAnnouncementPrompt(
+    currentInfo: { title: string; answers: string[]; duration?: string },
+    nextInfo: { title: string; answers: string[]; duration?: string },
+    filterInfo?: string,
+    queuedBy?: string
+  ): string {
+    const prompts = [
+      `Radio DJ here! Just finished "${this.processText(currentInfo.title)}" and up next is "${this.processText(nextInfo.title)}"! ${nextInfo.duration ? `This ${nextInfo.duration} track ` : ''}${nextInfo.answers.length > 1 ? `also known as ${nextInfo.answers.slice(1, 3).map(a => this.processText(a)).join(' or ')}. ` : ''}${queuedBy ? `Requested by ${this.processText(queuedBy)}! ` : ''}Make a witty 15-word transition with a pun or fun fact!`,
+      
+      `DJ booth update! Transitioning from "${this.processText(currentInfo.title)}" to "${this.processText(nextInfo.title)}"! ${currentInfo.answers.length > 1 ? `That was also called ${this.processText(currentInfo.answers[1])}. ` : ''}${nextInfo.duration ? `Coming up: ${nextInfo.duration} of ` : ''}${queuedBy ? `This one's for ${this.processText(queuedBy)} who requested it. ` : ''}Give a clever 12-word intro!`,
+      
+      `Radio personality speaking! From "${this.processText(currentInfo.title)}" we're moving to "${this.processText(nextInfo.title)}"! ${nextInfo.answers.length > 0 ? `Fun fact: it goes by ${this.processText(nextInfo.answers[Math.floor(Math.random() * nextInfo.answers.length)])} too. ` : ''}${queuedBy ? `Special thanks to ${this.processText(queuedBy)} for the request! ` : ''}Make a punny 15-word comment!`,
+      
+      `Station DJ here! We've wrapped "${this.processText(currentInfo.title)}" and now it's time for "${this.processText(nextInfo.title)}"! ${nextInfo.duration ? `Get ready for ${nextInfo.duration} of audio magic. ` : ''}${nextInfo.answers.length > 1 ? `Some folks call it ${nextInfo.answers.slice(1, 2).map(a => this.processText(a)).join(' or ')}. ` : ''}${queuedBy ? `Shoutout to ${this.processText(queuedBy)} for this choice! ` : ''}Give a witty 12-word bridge!`
+    ];
+    
+    let basePrompt = prompts[Math.floor(Math.random() * prompts.length)];
+    
+    if (filterInfo) {
+      basePrompt += ` Note: ${filterInfo} will be applied for extra flavor.`;
+    }
+    
+    basePrompt += ' Be conversational, punny, and natural. No quotes or formatting.';
     
     return basePrompt;
   }
