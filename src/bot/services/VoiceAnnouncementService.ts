@@ -70,10 +70,9 @@ export class VoiceAnnouncementService {
       const outputPath = path.join(TTS_CACHE_DIR, `tts_${cacheKey}.wav`);
       
       return new Promise((resolve) => {
-        // Use Coqui TTS with fast English model for radio announcements
         const coquiTts = spawn('tts', [
           '--text', text,
-          '--model_name', 'tts_models/en/ljspeech/fast_pitch',
+          '--model_name', 'tts_models/en/ljspeech/tacotron2-DDC',
           '--out_path', outputPath
         ], { stdio: ['pipe', 'pipe', 'pipe'] });
         
