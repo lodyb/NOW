@@ -54,6 +54,11 @@ export class VoiceAnnouncementService {
    */
   static async generateTTSAudio(text: string): Promise<{ path: string; duration: number } | null> {
     try {
+      if (!text.trim()) {
+        logger.debug('Empty text provided for TTS');
+        return null;
+      }
+      
       // Check cache first
       const cacheKey = crypto.createHash('md5').update(text).digest('hex');
       
@@ -72,7 +77,7 @@ export class VoiceAnnouncementService {
       return new Promise((resolve) => {
         const coquiTts = spawn('tts', [
           '--text', text,
-          '--model_name', 'tts_models/en/ljspeech/tacotron2-DDC',
+          '--model_name', 'tts_models/ja/kokoro/tacotron2-DDC',
           '--out_path', outputPath
         ], { stdio: ['pipe', 'pipe', 'pipe'] });
         
@@ -83,7 +88,7 @@ export class VoiceAnnouncementService {
             logger.debug(`Generated Coqui TTS audio: ${outputPath}, duration: ${duration}ms`);
             resolve({ path: outputPath, duration });
           } else {
-            logger.debug(`Coqui TTS failed with code ${code}`);
+            logger.debug(`Coqui TTS failed with code ${code} for text: "${text}"`);
             resolve(null);
           }
         });
