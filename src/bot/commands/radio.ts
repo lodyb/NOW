@@ -383,12 +383,19 @@ const handleTrackEnd = async (session: RadioSession, channel: any) => {
     return;
   }
   
-  // Normal track progression
-  playNext(session, channel);
+  // Only progress to next track if we're not already processing
+  if (!session.isProcessingNext) {
+    playNext(session, channel);
+  }
 };
 
 const playNext = async (session: RadioSession, channel: any) => {
   try {
+    // Prevent multiple concurrent calls
+    if (session.isProcessingNext) {
+      return;
+    }
+    
     // Play intro first if not played yet (while preparing first track)
     if (!session.introPlayed) {
       session.introPlayed = true;
@@ -454,8 +461,8 @@ const playNext = async (session: RadioSession, channel: any) => {
       }
     }
     
-    // Generate voice announcement if enabled and we have a current track
-    if (session.voiceAnnouncementsEnabled && session.currentMedia) {
+    // Generate voice announcement if enabled and we have a current track and this isn't a skip
+    if (session.voiceAnnouncementsEnabled && session.currentMedia && !session.skipRequested) {
       try {
         const announcementText = await VoiceAnnouncementService.generateRadioAnnouncement(
           session.currentMedia,
@@ -487,12 +494,18 @@ const playNext = async (session: RadioSession, channel: any) => {
       }
     }
     
+    // Reset skip flag
+    session.skipRequested = false;
+    
     // No announcement - play track directly
     await playNextTrack(session, nextMedia, filePath);
     
   } catch (error) {
     logger.error('Error in playNext', error);
-    setTimeout(() => playNext(session, channel), 3000);
+    // Only retry after a delay if not already processing
+    if (!session.isProcessingNext) {
+      setTimeout(() => playNext(session, channel), 3000);
+    }
   }
 };
 
@@ -573,6 +586,7 @@ const playNextTrack = async (session: RadioSession, nextMedia?: any, filePath?: 
     
     if (!media || !path || !fs.existsSync(path)) {
       logger.error('No valid track to play');
+      session.isProcessingNext = false; // Reset flag on error
       return;
     }
     
@@ -583,6 +597,8 @@ const playNextTrack = async (session: RadioSession, nextMedia?: any, filePath?: 
     session.nextMediaPath = null;
     session.nextFilters = [];
     session.playbackStartTime = Date.now();
+    session.isProcessingNext = false; // Reset processing flag
+    session.skipRequested = false; // Reset skip flag here too
     
     // Get track duration for timing calculations
     session.currentTrackDuration = await getAudioDuration(path);
@@ -595,14 +611,17 @@ const playNextTrack = async (session: RadioSession, nextMedia?: any, filePath?: 
     session.audioPlayer.play(resource);
     
     // Start preparing next track while current plays
-    if (!session.isProcessingNext) {
-      setTimeout(() => prepareNextTrack(session), 2000);
-    }
+    setTimeout(() => {
+      if (!session.isProcessingNext) {
+        prepareNextTrack(session);
+      }
+    }, 2000);
     
     logger.debug(`Playing track: ${media.title || media.answers?.[0] || 'Unknown'}`);
     
   } catch (error) {
     logger.error('Error playing track', error);
+    session.isProcessingNext = false; // Reset flag on error
   }
 };
 
