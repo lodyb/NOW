@@ -92,21 +92,6 @@ export const handleRadioCommand = async (message: Message) => {
   }
 };
 
-export const handleRewindCommand = async (message: Message) => {
-  if (!message.guild || !activeSessions.has(message.guild.id)) {
-    await message.reply('No radio session active');
-    return;
-  }
-
-  const session = activeSessions.get(message.guild.id)!;
-  if (!session.currentItem) {
-    await message.reply('Nothing currently playing');
-    return;
-  }
-
-  await message.reply('⏪ Rewinding...');
-  await queueRewindEffect(session);
-};
 
 export const handleFilterCommand = async (message: Message, filterString: string) => {
   if (!message.guild || !activeSessions.has(message.guild.id)) {
@@ -524,10 +509,16 @@ const playNext = async (session: RadioSession, channel: any) => {
         nextItem.type === 'media' && 
         session.currentItem?.type === 'media') {
       try {
+        // Pass queue requester info if available
+        const queuedBy = session.queue.length > 0 && session.queue[0] === nextItem ? 
+          undefined : // Don't pass username for random tracks
+          undefined;  // We'd need to track this info in QueueItem to implement properly
+          
         const announcementText = await VoiceAnnouncementService.generateRadioAnnouncement(
           session.currentItem.media,
           nextItem.media,
-          nextItem.filters && nextItem.filters.length > 0 ? `Filters: ${nextItem.filters.join(', ')}` : undefined
+          nextItem.filters && nextItem.filters.length > 0 ? `Filters: ${nextItem.filters.join(', ')}` : undefined,
+          queuedBy
         );
         
         if (announcementText) {
@@ -576,8 +567,25 @@ const playNextTrack = async (session: RadioSession, nextItem?: QueueItem, filePa
     const item = nextItem || session.nextItem;
     const path = filePath || session.nextItem?.processedPath;
     
-    if (!item || !path || !fs.existsSync(path)) {
-      logger.error('No valid track to play');
+    if (!item || !path) {
+      logger.error('No valid track to play - missing item or path');
+      // Try to recover by preparing next track
+      setTimeout(() => {
+        if (session.isActive && !session.isProcessingNext) {
+          prepareNextTrack(session);
+        }
+      }, 1000);
+      return;
+    }
+    
+    if (!fs.existsSync(path)) {
+      logger.error(`Track file does not exist: ${path}`);
+      // Try to recover by preparing next track
+      setTimeout(() => {
+        if (session.isActive && !session.isProcessingNext) {
+          prepareNextTrack(session);
+        }
+      }, 1000);
       return;
     }
     
@@ -614,6 +622,12 @@ const playNextTrack = async (session: RadioSession, nextItem?: QueueItem, filePa
     
   } catch (error) {
     logger.error('Error playing track', error);
+    // Retry after a short delay
+    setTimeout(() => {
+      if (session.isActive && !session.isProcessingNext) {
+        prepareNextTrack(session);
+      }
+    }, 2000);
   }
 };
 
@@ -641,48 +655,8 @@ const prepareNextTrack = async (session: RadioSession) => {
       };
     }
     
-    // If announcements are enabled and next item is media and current item is also media,
-    // automatically insert an intermission announcement before the media
-    if (session.voiceAnnouncementsEnabled && 
-        nextItem.type === 'media' && 
-        session.currentItem?.type === 'media') {
-      try {
-        const announcementText = await VoiceAnnouncementService.generateRadioAnnouncement(
-          session.currentItem.media,
-          nextItem.media,
-          nextItem.filters && nextItem.filters.length > 0 ? `Filters: ${nextItem.filters.join(', ')}` : undefined
-        );
-        
-        if (announcementText) {
-          const ttsResult = await VoiceAnnouncementService.generateTTSAudio(announcementText);
-          if (ttsResult) {
-            // Create intermission announcement
-            const intermissionItem: QueueItem = {
-              type: 'announcement',
-              id: `intermission_${Date.now()}`,
-              text: announcementText,
-              processedPath: ttsResult.path,
-              duration: ttsResult.duration,
-              isProcessed: true
-            };
-            
-            // If next item was from queue, insert announcement before it
-            if (session.queue.length > 0 && session.queue[0].id === nextItem.id) {
-              session.queue.splice(0, 0, intermissionItem);
-              // Set the announcement as the next item to be played
-              nextItem = intermissionItem;
-            } else {
-              // Random media - just set announcement as next item
-              nextItem = intermissionItem;
-            }
-            
-            logger.debug('Generated intermission announcement for media transition');
-          }
-        }
-      } catch (error) {
-        logger.debug('Failed to generate intermission announcement');
-      }
-    }
+    // DON'T generate intermission announcements here - only in playNext
+    // This prevents duplicate announcements during preparation
     
     // Process the item
     let processedPath: string;
@@ -800,139 +774,6 @@ const getAudioDuration = async (filePath: string): Promise<number> => {
     ffprobe.on('error', () => {
       resolve(180); // Fallback duration
     });
-  });
-};
-
-const queueRewindEffect = async (session: RadioSession) => {
-  try {
-    if (!session.currentItem || session.currentItem.type !== 'media') {
-      return;
-    }
-    
-    console.log('Creating rewind effect...');
-    const rewindPath = await createRewindEffect(session.currentItem.media, session);
-    console.log('Rewind effect created:', rewindPath);
-    
-    // Calculate effect duration based on current playback position
-    const currentTime = (Date.now() - session.playbackStartTime) / 1000;
-    const duration = session.currentItem.duration || 180;
-    const rewindDuration = Math.min(currentTime, duration, 30);
-    const rewindSpeed = Math.max(4, Math.min(16, rewindDuration / 2));
-    const effectDuration = Math.max(1000, (rewindDuration / rewindSpeed) * 1000); // Convert to ms
-    
-    console.log(`Rewind stats: currentTime=${currentTime}s, rewindDuration=${rewindDuration}s, speed=${rewindSpeed}x, effectDuration=${effectDuration}ms`);
-    
-    const rewindEffect: QueueItem = {
-      type: 'media',
-      id: `rewind_${Date.now()}`,
-      media: {
-        id: null,
-        title: 'Rewind Effect',
-        filePath: rewindPath,
-        isTemporary: true,
-        answers: ['Rewind Effect']
-      },
-      duration: effectDuration,
-      isProcessed: false
-    };
-    
-    session.queue.push(rewindEffect);
-    console.log('Rewind effect queued, stopping current playback');
-    
-    // Stop current playback immediately to trigger the effect
-    session.audioPlayer.stop();
-  } catch (error) {
-    console.error('Error creating rewind effect:', error);
-    // Fallback: just restart the track
-    if (session.currentItem) {
-      session.nextItem = { ...session.currentItem };
-      if (session.nextItem) {
-        session.nextItem.filters = session.currentItem.filters?.slice() || [];
-      }
-    }
-    session.audioPlayer.stop();
-  }
-};
-
-const createRewindEffect = async (media: any, session: RadioSession): Promise<string> => {
-  const outputPath = path.join(TEMP_EFFECTS_DIR, `rewind_${Date.now()}.ogg`);
-  const inputPath = MediaService.resolveMediaPath(media);
-  
-  // Calculate current playback position
-  const currentTime = (Date.now() - session.playbackStartTime) / 1000;
-  const trackDuration = session.currentItem?.duration || 180;
-  const rewindDuration = Math.min(currentTime, trackDuration, 15); // Reduced cap for reliability
-  
-  if (rewindDuration < 0.5) {
-    // Very early in track - simple short reverse
-    return new Promise((resolve, reject) => {
-      const ffmpeg = spawn('ffmpeg', [
-        '-i', inputPath,
-        '-af', 'areverse,aecho=0.3:0.3:100:0.2',
-        '-t', '0.8',
-        '-f', 'ogg',
-        '-y',
-        outputPath
-      ]);
-      
-      ffmpeg.on('close', (code) => {
-        if (code === 0) resolve(outputPath);
-        else reject(new Error(`Simple rewind failed: ${code}`));
-      });
-      
-      ffmpeg.on('error', reject);
-    });
-  }
-  
-  // Extract the segment we want to rewind, then reverse
-  const startTime = Math.max(0, currentTime - rewindDuration);
-  
-  return new Promise((resolve, reject) => {
-    // First pass: extract segment and reverse
-    const tempReversed = path.join(TEMP_EFFECTS_DIR, `temp_reversed_${Date.now()}.ogg`);
-    
-    const extractAndReverse = spawn('ffmpeg', [
-      '-i', inputPath,
-      '-ss', startTime.toString(),
-      '-t', rewindDuration.toString(),
-      '-af', 'areverse',
-      '-f', 'ogg',
-      '-y',
-      tempReversed
-    ]);
-    
-    extractAndReverse.on('close', (code) => {
-      if (code !== 0) {
-        reject(new Error(`Segment extraction failed: ${code}`));
-        return;
-      }
-      
-      // Second pass: speed up with simpler approach
-      const speedMultiplier = Math.min(8, Math.max(2, rewindDuration / 2)); // Cap at 8x
-      
-      const speedUp = spawn('ffmpeg', [
-        '-i', tempReversed,
-        '-af', `asetrate=44100*${speedMultiplier},aresample=44100,aecho=0.2:0.2:80:0.15,volume=1.1`,
-        '-f', 'ogg',
-        '-y',
-        outputPath
-      ]);
-      
-      speedUp.on('close', (speedCode) => {
-        // Clean up temp file
-        fs.unlink(tempReversed, () => {});
-        
-        if (speedCode === 0) {
-          resolve(outputPath);
-        } else {
-          reject(new Error(`Speed adjustment failed: ${speedCode}`));
-        }
-      });
-      
-      speedUp.on('error', reject);
-    });
-    
-    extractAndReverse.on('error', reject);
   });
 };
 
