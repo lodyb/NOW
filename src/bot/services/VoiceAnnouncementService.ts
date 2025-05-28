@@ -50,7 +50,7 @@ export class VoiceAnnouncementService {
   }
 
   /**
-   * Generate TTS audio from text using Coqui TTS Docker GPU and return duration
+   * Generate TTS audio from text using persistent TTS server and return duration
    */
   static async generateTTSAudio(text: string): Promise<{ path: string; duration: number } | null> {
     try {
@@ -73,49 +73,30 @@ export class VoiceAnnouncementService {
       }
 
       const outputPath = path.join(TTS_CACHE_DIR, `tts_${cacheKey}.wav`);
-      const dockerOutputPath = '/root/tts-output/output.wav';
       
-      return new Promise((resolve) => {
-        // Use Docker GPU version for faster TTS
-        const dockerTts = spawn('docker', [
-          'run', '--rm', '--gpus', 'all',
-          '-v', `${TTS_CACHE_DIR}:/root/tts-output`,
-          'ghcr.io/coqui-ai/tts',
-          '--text', text,
-          '--model_name', 'tts_models/en/ljspeech/tacotron2-DDC',
-          '--out_path', dockerOutputPath,
-          '--use_cuda', 'true'
-        ], { stdio: ['pipe', 'pipe', 'pipe'] });
-        
-        let stderr = '';
-        dockerTts.stderr.on('data', (data) => {
-          stderr += data.toString();
+      try {
+        // Use HTTP request to persistent TTS server
+        const response = await fetch(`http://localhost:5002/api/tts?text=${encodeURIComponent(text)}`, {
+          method: 'GET',
+          headers: { 'Accept': 'audio/wav' }
         });
         
-        dockerTts.on('close', async (code) => {
-          const tempOutputPath = path.join(TTS_CACHE_DIR, 'output.wav');
+        if (response.ok) {
+          const arrayBuffer = await response.arrayBuffer();
+          fs.writeFileSync(outputPath, Buffer.from(arrayBuffer));
           
-          if (code === 0 && fs.existsSync(tempOutputPath)) {
-            // Move from temp name to final name
-            fs.renameSync(tempOutputPath, outputPath);
-            this.ttsCache.set(cacheKey, outputPath);
-            const duration = await this.getAudioDuration(outputPath);
-            logger.debug(`Generated Docker GPU TTS audio: ${outputPath}, duration: ${duration}ms`);
-            resolve({ path: outputPath, duration });
-          } else {
-            logger.debug(`Docker TTS failed with code ${code} for text: "${text}"`);
-            logger.debug(`TTS stderr: ${stderr}`);
-            // Fallback to regular Python TTS
-            this.generateTTSAudioFallback(text, outputPath, cacheKey).then(resolve);
-          }
-        });
-        
-        dockerTts.on('error', (error) => {
-          logger.debug(`Docker TTS spawn error: ${error.message}, falling back to Python TTS`);
-          // Fallback to regular Python TTS
-          this.generateTTSAudioFallback(text, outputPath, cacheKey).then(resolve);
-        });
-      });
+          this.ttsCache.set(cacheKey, outputPath);
+          const duration = await this.getAudioDuration(outputPath);
+          logger.debug(`Generated TTS audio via server: ${outputPath}, duration: ${duration}ms`);
+          return { path: outputPath, duration };
+        } else {
+          logger.debug(`TTS server request failed with status ${response.status}`);
+          return this.generateTTSAudioFallback(text, outputPath, cacheKey);
+        }
+      } catch (error) {
+        logger.debug(`TTS server error: ${error}, falling back to Python TTS`);
+        return this.generateTTSAudioFallback(text, outputPath, cacheKey);
+      }
     } catch (error) {
       return null;
     }
