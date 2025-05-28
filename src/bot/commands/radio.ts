@@ -22,33 +22,36 @@ import { Stream } from 'stream';
 import { promisify } from 'util';
 import { VoiceAnnouncementService } from '../services/VoiceAnnouncementService';
 
+interface QueueItem {
+  type: 'media' | 'announcement';
+  id: string;
+  // For media items
+  media?: any;
+  filters?: string[];
+  // For announcement items
+  text?: string;
+  // Processing state
+  processedPath?: string;
+  duration?: number;
+  isProcessed?: boolean;
+}
+
 interface RadioSession {
   guildId: string;
   channelId: string;
   connection: VoiceConnection;
-  queue: any[];
-  currentMedia: any;
-  nextMedia: any;
-  nextMediaPath: string | null; // Pre-processed file path
+  queue: QueueItem[];
+  currentItem: QueueItem | null;
+  nextItem: QueueItem | null;
   isActive: boolean;
   audioPlayer: any;
-  currentFilters: string[];
-  nextFilters: string[];
   isProcessingNext: boolean;
-  effectQueue: EffectRender[];
   playbackStartTime: number;
-  currentTrackDuration: number;
-  skipRequested: boolean; // Flag for skip handling
-  voiceAnnouncementsEnabled: boolean; // New flag for voice announcements
-  introPlayed: boolean; // Track if intro has been played
+  voiceAnnouncementsEnabled: boolean;
+  introPlayed: boolean;
 }
 
-interface EffectRender {
-  type: 'rewind' | 'filter_transition' | 'crossfade' | 'voice_announcement';
-  filePath: string;
-  duration: number;
-  onComplete?: () => void;
-}
+// Remove EffectRender interface - no longer needed
 
 const activeSessions = new Map<string, RadioSession>();
 const TEMP_EFFECTS_DIR = path.join(process.cwd(), 'temp', 'radio_effects');
@@ -96,7 +99,7 @@ export const handleRewindCommand = async (message: Message) => {
   }
 
   const session = activeSessions.get(message.guild.id)!;
-  if (!session.currentMedia) {
+  if (!session.currentItem) {
     await message.reply('Nothing currently playing');
     return;
   }
@@ -116,14 +119,18 @@ export const handleFilterCommand = async (message: Message, filterString: string
   // Check for clear/reset commands
   const cleanFilter = filterString.replace(/[{}]/g, '').trim().toLowerCase();
   if (cleanFilter === 'clear' || cleanFilter === 'reset' || cleanFilter === 'none') {
-    session.nextFilters = [];
+    if (session.nextItem) {
+      session.nextItem = { ...session.nextItem, filters: [] };
+    }
     await message.reply('🎛️ Filters cleared - next track will play without effects');
     return;
   }
   
   const filters = parseFilters(filterString);
   
-  session.nextFilters = filters;
+  if (session.nextItem) {
+    session.nextItem = { ...session.nextItem, filters };
+  }
   await message.reply(`🎛️ Filter "${filterString}" will apply to next track`);
   
   // Pre-render next track with filters
@@ -141,14 +148,21 @@ export const handleSkipCommand = async (message: Message) => {
   const session = activeSessions.get(message.guild.id)!;
   
   // If next track is ready, skip immediately
-  if (session.nextMediaPath && fs.existsSync(session.nextMediaPath)) {
+  if (session.nextItem?.processedPath && fs.existsSync(session.nextItem.processedPath)) {
     await message.reply('⏭️ Skipping...');
     session.audioPlayer.stop();
     return;
   }
   
   // Otherwise prepare next track first
-  session.skipRequested = true;
+  if (session.nextItem && session.nextItem.type && session.nextItem.id) {
+    session.nextItem = { 
+      ...session.nextItem,
+      type: session.nextItem.type,
+      id: session.nextItem.id,
+      isProcessed: false 
+    };
+  }
   await message.reply('⏭️ Preparing next track...');
   
   if (!session.isProcessingNext) {
@@ -157,7 +171,7 @@ export const handleSkipCommand = async (message: Message) => {
   
   // Wait for preparation to complete
   const checkReady = () => {
-    if (session.nextMediaPath && fs.existsSync(session.nextMediaPath)) {
+    if (session.nextItem?.processedPath && fs.existsSync(session.nextItem.processedPath)) {
       session.audioPlayer.stop();
     } else if (!session.isProcessingNext) {
       // Fallback if processing failed
@@ -187,8 +201,8 @@ export const handleQueueCommand = async (message: Message, searchTerm?: string) 
     
     const queueList = session.queue
       .slice(0, 10) // Show first 10 items
-      .map((media, index) => {
-        const title = media.answers?.[0] || media.title;
+      .map((item, index) => {
+        const title = item.media?.answers?.[0] || item.media?.title || item.text;
         return `${index + 1}. ${title}`;
       })
       .join('\n');
@@ -278,11 +292,17 @@ export const handleQueueCommand = async (message: Message, searchTerm?: string) 
       return;
     }
 
-    session.queue.push(mediaItem);
+    session.queue.push({
+      type: 'media',
+      id: (mediaItem as any).id || crypto.randomBytes(16).toString('hex'),
+      media: mediaItem,
+      filters: [],
+      isProcessed: false
+    });
     
     // Clear any prepared random track so queued items play next
-    if (session.nextMedia && (!session.queue.length || session.nextMedia !== session.queue[0])) {
-      session.nextMedia = null;
+    if (session.nextItem && (!session.queue.length || session.nextItem.media !== session.queue[0].media)) {
+      session.nextItem = null;
     }
     
     const primaryAnswer = mediaItem.answers && mediaItem.answers.length > 0 
@@ -304,12 +324,12 @@ export const handlePlayingCommand = async (message: Message) => {
   
   const session = activeSessions.get(message.guild.id)!;
   
-  if (!session.currentMedia) {
+  if (!session.currentItem) {
     await message.reply('📻 Nothing currently playing');
     return;
   }
   
-  const primaryAnswer = session.currentMedia.answers?.[0] || session.currentMedia.title;
+  const primaryAnswer = session.currentItem.media?.answers?.[0] || session.currentItem.media?.title;
   await message.reply(`🎵 Now playing: **${primaryAnswer}**`);
 };
 
@@ -340,18 +360,12 @@ const startRadioSession = async (message: Message, voiceChannel: VoiceBasedChann
     channelId: message.channelId,
     connection,
     queue: [],
-    currentMedia: null,
-    nextMedia: null,
-    nextMediaPath: null,
+    currentItem: null,
+    nextItem: null,
     isActive: true,
     audioPlayer,
-    currentFilters: [],
-    nextFilters: [],
     isProcessingNext: false,
-    effectQueue: [],
     playbackStartTime: 0,
-    currentTrackDuration: 0,
-    skipRequested: false,
     voiceAnnouncementsEnabled: true,
     introPlayed: false, // Track if intro has been played
   };
@@ -376,13 +390,6 @@ const startRadioSession = async (message: Message, voiceChannel: VoiceBasedChann
 };
 
 const handleTrackEnd = async (session: RadioSession, channel: any) => {
-  // Check if we have effects queued
-  if (session.effectQueue.length > 0) {
-    const effect = session.effectQueue.shift()!;
-    await playEffect(session, effect);
-    return;
-  }
-  
   // Only progress to next track if we're not already processing
   if (!session.isProcessingNext) {
     playNext(session, channel);
@@ -415,7 +422,7 @@ const playNext = async (session: RadioSession, channel: any) => {
             
             // Start next track after intro completes with small buffer
             setTimeout(() => {
-              if (session.nextMedia && session.nextMediaPath) {
+              if (session.nextItem?.processedPath) {
                 playNextTrack(session);
               }
             }, ttsResult.duration + 500);
@@ -427,47 +434,67 @@ const playNext = async (session: RadioSession, channel: any) => {
       }
     }
     
-    let nextMedia = session.nextMedia;
-    let filePath = session.nextMediaPath;
+    let nextItem = session.nextItem;
+    let filePath = session.nextItem?.processedPath;
     
-    // If we have a pre-processed track ready, use it
-    if (nextMedia && filePath && fs.existsSync(filePath)) {
-      logger.debug(`Using pre-processed track: ${filePath}`);
+    // If we have a pre-processed item ready, use it
+    if (nextItem && filePath && fs.existsSync(filePath)) {
+      logger.debug(`Using pre-processed item: ${filePath}`);
       
       // Remove from queue if it came from there
-      if (session.queue.length > 0 && 
-          ((session.queue[0].id && nextMedia.id && session.queue[0].id === nextMedia.id) ||
-           (session.queue[0].title === nextMedia.title && session.queue[0].filePath === nextMedia.filePath))) {
+      if (session.queue.length > 0 && session.queue[0].id === nextItem.id) {
         session.queue.shift();
       }
     } else {
-      // Fallback to normal track selection and processing
+      // Select next item from queue or random
       if (session.queue.length > 0) {
-        nextMedia = session.queue.shift();
+        nextItem = session.queue.shift()!;
       } else {
+        // Create random media item
         const randomMedia = await getRandomMedia(1);
         if (randomMedia.length === 0) {
           await channel.send('No media available');
           return;
         }
-        nextMedia = randomMedia[0];
+        nextItem = {
+          type: 'media',
+          id: `random_${Date.now()}`,
+          media: randomMedia[0],
+          filters: session.nextItem?.filters || [],
+          isProcessed: false
+        };
       }
       
-      // Process the track now with next filters (which become current)
-      if (session.nextFilters.length > 0) {
-        filePath = await getOrCreateFilteredVersion(nextMedia, session.nextFilters);
+      // Process the item
+      if (nextItem.type === 'announcement') {
+        if (!nextItem.processedPath) {
+          const ttsResult = await VoiceAnnouncementService.generateTTSAudio(nextItem.text!);
+          if (ttsResult) {
+            nextItem.processedPath = ttsResult.path;
+            nextItem.duration = ttsResult.duration;
+          }
+        }
+        filePath = nextItem.processedPath;
       } else {
-        filePath = await getNormalizedAudioPath(nextMedia);
+        // Media item processing
+        if (nextItem.filters && nextItem.filters.length > 0) {
+          filePath = await getOrCreateFilteredVersion(nextItem.media, nextItem.filters);
+        } else {
+          filePath = await getNormalizedAudioPath(nextItem.media);
+        }
       }
     }
     
-    // Generate voice announcement if enabled and we have a current track and this isn't a skip
-    if (session.voiceAnnouncementsEnabled && session.currentMedia && !session.skipRequested) {
+    // Generate voice announcement if enabled and previous track was media
+    if (session.voiceAnnouncementsEnabled && 
+        session.currentItem?.type === 'media' && 
+        nextItem.type === 'media' && 
+        !nextItem.isProcessed) {
       try {
         const announcementText = await VoiceAnnouncementService.generateRadioAnnouncement(
-          session.currentMedia,
-          nextMedia,
-          session.currentFilters.length > 0 ? `Filters: ${session.currentFilters.join(', ')}` : undefined
+          session.currentItem.media,
+          nextItem.media,
+          session.currentItem.filters && session.currentItem.filters.length > 0 ? `Filters: ${session.currentItem.filters.join(', ')}` : undefined
         );
         
         if (announcementText) {
@@ -480,9 +507,8 @@ const playNext = async (session: RadioSession, channel: any) => {
             session.audioPlayer.play(resource);
             
             // Store next track info and start it after announcement
-            session.nextMedia = nextMedia;
-            session.nextMediaPath = filePath;
-            session.nextFilters = session.nextFilters.slice();
+            session.nextItem = { ...nextItem, isProcessed: true };
+            session.nextItem.processedPath = filePath;
             
             // Use actual TTS duration instead of hardcoded timeout
             setTimeout(() => playNextTrack(session), ttsResult.duration + 500);
@@ -495,10 +521,12 @@ const playNext = async (session: RadioSession, channel: any) => {
     }
     
     // Reset skip flag
-    session.skipRequested = false;
+    if (session.nextItem) {
+      session.nextItem.isProcessed = false;
+    }
     
-    // No announcement - play track directly
-    await playNextTrack(session, nextMedia, filePath);
+    // No announcement - play item directly
+    await playNextTrack(session, nextItem, filePath);
     
   } catch (error) {
     logger.error('Error in playNext', error);
@@ -509,34 +537,109 @@ const playNext = async (session: RadioSession, channel: any) => {
   }
 };
 
+const playNextTrack = async (session: RadioSession, nextItem?: QueueItem, filePath?: string) => {
+  try {
+    // Use provided item or get from session
+    const item = nextItem || session.nextItem;
+    const path = filePath || session.nextItem?.processedPath;
+    
+    if (!item || !path || !fs.existsSync(path)) {
+      logger.error('No valid track to play');
+      return;
+    }
+    
+    // Update session state
+    session.currentItem = item;
+    session.nextItem = null;
+    session.playbackStartTime = Date.now();
+    
+    // Get track duration for timing calculations
+    item.duration = await getAudioDuration(path);
+    
+    // Update bot nickname to show current track
+    if (item.type === 'announcement') {
+      await updateBotNickname(session, null, '🗣️Announcement');
+    } else {
+      const displayName = item.media?.answers?.[0] || item.media?.title || 'Unknown Track';
+      await updateBotNickname(session, null, `📻${displayName}`);
+    }
+    
+    // Play the track
+    const resource = createAudioResource(path);
+    session.audioPlayer.play(resource);
+    
+    // Start preparing next track while current plays (after 2 seconds)
+    setTimeout(() => {
+      if (session.isActive && !session.isProcessingNext) {
+        prepareNextTrack(session);
+      }
+    }, 2000);
+    
+    const itemName = item.type === 'announcement' ? 'Announcement' : 
+                    (item.media?.title || item.media?.answers?.[0] || 'Unknown');
+    logger.debug(`Playing ${item.type}: ${itemName}`);
+    
+  } catch (error) {
+    logger.error('Error playing track', error);
+  }
+};
+
 const prepareNextTrack = async (session: RadioSession) => {
   if (session.isProcessingNext) return;
   
   session.isProcessingNext = true;
   
   try {
-    let nextMedia;
+    let nextItem: QueueItem;
     
+    // Get next item from queue or create random media
     if (session.queue.length > 0) {
-      nextMedia = session.queue[0]; // Don't shift yet
+      nextItem = session.queue[0]; // Don't shift yet - will be shifted when played
     } else {
       const randomMedia = await getRandomMedia(1);
       if (randomMedia.length === 0) return;
-      nextMedia = randomMedia[0];
+      
+      nextItem = {
+        type: 'media',
+        id: `random_${Date.now()}`,
+        media: randomMedia[0],
+        filters: [],
+        isProcessed: false
+      };
     }
     
-    session.nextMedia = nextMedia;
+    // Process the item
+    let processedPath: string;
     
-    // Pre-process the next track completely
-    let filePath: string;
-    if (session.nextFilters.length > 0) {
-      filePath = await getOrCreateFilteredVersion(nextMedia, session.nextFilters);
+    if (nextItem.type === 'announcement') {
+      if (!nextItem.processedPath) {
+        const ttsResult = await VoiceAnnouncementService.generateTTSAudio(nextItem.text!);
+        if (ttsResult) {
+          processedPath = ttsResult.path;
+          nextItem.duration = ttsResult.duration;
+        } else {
+          throw new Error('Failed to generate TTS for announcement');
+        }
+      } else {
+        processedPath = nextItem.processedPath;
+      }
     } else {
-      filePath = await getNormalizedAudioPath(nextMedia);
+      // Media item processing
+      if (nextItem.filters && nextItem.filters.length > 0) {
+        processedPath = await getOrCreateFilteredVersion(nextItem.media, nextItem.filters);
+      } else {
+        processedPath = await getNormalizedAudioPath(nextItem.media);
+      }
     }
     
-    session.nextMediaPath = filePath;
-    logger.debug(`Next track prepared: ${filePath}`);
+    // Store processed item
+    session.nextItem = {
+      ...nextItem,
+      processedPath,
+      isProcessed: true
+    };
+    
+    logger.debug(`Next ${nextItem.type} prepared: ${processedPath}`);
     
   } catch (error) {
     logger.error('Error preparing next track', error);
@@ -547,81 +650,55 @@ const prepareNextTrack = async (session: RadioSession) => {
 
 const prepareFirstTrack = async (session: RadioSession, channel: any) => {
   try {
-    let firstMedia;
+    let firstItem: QueueItem;
     
     if (session.queue.length > 0) {
-      firstMedia = session.queue.shift();
+      firstItem = session.queue.shift()!;
     } else {
       const randomMedia = await getRandomMedia(1);
       if (randomMedia.length === 0) {
         await channel.send('No media available');
         return;
       }
-      firstMedia = randomMedia[0];
+      
+      firstItem = {
+        type: 'media',
+        id: `random_${Date.now()}`,
+        media: randomMedia[0],
+        filters: [],
+        isProcessed: false
+      };
     }
     
-    session.nextMedia = firstMedia;
-    
-    // Process first track with any pending filters
+    // Process first track
     let filePath: string;
-    if (session.nextFilters.length > 0) {
-      filePath = await getOrCreateFilteredVersion(firstMedia, session.nextFilters);
+    
+    if (firstItem.type === 'announcement') {
+      const ttsResult = await VoiceAnnouncementService.generateTTSAudio(firstItem.text!);
+      if (ttsResult) {
+        filePath = ttsResult.path;
+        firstItem.duration = ttsResult.duration;
+      } else {
+        throw new Error('Failed to generate TTS for first announcement');
+      }
     } else {
-      filePath = await getNormalizedAudioPath(firstMedia);
+      if (firstItem.filters && firstItem.filters.length > 0) {
+        filePath = await getOrCreateFilteredVersion(firstItem.media, firstItem.filters);
+      } else {
+        filePath = await getNormalizedAudioPath(firstItem.media);
+      }
     }
     
-    session.nextMediaPath = filePath;
+    session.nextItem = {
+      ...firstItem,
+      processedPath: filePath,
+      isProcessed: true
+    };
+    
     logger.debug('First track prepared while intro was playing');
     
   } catch (error) {
     logger.error('Error preparing first track', error);
-  }
-};
-
-const playNextTrack = async (session: RadioSession, nextMedia?: any, filePath?: string) => {
-  try {
-    // Use provided media or get from session
-    const media = nextMedia || session.nextMedia;
-    const path = filePath || session.nextMediaPath;
-    
-    if (!media || !path || !fs.existsSync(path)) {
-      logger.error('No valid track to play');
-      session.isProcessingNext = false; // Reset flag on error
-      return;
-    }
-    
-    // Update session state
-    session.currentMedia = media;
-    session.currentFilters = session.nextFilters.slice();
-    session.nextMedia = null;
-    session.nextMediaPath = null;
-    session.nextFilters = [];
-    session.playbackStartTime = Date.now();
-    session.isProcessingNext = false; // Reset processing flag
-    session.skipRequested = false; // Reset skip flag here too
-    
-    // Get track duration for timing calculations
-    session.currentTrackDuration = await getAudioDuration(path);
-    
-    // Update bot nickname to show current track
-    await updateBotNickname(session, media);
-    
-    // Play the track
-    const resource = createAudioResource(path);
-    session.audioPlayer.play(resource);
-    
-    // Start preparing next track while current plays
-    setTimeout(() => {
-      if (!session.isProcessingNext) {
-        prepareNextTrack(session);
-      }
-    }, 2000);
-    
-    logger.debug(`Playing track: ${media.title || media.answers?.[0] || 'Unknown'}`);
-    
-  } catch (error) {
-    logger.error('Error playing track', error);
-    session.isProcessingNext = false; // Reset flag on error
   }
 };
 
@@ -652,31 +729,38 @@ const getAudioDuration = async (filePath: string): Promise<number> => {
 
 const queueRewindEffect = async (session: RadioSession) => {
   try {
+    if (!session.currentItem || session.currentItem.type !== 'media') {
+      return;
+    }
+    
     console.log('Creating rewind effect...');
-    const rewindPath = await createRewindEffect(session.currentMedia, session);
+    const rewindPath = await createRewindEffect(session.currentItem.media, session);
     console.log('Rewind effect created:', rewindPath);
     
     // Calculate effect duration based on current playback position
     const currentTime = (Date.now() - session.playbackStartTime) / 1000;
-    const rewindDuration = Math.min(currentTime, session.currentTrackDuration, 30);
+    const duration = session.currentItem.duration || 180;
+    const rewindDuration = Math.min(currentTime, duration, 30);
     const rewindSpeed = Math.max(4, Math.min(16, rewindDuration / 2));
     const effectDuration = Math.max(1000, (rewindDuration / rewindSpeed) * 1000); // Convert to ms
     
     console.log(`Rewind stats: currentTime=${currentTime}s, rewindDuration=${rewindDuration}s, speed=${rewindSpeed}x, effectDuration=${effectDuration}ms`);
     
-    const rewindEffect: EffectRender = {
-      type: 'rewind',
-      filePath: rewindPath,
+    const rewindEffect: QueueItem = {
+      type: 'media',
+      id: `rewind_${Date.now()}`,
+      media: {
+        id: null,
+        title: 'Rewind Effect',
+        filePath: rewindPath,
+        isTemporary: true,
+        answers: ['Rewind Effect']
+      },
       duration: effectDuration,
-      onComplete: () => {
-        console.log('Rewind effect completed, restarting track');
-        // Restart current track from beginning
-        session.nextMedia = session.currentMedia;
-        session.nextFilters = session.currentFilters.slice();
-      }
+      isProcessed: false
     };
     
-    session.effectQueue.push(rewindEffect);
+    session.queue.push(rewindEffect);
     console.log('Rewind effect queued, stopping current playback');
     
     // Stop current playback immediately to trigger the effect
@@ -684,8 +768,12 @@ const queueRewindEffect = async (session: RadioSession) => {
   } catch (error) {
     console.error('Error creating rewind effect:', error);
     // Fallback: just restart the track
-    session.nextMedia = session.currentMedia;
-    session.nextFilters = session.currentFilters.slice();
+    if (session.currentItem) {
+      session.nextItem = { ...session.currentItem };
+      if (session.nextItem) {
+        session.nextItem.filters = session.currentItem.filters?.slice() || [];
+      }
+    }
     session.audioPlayer.stop();
   }
 };
@@ -696,7 +784,8 @@ const createRewindEffect = async (media: any, session: RadioSession): Promise<st
   
   // Calculate current playback position
   const currentTime = (Date.now() - session.playbackStartTime) / 1000;
-  const rewindDuration = Math.min(currentTime, session.currentTrackDuration, 15); // Reduced cap for reliability
+  const trackDuration = session.currentItem?.duration || 180;
+  const rewindDuration = Math.min(currentTime, trackDuration, 15); // Reduced cap for reliability
   
   if (rewindDuration < 0.5) {
     // Very early in track - simple short reverse
@@ -769,33 +858,6 @@ const createRewindEffect = async (media: any, session: RadioSession): Promise<st
     
     extractAndReverse.on('error', reject);
   });
-};
-
-const playEffect = async (session: RadioSession, effect: EffectRender) => {
-  console.log(`Playing effect: ${effect.type} from ${effect.filePath}`);
-  
-  if (!fs.existsSync(effect.filePath)) {
-    console.error(`Effect file not found: ${effect.filePath}`);
-    if (effect.onComplete) {
-      effect.onComplete();
-    }
-    return;
-  }
-  
-  const resource = createAudioResource(effect.filePath);
-  session.audioPlayer.play(resource);
-  console.log(`Effect started, duration: ${effect.duration}ms`);
-  
-  // Clean up effect file after playing
-  setTimeout(() => {
-    console.log(`Cleaning up effect file: ${effect.filePath}`);
-    fs.unlink(effect.filePath, () => {});
-  }, effect.duration + 1000);
-  
-  if (effect.onComplete) {
-    console.log('Triggering effect onComplete callback');
-    effect.onComplete();
-  }
 };
 
 const getOrCreateFilteredVersion = async (media: any, filters: string[]): Promise<string> => {
@@ -934,8 +996,10 @@ const endRadioSession = (session: RadioSession) => {
   }
   
   // Clean up any pending effect files
-  session.effectQueue.forEach(effect => {
-    fs.unlink(effect.filePath, () => {});
+  session.queue.forEach(item => {
+    if (item.type === 'media' && item.media?.filePath) {
+      fs.unlink(item.media.filePath, () => {});
+    }
   });
   
   // Reset bot nickname
@@ -1017,7 +1081,55 @@ const getNormalizedAudioPath = async (media: any): Promise<string> => {
   }
 };
 
+const normalizeAudioFast = async (inputPath: string, outputPath: string): Promise<void> => {
+  return new Promise((resolve, reject) => {
+    logger.debug(`Fast volume normalization for: ${inputPath}`);
+    
+    // Single-pass normalization using volume filter with peak detection
+    // This is much faster than two-pass loudnorm but still effective for radio
+    const normalizeProcess = spawn('ffmpeg', [
+      '-i', inputPath,
+      '-af', 'volume=0.8,loudnorm=I=-18:dual_mono=true:linear=true',
+      '-c:a', 'libopus',
+      '-b:a', '128k',
+      '-ac', '2',
+      '-ar', '48000',
+      '-f', 'ogg',
+      '-y',
+      outputPath
+    ]);
+    
+    let errorOutput = '';
+    normalizeProcess.stderr.on('data', (data) => {
+      errorOutput += data.toString();
+    });
+    
+    normalizeProcess.on('close', (code) => {
+      if (code === 0) {
+        logger.debug(`Fast normalization completed: ${outputPath}`);
+        resolve();
+      } else {
+        logger.error(`Fast normalization failed with code ${code}. Error: ${errorOutput}`);
+        reject(new Error(`Fast normalization failed with code ${code}`));
+      }
+    });
+    
+    normalizeProcess.on('error', (error) => {
+      logger.error(`Fast normalization process error: ${error}`);
+      reject(error);
+    });
+  });
+};
+
 const normalizeAudioLoudness = async (inputPath: string, outputPath: string): Promise<void> => {
+  // Try fast normalization first for radio use
+  try {
+    await normalizeAudioFast(inputPath, outputPath);
+    return;
+  } catch (error) {
+    logger.debug('Fast normalization failed, falling back to full loudnorm');
+  }
+  
   return new Promise((resolve, reject) => {
     logger.debug(`Starting loudness analysis for: ${inputPath}`);
     
@@ -1276,23 +1388,15 @@ export const handleAnnounceCommand = async (message: Message, announceText?: str
     const announcementText = await VoiceAnnouncementService.generateCustomAnnouncement(announceText);
     
     if (announcementText) {
-      const ttsResult = await VoiceAnnouncementService.generateTTSAudio(announcementText);
+      const announcementItem: QueueItem = {
+        type: 'announcement',
+        id: `announce_${Date.now()}`,
+        text: announcementText,
+        isProcessed: false
+      };
       
-      if (ttsResult) {
-        const customEffect: EffectRender = {
-          type: 'voice_announcement',
-          filePath: ttsResult.path,
-          duration: ttsResult.duration,
-          onComplete: () => {
-            logger.debug('Custom announcement completed');
-          }
-        };
-        
-        session.effectQueue.push(customEffect);
-        await message.reply(`📢 Queued announcement: "${announcementText}"`);
-      } else {
-        await message.reply('❌ Failed to generate voice clip');
-      }
+      session.queue.push(announcementItem);
+      await message.reply(`📢 Queued announcement: "${announcementText}"`);
     } else {
       await message.reply('❌ Failed to process announcement text');
     }
