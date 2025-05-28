@@ -433,9 +433,12 @@ const startRadioSession = async (message: Message, voiceChannel: VoiceBasedChann
 };
 
 const handleTrackEnd = async (session: RadioSession, channel: any) => {
-  // Only progress to next track if we're not already processing
-  if (!session.isProcessingNext) {
+  // Only progress to next track if we're not already processing and not transitioning
+  if (!session.isProcessingNext && !session.isTransitioning) {
+    logger.debug('Track ended, starting playNext');
     playNext(session, channel);
+  } else {
+    logger.debug('Track ended but already processing/transitioning, skipping playNext');
   }
 };
 
@@ -443,10 +446,12 @@ const playNext = async (session: RadioSession, channel: any) => {
   try {
     // Prevent multiple concurrent calls and transitions
     if (session.isProcessingNext || session.isTransitioning) {
+      logger.debug('playNext blocked - already processing or transitioning');
       return;
     }
     
     session.isTransitioning = true;
+    logger.debug('Starting playNext transition');
     
     // Clear any pending timeouts to prevent race conditions
     session.pendingTimeouts.forEach(clearTimeout);
@@ -510,9 +515,11 @@ const playNext = async (session: RadioSession, channel: any) => {
         session.queue.shift();
       }
     } else {
+      logger.debug('No pre-processed item, selecting new item');
       // Select next item from queue or random
       if (session.queue.length > 0) {
         nextItem = session.queue.shift()!;
+        logger.debug(`Selected item from queue: ${nextItem.type}`);
       } else {
         // Create random media item
         const randomMedia = await getRandomMedia(1);
@@ -528,6 +535,7 @@ const playNext = async (session: RadioSession, channel: any) => {
           filters: session.nextItem?.filters || [],
           isProcessed: false
         };
+        logger.debug(`Selected random media: ${nextItem.media?.title || 'Unknown'}`);
       }
       
       // Process the item
@@ -583,6 +591,7 @@ const playNext = async (session: RadioSession, channel: any) => {
             // Schedule next track after TTS completes
             const nextTrackTimeout = setTimeout(() => {
               if (session.isActive) {
+                logger.debug('Transitioning from announcement to next track');
                 session.isTransitioning = false;
                 playNextTrack(session);
               }
@@ -602,6 +611,7 @@ const playNext = async (session: RadioSession, channel: any) => {
     }
     
     // No announcement - play item directly
+    logger.debug('Playing item directly without announcement');
     session.isTransitioning = false;
     await playNextTrack(session, nextItem, filePath);
     
@@ -610,6 +620,7 @@ const playNext = async (session: RadioSession, channel: any) => {
     session.isTransitioning = false;
     // Only retry after a delay if not already processing
     if (!session.isProcessingNext) {
+      logger.debug('Scheduling playNext retry after error');
       const retryTimeout = setTimeout(() => playNext(session, channel), 3000);
       session.pendingTimeouts.push(retryTimeout);
     }

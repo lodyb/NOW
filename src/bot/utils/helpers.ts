@@ -1,4 +1,6 @@
-import { Message, MessagePayload, MessageCreateOptions } from 'discord.js';
+import { Message, MessagePayload, MessageCreateOptions, TextChannel } from 'discord.js';
+
+const AI_CHANNEL_ID = process.env.AI_CHANNEL_ID || '1369649491573215262';
 
 export interface CommandArgs {
   command: string;
@@ -155,21 +157,62 @@ export const generateProgressiveHint = (
 };
 
 /**
- * Safely send a reply to a message, handling permission errors gracefully
+ * Safely send a reply to a message, routing all replies to the AI channel
  * @param message The Discord message to reply to
  * @param content The content to send in the reply
  * @returns True if successful, false if failed
  */
 export const safeReply = async (message: Message, content: string | MessagePayload | MessageCreateOptions): Promise<boolean> => {
   try {
-    await message.reply(content);
+    // Get the AI channel
+    const aiChannel = message.client.channels.cache.get(AI_CHANNEL_ID) as TextChannel;
+    
+    if (!aiChannel) {
+      console.error(`AI channel with ID ${AI_CHANNEL_ID} not found, falling back to original channel`);
+      await message.reply(content);
+      return true;
+    }
+
+    // If the message is already in the AI channel, reply normally
+    if (message.channelId === AI_CHANNEL_ID) {
+      await message.reply(content);
+      return true;
+    }
+
+    // Create attribution prefix
+    const attribution = `<@${message.author.id}> in <#${message.channelId}>:\n`;
+
+    if (typeof content === 'string') {
+      await aiChannel.send(attribution + content);
+    } else if ('content' in content) {
+      // MessageCreateOptions
+      const messageOptions: MessageCreateOptions = {
+        content: attribution + (content.content || '[Media/Embed Response]'),
+        files: content.files || undefined,
+        embeds: content.embeds,
+        components: content.components,
+        allowedMentions: content.allowedMentions
+      };
+      await aiChannel.send(messageOptions);
+    } else {
+      // MessagePayload - send as-is but add attribution somehow
+      await aiChannel.send(attribution + '[Complex Message Payload]');
+    }
+
+    // Add acknowledgment reaction to original message
+    try {
+      await message.react('🤖');
+    } catch (reactionError) {
+      console.warn('Failed to add acknowledgment reaction:', reactionError);
+    }
+
     return true;
   } catch (error) {
     const discordError = error as { code?: number };
-    if (discordError.code === 50013) { // Discord Missing Permissions error
-      console.warn(`Missing permissions to reply in ${message.channel.id}`);
+    if (discordError.code === 50013) {
+      console.warn(`Missing permissions to send to AI channel ${AI_CHANNEL_ID}`);
     } else {
-      console.error('Error sending reply:', error);
+      console.error('Error sending reply to AI channel:', error);
     }
     return false;
   }
