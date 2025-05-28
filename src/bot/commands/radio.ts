@@ -49,6 +49,9 @@ interface RadioSession {
   playbackStartTime: number;
   voiceAnnouncementsEnabled: boolean;
   introPlayed: boolean;
+  // Add proper synchronization flags
+  isTransitioning: boolean;
+  pendingTimeouts: NodeJS.Timeout[];
 }
 
 // Remove EffectRender interface - no longer needed
@@ -132,7 +135,17 @@ export const handleSkipCommand = async (message: Message) => {
 
   const session = activeSessions.get(message.guild.id)!;
   
+  // Prevent multiple skip commands
+  if (session.isTransitioning) {
+    await message.reply('⏭️ Already skipping...');
+    return;
+  }
+  
   await message.reply('⏭️ Skipping...');
+  
+  // Clear any pending timeouts to prevent race conditions
+  session.pendingTimeouts.forEach(clearTimeout);
+  session.pendingTimeouts = [];
   
   // If we have a pre-processed next item ready, skip immediately with TTS
   if (session.nextItem?.processedPath && fs.existsSync(session.nextItem.processedPath)) {
@@ -149,15 +162,20 @@ export const handleSkipCommand = async (message: Message) => {
           if (ttsResult) {
             // Play skip announcement immediately
             session.audioPlayer.stop();
+            session.isTransitioning = true;
             
             await updateBotNickname(session, null, '🗣️Skip');
             const resource = createAudioResource(ttsResult.path);
             session.audioPlayer.play(resource);
             
             // Play next track after announcement
-            setTimeout(() => {
-              playNextTrack(session);
+            const skipTimeout = setTimeout(() => {
+              if (session.nextItem) {
+                session.isTransitioning = false;
+                playNextTrack(session, session.nextItem, session.nextItem.processedPath);
+              }
             }, ttsResult.duration + 300);
+            session.pendingTimeouts.push(skipTimeout);
             
             return;
           }
@@ -169,7 +187,11 @@ export const handleSkipCommand = async (message: Message) => {
     
     // No announcement - skip directly to prepared track
     session.audioPlayer.stop();
-    setTimeout(() => playNextTrack(session), 100);
+    const directSkipTimeout = setTimeout(() => {
+      session.isTransitioning = false;
+      playNextTrack(session);
+    }, 100);
+    session.pendingTimeouts.push(directSkipTimeout);
   } else {
     // Next track not ready - stop and let playNext handle it
     session.audioPlayer.stop();
@@ -387,6 +409,8 @@ const startRadioSession = async (message: Message, voiceChannel: VoiceBasedChann
     playbackStartTime: 0,
     voiceAnnouncementsEnabled: true,
     introPlayed: false, // Track if intro has been played
+    isTransitioning: false, // Initialize transitioning flag
+    pendingTimeouts: [] // Initialize pending timeouts array
   };
   
   activeSessions.set(voiceChannel.guild.id, session);
@@ -417,10 +441,16 @@ const handleTrackEnd = async (session: RadioSession, channel: any) => {
 
 const playNext = async (session: RadioSession, channel: any) => {
   try {
-    // Prevent multiple concurrent calls
-    if (session.isProcessingNext) {
+    // Prevent multiple concurrent calls and transitions
+    if (session.isProcessingNext || session.isTransitioning) {
       return;
     }
+    
+    session.isTransitioning = true;
+    
+    // Clear any pending timeouts to prevent race conditions
+    session.pendingTimeouts.forEach(clearTimeout);
+    session.pendingTimeouts = [];
     
     // Play intro first if not played yet (while preparing first track)
     if (!session.introPlayed) {
@@ -437,14 +467,19 @@ const playNext = async (session: RadioSession, channel: any) => {
             session.audioPlayer.play(resource);
             
             // Start preparing first track in parallel while intro plays
-            setTimeout(() => prepareFirstTrack(session, channel), 100);
+            const prepareTimeout = setTimeout(() => prepareFirstTrack(session, channel), 100);
+            session.pendingTimeouts.push(prepareTimeout);
             
             // Start next track after intro completes with small buffer
-            setTimeout(() => {
-              if (session.nextItem?.processedPath) {
+            const playTimeout = setTimeout(() => {
+              if (session.nextItem?.processedPath && session.isActive) {
+                session.isTransitioning = false;
                 playNextTrack(session);
+              } else {
+                session.isTransitioning = false;
               }
             }, ttsResult.duration + 500);
+            session.pendingTimeouts.push(playTimeout);
             return;
           }
         }
@@ -473,6 +508,7 @@ const playNext = async (session: RadioSession, channel: any) => {
         const randomMedia = await getRandomMedia(1);
         if (randomMedia.length === 0) {
           await channel.send('No media available');
+          session.isTransitioning = false;
           return;
         }
         nextItem = {
@@ -525,7 +561,7 @@ const playNext = async (session: RadioSession, channel: any) => {
           const ttsResult = await VoiceAnnouncementService.generateTTSAudio(announcementText);
           
           if (ttsResult) {
-            logger.debug('Playing announcement while next track may still be processing');
+            logger.debug('Playing announcement before next track');
             await updateBotNickname(session, null, '🗣️Radio Announcement');
             const resource = createAudioResource(ttsResult.path);
             session.audioPlayer.play(resource);
@@ -534,8 +570,14 @@ const playNext = async (session: RadioSession, channel: any) => {
             session.nextItem = { ...nextItem, isProcessed: true };
             session.nextItem.processedPath = filePath;
             
-            // Use actual TTS duration instead of hardcoded timeout
-            setTimeout(() => playNextTrack(session), ttsResult.duration + 500);
+            // Schedule next track after TTS completes
+            const nextTrackTimeout = setTimeout(() => {
+              if (session.isActive) {
+                session.isTransitioning = false;
+                playNextTrack(session);
+              }
+            }, ttsResult.duration + 500);
+            session.pendingTimeouts.push(nextTrackTimeout);
             return;
           }
         }
@@ -550,13 +592,16 @@ const playNext = async (session: RadioSession, channel: any) => {
     }
     
     // No announcement - play item directly
+    session.isTransitioning = false;
     await playNextTrack(session, nextItem, filePath);
     
   } catch (error) {
     logger.error('Error in playNext', error);
+    session.isTransitioning = false;
     // Only retry after a delay if not already processing
     if (!session.isProcessingNext) {
-      setTimeout(() => playNext(session, channel), 3000);
+      const retryTimeout = setTimeout(() => playNext(session, channel), 3000);
+      session.pendingTimeouts.push(retryTimeout);
     }
   }
 };
@@ -905,6 +950,10 @@ const buildFilterArgs = (filters: string[]): string[] => {
 const endRadioSession = (session: RadioSession) => {
   session.isActive = false;
   session.queue = [];
+  
+  // Clear any pending timeouts to prevent race conditions
+  session.pendingTimeouts.forEach(clearTimeout);
+  session.pendingTimeouts = [];
   
   try {
     session.connection.destroy();
