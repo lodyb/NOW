@@ -91,9 +91,9 @@ export class VoiceAnnouncementService {
       const outputPath = path.join(TTS_CACHE_DIR, `tts_${cacheKey}.wav`);
       
       try {
-        // Use HTTP request to persistent TTS server with shorter timeout
+        // Use HTTP request to persistent TTS server with longer timeout
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 second timeout
+        const timeoutId = setTimeout(() => controller.abort(), 15000); // Increased to 15 seconds
         
         const response = await fetch(`http://localhost:5002/api/tts?text=${encodeURIComponent(sanitizedText)}`, {
           method: 'GET',

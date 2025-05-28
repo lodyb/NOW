@@ -519,11 +519,10 @@ const playNext = async (session: RadioSession, channel: any) => {
       }
     }
     
-    // Generate voice announcement if enabled and previous track was media
+    // Generate voice announcement if enabled and both tracks are media
     if (session.voiceAnnouncementsEnabled && 
-        session.currentItem?.type === 'media' && 
         nextItem.type === 'media' && 
-        !nextItem.isProcessed) {
+        session.currentItem?.type === 'media') {
       try {
         const announcementText = await VoiceAnnouncementService.generateRadioAnnouncement(
           session.currentItem.media,
@@ -640,6 +639,49 @@ const prepareNextTrack = async (session: RadioSession) => {
         filters: [],
         isProcessed: false
       };
+    }
+    
+    // If announcements are enabled and next item is media and current item is also media,
+    // automatically insert an intermission announcement before the media
+    if (session.voiceAnnouncementsEnabled && 
+        nextItem.type === 'media' && 
+        session.currentItem?.type === 'media') {
+      try {
+        const announcementText = await VoiceAnnouncementService.generateRadioAnnouncement(
+          session.currentItem.media,
+          nextItem.media,
+          nextItem.filters && nextItem.filters.length > 0 ? `Filters: ${nextItem.filters.join(', ')}` : undefined
+        );
+        
+        if (announcementText) {
+          const ttsResult = await VoiceAnnouncementService.generateTTSAudio(announcementText);
+          if (ttsResult) {
+            // Create intermission announcement
+            const intermissionItem: QueueItem = {
+              type: 'announcement',
+              id: `intermission_${Date.now()}`,
+              text: announcementText,
+              processedPath: ttsResult.path,
+              duration: ttsResult.duration,
+              isProcessed: true
+            };
+            
+            // If next item was from queue, insert announcement before it
+            if (session.queue.length > 0 && session.queue[0].id === nextItem.id) {
+              session.queue.splice(0, 0, intermissionItem);
+              // Set the announcement as the next item to be played
+              nextItem = intermissionItem;
+            } else {
+              // Random media - just set announcement as next item
+              nextItem = intermissionItem;
+            }
+            
+            logger.debug('Generated intermission announcement for media transition');
+          }
+        }
+      } catch (error) {
+        logger.debug('Failed to generate intermission announcement');
+      }
     }
     
     // Process the item
@@ -842,7 +884,7 @@ const createRewindEffect = async (media: any, session: RadioSession): Promise<st
     });
   }
   
-  // Extract the segment we want to rewind, then reverse it
+  // Extract the segment we want to rewind, then reverse
   const startTime = Math.max(0, currentTime - rewindDuration);
   
   return new Promise((resolve, reject) => {
@@ -1441,8 +1483,20 @@ export const handleAnnounceCommand = async (message: Message, announceText?: str
 };
 
 export const handleVoiceCommand = async (message: Message, voiceText?: string) => {
-  if (!voiceText) {
-    await message.reply('Please provide text for the voice clip. Example: `NOW voice Hello everyone!`');
+  let textToSpeak = voiceText;
+  
+  // If no text provided, check if replying to a message
+  if (!textToSpeak && message.reference?.messageId) {
+    try {
+      const repliedMessage = await message.channel.messages.fetch(message.reference.messageId);
+      textToSpeak = repliedMessage.content;
+    } catch (error) {
+      logger.debug('Failed to fetch replied message');
+    }
+  }
+  
+  if (!textToSpeak) {
+    await message.reply('Please provide text for the voice clip or reply to a message. Example: `NOW voice Hello everyone!`');
     return;
   }
 
@@ -1450,12 +1504,12 @@ export const handleVoiceCommand = async (message: Message, voiceText?: string) =
 
   try {
     // Skip AI processing and go directly to TTS
-    const ttsResult = await VoiceAnnouncementService.generateTTSAudio(voiceText);
+    const ttsResult = await VoiceAnnouncementService.generateTTSAudio(textToSpeak);
     
     if (ttsResult && fs.existsSync(ttsResult.path)) {
       if ('send' in message.channel) {
         await message.channel.send({
-          content: `🎙️ Voice clip: "${voiceText}"`,
+          content: `🎙️ Voice clip: "${textToSpeak}"`,
           files: [{ attachment: ttsResult.path, name: 'voice_clip.wav' }]
         });
       }
