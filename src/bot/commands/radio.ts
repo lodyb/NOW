@@ -476,7 +476,17 @@ const playNext = async (session: RadioSession, channel: any) => {
                 session.isTransitioning = false;
                 playNextTrack(session);
               } else {
-                session.isTransitioning = false;
+                // If first track isn't ready yet, wait a bit more
+                const retryTimeout = setTimeout(() => {
+                  if (session.nextItem?.processedPath && session.isActive) {
+                    session.isTransitioning = false;
+                    playNextTrack(session);
+                  } else {
+                    session.isTransitioning = false;
+                    playNext(session, channel); // Fallback to regular flow
+                  }
+                }, 1000);
+                session.pendingTimeouts.push(retryTimeout);
               }
             }, ttsResult.duration + 500);
             session.pendingTimeouts.push(playTimeout);
