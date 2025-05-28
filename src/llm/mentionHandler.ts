@@ -6,7 +6,7 @@ import fs from 'fs';
 import path from 'path';
 
 // AI channel configuration
-const AI_CHANNEL_ID = '1369649491573215262';
+const AI_CHANNEL_ID = process.env.AI_CHANNEL_ID || '1369649491573215262';
 
 const ROLE_PROMPTS: Record<string, string> = {
   // Grok role prompt

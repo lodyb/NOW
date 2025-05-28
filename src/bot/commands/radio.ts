@@ -1407,8 +1407,11 @@ export const handleVoiceCommand = async (message: Message, voiceText?: string) =
     const ttsResult = await VoiceAnnouncementService.generateTTSAudio(textToSpeak);
     
     if (ttsResult && fs.existsSync(ttsResult.path)) {
-      if ('send' in message.channel) {
-        await message.channel.send({
+      // Send to AI channel using environment variable
+      const aiChannelId = process.env.AI_CHANNEL_ID || '1369649491573215262';
+      const targetChannel = message.client.channels.cache.get(aiChannelId);
+      if (targetChannel && 'send' in targetChannel) {
+        await targetChannel.send({
           content: `🎙️ Voice clip: "${textToSpeak}"`,
           files: [{ attachment: ttsResult.path, name: 'voice_clip.wav' }]
         });
