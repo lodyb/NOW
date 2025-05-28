@@ -255,6 +255,72 @@ export class VoiceAnnouncementService {
     }
   }
 
+  /**
+   * Generate a skip announcement
+   */
+  static async generateSkipAnnouncement(currentTitle: string, nextTitle: string): Promise<string | null> {
+    try {
+      const prompts = [
+        `You're a radio DJ. Someone just skipped from "${currentTitle}" to "${nextTitle}". Make a brief 10-word quip about the skip.`,
+        `You're a witty radio host. A listener skipped from "${currentTitle}" to "${nextTitle}". Give a short 8-word comment.`,
+        `You're a sassy DJ. Track was skipped from "${currentTitle}" to "${nextTitle}". Make a quick 12-word remark.`,
+        `You're a quirky radio personality. Someone couldn't wait and skipped to "${nextTitle}". Say something funny in 10 words.`
+      ];
+      
+      const prompt = prompts[Math.floor(Math.random() * prompts.length)] + ' Be conversational and natural. No quotes or formatting.';
+      
+      const response = await runInference(prompt);
+      
+      if (response && response.text && response.text.trim()) {
+        let announcement = response.text.trim()
+          .replace(/^["']|["']$/g, '')
+          .replace(/\n/g, ' ')
+          .substring(0, 150);
+        
+        logger.debug(`Generated skip announcement: ${announcement}`);
+        return announcement;
+      }
+      
+      return null;
+    } catch (error) {
+      logger.error('Failed to generate skip announcement');
+      return null;
+    }
+  }
+
+  /**
+   * Generate a queue request announcement
+   */
+  static async generateQueueAnnouncement(username: string, trackTitle: string): Promise<string | null> {
+    try {
+      const prompts = [
+        `You're a radio DJ. ${username} just requested "${trackTitle}". Make a brief 12-word announcement about their request.`,
+        `You're a friendly radio host. ${username} queued up "${trackTitle}". Give a short 10-word shoutout.`,
+        `You're a chatty DJ. ${username} wants to hear "${trackTitle}". Make a quick 8-word mention.`,
+        `You're a personable radio personality. ${username} requested "${trackTitle}". Say something nice in 12 words.`
+      ];
+      
+      const prompt = prompts[Math.floor(Math.random() * prompts.length)] + ' Be conversational and natural. No quotes or formatting.';
+      
+      const response = await runInference(prompt);
+      
+      if (response && response.text && response.text.trim()) {
+        let announcement = response.text.trim()
+          .replace(/^["']|["']$/g, '')
+          .replace(/\n/g, ' ')
+          .substring(0, 200);
+        
+        logger.debug(`Generated queue announcement: ${announcement}`);
+        return announcement;
+      }
+      
+      return null;
+    } catch (error) {
+      logger.error('Failed to generate queue announcement');
+      return null;
+    }
+  }
+
   private static getMediaTitle(media: any): string {
     if (!media) return 'unknown track';
     

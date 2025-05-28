@@ -147,41 +147,35 @@ export const handleSkipCommand = async (message: Message) => {
 
   const session = activeSessions.get(message.guild.id)!;
   
-  // If next track is ready, skip immediately
-  if (session.nextItem?.processedPath && fs.existsSync(session.nextItem.processedPath)) {
-    await message.reply('⏭️ Skipping...');
-    session.audioPlayer.stop();
-    return;
-  }
-  
-  // Otherwise prepare next track first
-  if (session.nextItem && session.nextItem.type && session.nextItem.id) {
-    session.nextItem = { 
-      ...session.nextItem,
-      type: session.nextItem.type,
-      id: session.nextItem.id,
-      isProcessed: false 
-    };
-  }
-  await message.reply('⏭️ Preparing next track...');
-  
-  if (!session.isProcessingNext) {
-    await prepareNextTrack(session);
-  }
-  
-  // Wait for preparation to complete
-  const checkReady = () => {
-    if (session.nextItem?.processedPath && fs.existsSync(session.nextItem.processedPath)) {
-      session.audioPlayer.stop();
-    } else if (!session.isProcessingNext) {
-      // Fallback if processing failed
-      session.audioPlayer.stop();
-    } else {
-      setTimeout(checkReady, 100);
+  // Generate skip announcement if voice announcements are enabled
+  if (session.voiceAnnouncementsEnabled && session.nextItem?.type === 'media') {
+    try {
+      const currentTitle = session.currentItem?.media?.answers?.[0] || session.currentItem?.media?.title || 'current track';
+      const nextTitle = session.nextItem.media?.answers?.[0] || session.nextItem.media?.title || 'next track';
+      
+      const skipText = await VoiceAnnouncementService.generateSkipAnnouncement(currentTitle, nextTitle);
+      if (skipText) {
+        const ttsResult = await VoiceAnnouncementService.generateTTSAudio(skipText);
+        if (ttsResult) {
+          // Insert skip announcement before the next track
+          const skipAnnouncement: QueueItem = {
+            type: 'announcement',
+            id: `skip_${Date.now()}`,
+            text: skipText,
+            processedPath: ttsResult.path,
+            duration: ttsResult.duration,
+            isProcessed: true
+          };
+          session.queue.unshift(skipAnnouncement);
+        }
+      }
+    } catch (error) {
+      logger.debug('Failed to generate skip announcement');
     }
-  };
+  }
   
-  checkReady();
+  await message.reply('⏭️ Skipping...');
+  session.audioPlayer.stop();
 };
 
 export const handleQueueCommand = async (message: Message, searchTerm?: string) => {
@@ -300,14 +294,42 @@ export const handleQueueCommand = async (message: Message, searchTerm?: string) 
       isProcessed: false
     });
     
+    const primaryAnswer = mediaItem.answers && mediaItem.answers.length > 0 
+      ? (typeof mediaItem.answers[0] === 'string' ? mediaItem.answers[0] : mediaItem.answers[0].answer)
+      : mediaItem.title;
+    
+    // Generate queue request announcement
+    if (session.voiceAnnouncementsEnabled) {
+      try {
+        const username = message.author.username || message.author.displayName || 'Someone';
+        const trackTitle = primaryAnswer;
+        
+        const queueText = await VoiceAnnouncementService.generateQueueAnnouncement(username, trackTitle);
+        if (queueText) {
+          const ttsResult = await VoiceAnnouncementService.generateTTSAudio(queueText);
+          if (ttsResult) {
+            // Insert queue announcement before the requested track
+            const queueAnnouncement: QueueItem = {
+              type: 'announcement',
+              id: `queue_${Date.now()}`,
+              text: queueText,
+              processedPath: ttsResult.path,
+              duration: ttsResult.duration,
+              isProcessed: true
+            };
+            // Insert announcement before the media item
+            session.queue.splice(session.queue.length - 1, 0, queueAnnouncement);
+          }
+        }
+      } catch (error) {
+        logger.debug('Failed to generate queue announcement');
+      }
+    }
+    
     // Clear any prepared random track so queued items play next
     if (session.nextItem && (!session.queue.length || session.nextItem.media !== session.queue[0].media)) {
       session.nextItem = null;
     }
-    
-    const primaryAnswer = mediaItem.answers && mediaItem.answers.length > 0 
-      ? (typeof mediaItem.answers[0] === 'string' ? mediaItem.answers[0] : mediaItem.answers[0].answer)
-      : mediaItem.title;
     
     await statusMessage.edit(`🎵 Added "${primaryAnswer}" to queue (position ${session.queue.length})`);
   } catch (error) {
@@ -611,7 +633,7 @@ const prepareNextTrack = async (session: RadioSession) => {
       };
     }
     
-    // Process the item
+    // Process the media item
     let processedPath: string;
     
     if (nextItem.type === 'announcement') {
@@ -635,7 +657,48 @@ const prepareNextTrack = async (session: RadioSession) => {
       }
     }
     
-    // Store processed item
+    // Generate TTS transition announcement for media items
+    if (nextItem.type === 'media' && session.currentItem?.type === 'media' && session.voiceAnnouncementsEnabled) {
+      try {
+        const announcementText = await VoiceAnnouncementService.generateRadioAnnouncement(
+          session.currentItem.media,
+          nextItem.media,
+          nextItem.filters && nextItem.filters.length > 0 ? `Filters: ${nextItem.filters.join(', ')}` : undefined
+        );
+        
+        if (announcementText) {
+          const ttsResult = await VoiceAnnouncementService.generateTTSAudio(announcementText);
+          if (ttsResult) {
+            // Queue TTS first, then media
+            const ttsItem: QueueItem = {
+              type: 'announcement',
+              id: `transition_${Date.now()}`,
+              text: announcementText,
+              processedPath: ttsResult.path,
+              duration: ttsResult.duration,
+              isProcessed: true
+            };
+            
+            // Insert TTS before the media item in queue
+            if (session.queue.length > 0 && session.queue[0].id === nextItem.id) {
+              session.queue.unshift(ttsItem);
+            } else {
+              // For random media, set up both items
+              session.nextItem = ttsItem;
+              // Queue the media after TTS
+              session.queue.unshift(nextItem);
+            }
+            
+            logger.debug('Prepared TTS transition and queued media');
+            return;
+          }
+        }
+      } catch (error) {
+        logger.debug('Failed to generate transition TTS, playing media directly');
+      }
+    }
+    
+    // Store processed item (no TTS transition)
     session.nextItem = {
       ...nextItem,
       processedPath,
@@ -1251,26 +1314,30 @@ const downloadYouTubeVideo = async (url: string): Promise<{ title: string; fileP
       throw new Error(`Video too long (${Math.round(duration / 60)} minutes). Maximum allowed: 20 minutes`);
     }
 
-    // Check filesize if available (150MB = 157286400 bytes)
-    const filesize = (info as any).filesize || (info as any).filesize_approx;
-    if (filesize && filesize > 157286400) {
-      throw new Error(`Video too large (${Math.round(filesize / 1024 / 1024)}MB). Maximum allowed: 150MB`);
-    }
-
     // Generate a unique filename
     const id = crypto.randomBytes(8).toString('hex');
-    const ext = ('ext' in info && info.ext) ? info.ext : 'mp4';
-    const tempFilePath = path.join(TEMP_EFFECTS_DIR, `yt_${id}.${ext}`);
+    const tempFilePath = path.join(TEMP_EFFECTS_DIR, `yt_${id}.%(ext)s`);
     
-    // Download the actual file
+    // Download audio-only for better bandwidth efficiency
     await youtubeDl(url, {
       output: tempFilePath,
-      format: 'best[ext=mp4]/best'
+      format: 'bestaudio[ext=m4a]/bestaudio[ext=mp3]/bestaudio/worst[height<=360]',
+      extractAudio: true,
+      audioFormat: 'mp3',
+      audioQuality: 96
     });
+    
+    // Find the actual downloaded file
+    const downloadedFiles = fs.readdirSync(TEMP_EFFECTS_DIR).filter(f => f.startsWith(`yt_${id}`));
+    const actualFile = downloadedFiles[0];
+    
+    if (!actualFile) {
+      throw new Error('Downloaded file not found');
+    }
     
     return {
       title: info.title as string,
-      filePath: tempFilePath
+      filePath: path.join(TEMP_EFFECTS_DIR, actualFile)
     };
   } catch (error) {
     logger.error('YouTube download failed:', error);
