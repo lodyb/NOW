@@ -75,7 +75,7 @@ export class VoiceAnnouncementService {
       const outputPath = path.join(TTS_CACHE_DIR, `tts_${cacheKey}.wav`);
       
       return new Promise((resolve) => {
-        const coquiTts = spawn('tts', [
+        const coquiTts = spawn(process.env.TTS_BINARY_PATH || 'tts', [
           '--text', text,
           '--model_name', 'tts_models/ja/kokoro/tacotron2-DDC',
           '--out_path', outputPath
