@@ -396,14 +396,22 @@ const playNext = async (session: RadioSession, channel: any) => {
       try {
         const introText = await VoiceAnnouncementService.generateRadioIntro();
         if (introText) {
-          const ttsPath = await VoiceAnnouncementService.generateTTSAudio(introText);
-          if (ttsPath) {
+          const ttsResult = await VoiceAnnouncementService.generateTTSAudio(introText);
+          if (ttsResult) {
             logger.debug('Playing radio intro while preparing first track');
-            const resource = createAudioResource(ttsPath);
+            await updateBotNickname(session, null, '🗣️Radio Intro');
+            const resource = createAudioResource(ttsResult.path);
             session.audioPlayer.play(resource);
             
             // Start preparing first track in parallel while intro plays
             setTimeout(() => prepareFirstTrack(session, channel), 100);
+            
+            // Start next track after intro completes with small buffer
+            setTimeout(() => {
+              if (session.nextMedia && session.nextMediaPath) {
+                playNextTrack(session);
+              }
+            }, ttsResult.duration + 500);
             return;
           }
         }
@@ -456,11 +464,12 @@ const playNext = async (session: RadioSession, channel: any) => {
         );
         
         if (announcementText) {
-          const ttsPath = await VoiceAnnouncementService.generateTTSAudio(announcementText);
+          const ttsResult = await VoiceAnnouncementService.generateTTSAudio(announcementText);
           
-          if (ttsPath) {
+          if (ttsResult) {
             logger.debug('Playing announcement while next track may still be processing');
-            const resource = createAudioResource(ttsPath);
+            await updateBotNickname(session, null, '🗣️Radio Announcement');
+            const resource = createAudioResource(ttsResult.path);
             session.audioPlayer.play(resource);
             
             // Store next track info and start it after announcement
@@ -468,8 +477,8 @@ const playNext = async (session: RadioSession, channel: any) => {
             session.nextMediaPath = filePath;
             session.nextFilters = session.nextFilters.slice();
             
-            // Set timer to start next track after announcement
-            setTimeout(() => playNextTrack(session), 6000);
+            // Use actual TTS duration instead of hardcoded timeout
+            setTimeout(() => playNextTrack(session), ttsResult.duration + 500);
             return;
           }
         }
@@ -916,7 +925,7 @@ const endRadioSession = (session: RadioSession) => {
   activeSessions.delete(session.guildId);
 };
 
-const updateBotNickname = async (session: RadioSession, media: any) => {
+const updateBotNickname = async (session: RadioSession, media?: any, customText?: string) => {
   try {
     const guild = session.connection.joinConfig?.guildId;
     if (!guild) return;
@@ -927,13 +936,26 @@ const updateBotNickname = async (session: RadioSession, media: any) => {
     
     if (!guildObj || !guildObj.members.me) return;
     
-    const displayName = media.answers?.[0]?.answer || media.title || 'Unknown';
-    const nickname = `📻${displayName}`;
+    let nickname: string;
+    
+    if (customText) {
+      // Use custom text (for announcements)
+      nickname = customText;
+    } else if (media) {
+      // Use media title
+      const displayName = media.answers?.[0]?.answer || media.title || 'Unknown';
+      nickname = `📻${displayName}`;
+    } else {
+      // Default radio state
+      nickname = '📻Radio';
+    }
+    
     const truncatedNickname = nickname.length > 32 ? nickname.substring(0, 29) + '...' : nickname;
     
     await guildObj.members.me.setNickname(truncatedNickname);
+    logger.debug(`Updated bot nickname to: ${truncatedNickname}`);
   } catch (error) {
-    console.error('Failed to update bot nickname:', error);
+    logger.debug('Failed to update bot nickname');
   }
 };
 
@@ -1235,13 +1257,13 @@ export const handleAnnounceCommand = async (message: Message, announceText?: str
     const announcementText = await VoiceAnnouncementService.generateCustomAnnouncement(announceText);
     
     if (announcementText) {
-      const ttsPath = await VoiceAnnouncementService.generateTTSAudio(announcementText);
+      const ttsResult = await VoiceAnnouncementService.generateTTSAudio(announcementText);
       
-      if (ttsPath) {
+      if (ttsResult) {
         const customEffect: EffectRender = {
           type: 'voice_announcement',
-          filePath: ttsPath,
-          duration: 6000,
+          filePath: ttsResult.path,
+          duration: ttsResult.duration,
           onComplete: () => {
             logger.debug('Custom announcement completed');
           }
@@ -1271,13 +1293,13 @@ export const handleVoiceCommand = async (message: Message, voiceText?: string) =
 
   try {
     const processedText = await VoiceAnnouncementService.generateCustomAnnouncement(voiceText);
-    const ttsPath = await VoiceAnnouncementService.generateTTSAudio(processedText || voiceText);
+    const ttsResult = await VoiceAnnouncementService.generateTTSAudio(processedText || voiceText);
     
-    if (ttsPath && fs.existsSync(ttsPath)) {
+    if (ttsResult && fs.existsSync(ttsResult.path)) {
       if ('send' in message.channel) {
         await message.channel.send({
           content: `🎙️ Voice clip: "${processedText || voiceText}"`,
-          files: [{ attachment: ttsPath, name: 'voice_clip.wav' }]
+          files: [{ attachment: ttsResult.path, name: 'voice_clip.wav' }]
         });
       }
       await statusMessage.delete();

@@ -50,9 +50,9 @@ export class VoiceAnnouncementService {
   }
 
   /**
-   * Generate TTS audio from text
+   * Generate TTS audio from text using Coqui TTS and return duration
    */
-  static async generateTTSAudio(text: string): Promise<string | null> {
+  static async generateTTSAudio(text: string): Promise<{ path: string; duration: number } | null> {
     try {
       // Check cache first
       const cacheKey = crypto.createHash('md5').update(text).digest('hex');
@@ -60,7 +60,8 @@ export class VoiceAnnouncementService {
       if (this.ttsCache.has(cacheKey)) {
         const cachedPath = this.ttsCache.get(cacheKey)!;
         if (fs.existsSync(cachedPath)) {
-          return cachedPath;
+          const duration = await this.getAudioDuration(cachedPath);
+          return { path: cachedPath, duration };
         } else {
           this.ttsCache.delete(cacheKey);
         }
@@ -69,30 +70,60 @@ export class VoiceAnnouncementService {
       const outputPath = path.join(TTS_CACHE_DIR, `tts_${cacheKey}.wav`);
       
       return new Promise((resolve) => {
-        // Use text2wave which works on headless servers
-        const text2wave = spawn('text2wave', ['-o', outputPath], { stdio: ['pipe', 'pipe', 'pipe'] });
+        // Use Coqui TTS with fast English model for radio announcements
+        const coquiTts = spawn('tts', [
+          '--text', text,
+          '--model_name', 'tts_models/en/ljspeech/fast_pitch',
+          '--out_path', outputPath
+        ], { stdio: ['pipe', 'pipe', 'pipe'] });
         
-        text2wave.stdin.write(text);
-        text2wave.stdin.end();
-        
-        text2wave.on('close', (code) => {
+        coquiTts.on('close', async (code) => {
           if (code === 0 && fs.existsSync(outputPath)) {
             this.ttsCache.set(cacheKey, outputPath);
-            logger.debug(`Generated TTS audio: ${outputPath}`);
-            resolve(outputPath);
+            const duration = await this.getAudioDuration(outputPath);
+            logger.debug(`Generated Coqui TTS audio: ${outputPath}, duration: ${duration}ms`);
+            resolve({ path: outputPath, duration });
           } else {
-            logger.debug(`TTS generation failed with code ${code}`);
+            logger.debug(`Coqui TTS failed with code ${code}`);
             resolve(null);
           }
         });
         
-        text2wave.on('error', () => {
+        coquiTts.on('error', () => {
           resolve(null);
         });
       });
     } catch (error) {
       return null;
     }
+  }
+
+  /**
+   * Get audio duration in milliseconds
+   */
+  private static async getAudioDuration(filePath: string): Promise<number> {
+    return new Promise((resolve) => {
+      const ffprobe = spawn('ffprobe', [
+        '-i', filePath,
+        '-show_entries', 'format=duration',
+        '-v', 'quiet',
+        '-of', 'csv=p=0'
+      ]);
+      
+      let output = '';
+      ffprobe.stdout.on('data', (data) => {
+        output += data.toString();
+      });
+      
+      ffprobe.on('close', () => {
+        const duration = parseFloat(output.trim()) || 3; // Default 3 seconds
+        resolve(duration * 1000); // Convert to milliseconds
+      });
+      
+      ffprobe.on('error', () => {
+        resolve(3000); // Fallback 3 seconds
+      });
+    });
   }
 
   /**
