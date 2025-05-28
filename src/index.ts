@@ -167,6 +167,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         author: interaction.user,
         guild: interaction.guild,
         channel: interaction.channel,
+        client: interaction.client, // Add the missing client property
         reply: async (content: any) => {
           return await interaction.followUp(content);
         }
