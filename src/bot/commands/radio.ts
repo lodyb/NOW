@@ -1449,13 +1449,13 @@ export const handleVoiceCommand = async (message: Message, voiceText?: string) =
   const statusMessage = await message.reply('🎙️ Generating voice clip...');
 
   try {
-    const processedText = await VoiceAnnouncementService.generateCustomAnnouncement(voiceText);
-    const ttsResult = await VoiceAnnouncementService.generateTTSAudio(processedText || voiceText);
+    // Skip AI processing and go directly to TTS
+    const ttsResult = await VoiceAnnouncementService.generateTTSAudio(voiceText);
     
     if (ttsResult && fs.existsSync(ttsResult.path)) {
       if ('send' in message.channel) {
         await message.channel.send({
-          content: `🎙️ Voice clip: "${processedText || voiceText}"`,
+          content: `🎙️ Voice clip: "${voiceText}"`,
           files: [{ attachment: ttsResult.path, name: 'voice_clip.wav' }]
         });
       }

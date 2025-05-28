@@ -513,6 +513,7 @@ client.on(Events.MessageCreate, async (message) => {
           break;
           
         case 'voice':
+        case 'tts':
           await handleVoiceCommand(message, commandArgs.searchTerm);
           await saveUserLastCommand(message.author.id, message.author.username, message.content);
           break;
