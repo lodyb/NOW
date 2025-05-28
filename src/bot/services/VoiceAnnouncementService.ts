@@ -67,55 +67,26 @@ export class VoiceAnnouncementService {
       }
 
       const outputPath = path.join(TTS_CACHE_DIR, `tts_${cacheKey}.wav`);
-      const tempWavPath = path.join(TTS_CACHE_DIR, `temp_${cacheKey}.wav`);
       
       return new Promise((resolve) => {
-        // Create festival script to output to file
-        const festivalScript = `
-(voice_kal_diphone)
-(utt.save.wave (SayText "${text.replace(/"/g, '\\"')}") "${tempWavPath}" 'riff)
-`;
+        // Use text2wave which works on headless servers
+        const text2wave = spawn('text2wave', ['-o', outputPath], { stdio: ['pipe', 'pipe', 'pipe'] });
         
-        const festival = spawn('festival', ['-b'], { stdio: ['pipe', 'pipe', 'pipe'] });
+        text2wave.stdin.write(text);
+        text2wave.stdin.end();
         
-        festival.stdin.write(festivalScript);
-        festival.stdin.end();
-        
-        festival.on('close', (code) => {
-          if (code === 0 && fs.existsSync(tempWavPath)) {
-            // Convert to proper format using ffmpeg
-            const ffmpeg = spawn('ffmpeg', [
-              '-i', tempWavPath,
-              '-ar', '44100',
-              '-ac', '1',
-              '-y',
-              outputPath
-            ]);
-            
-            ffmpeg.on('close', (ffmpegCode) => {
-              fs.unlink(tempWavPath, () => {}); // Clean up temp file
-              
-              if (ffmpegCode === 0 && fs.existsSync(outputPath)) {
-                this.ttsCache.set(cacheKey, outputPath);
-                logger.debug(`Generated TTS audio: ${outputPath}`);
-                resolve(outputPath);
-              } else {
-                logger.debug(`TTS conversion failed with code ${ffmpegCode}`);
-                resolve(null);
-              }
-            });
-            
-            ffmpeg.on('error', () => {
-              fs.unlink(tempWavPath, () => {});
-              resolve(null);
-            });
+        text2wave.on('close', (code) => {
+          if (code === 0 && fs.existsSync(outputPath)) {
+            this.ttsCache.set(cacheKey, outputPath);
+            logger.debug(`Generated TTS audio: ${outputPath}`);
+            resolve(outputPath);
           } else {
-            logger.debug(`Festival TTS failed with code ${code}`);
+            logger.debug(`TTS generation failed with code ${code}`);
             resolve(null);
           }
         });
         
-        festival.on('error', () => {
+        text2wave.on('error', () => {
           resolve(null);
         });
       });
