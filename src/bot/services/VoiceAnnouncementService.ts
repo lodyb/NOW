@@ -50,7 +50,7 @@ export class VoiceAnnouncementService {
   }
 
   /**
-   * Generate TTS audio from text using Coqui TTS and return duration
+   * Generate TTS audio from text using Coqui TTS Docker GPU and return duration
    */
   static async generateTTSAudio(text: string): Promise<{ path: string; duration: number } | null> {
     try {
@@ -73,40 +73,90 @@ export class VoiceAnnouncementService {
       }
 
       const outputPath = path.join(TTS_CACHE_DIR, `tts_${cacheKey}.wav`);
+      const dockerOutputPath = '/root/tts-output/output.wav';
       
       return new Promise((resolve) => {
-        const coquiTts = spawn(process.env.TTS_BINARY_PATH || 'tts', [
+        // Use Docker GPU version for faster TTS
+        const dockerTts = spawn('docker', [
+          'run', '--rm', '--gpus', 'all',
+          '-v', `${TTS_CACHE_DIR}:/root/tts-output`,
+          'ghcr.io/coqui-ai/tts',
           '--text', text,
           '--model_name', 'tts_models/en/ljspeech/tacotron2-DDC',
-          '--out_path', outputPath
+          '--out_path', dockerOutputPath,
+          '--use_cuda', 'true'
         ], { stdio: ['pipe', 'pipe', 'pipe'] });
         
         let stderr = '';
-        coquiTts.stderr.on('data', (data) => {
+        dockerTts.stderr.on('data', (data) => {
           stderr += data.toString();
         });
         
-        coquiTts.on('close', async (code) => {
-          if (code === 0 && fs.existsSync(outputPath)) {
+        dockerTts.on('close', async (code) => {
+          const tempOutputPath = path.join(TTS_CACHE_DIR, 'output.wav');
+          
+          if (code === 0 && fs.existsSync(tempOutputPath)) {
+            // Move from temp name to final name
+            fs.renameSync(tempOutputPath, outputPath);
             this.ttsCache.set(cacheKey, outputPath);
             const duration = await this.getAudioDuration(outputPath);
-            logger.debug(`Generated Coqui TTS audio: ${outputPath}, duration: ${duration}ms`);
+            logger.debug(`Generated Docker GPU TTS audio: ${outputPath}, duration: ${duration}ms`);
             resolve({ path: outputPath, duration });
           } else {
-            logger.debug(`Coqui TTS failed with code ${code} for text: "${text}"`);
+            logger.debug(`Docker TTS failed with code ${code} for text: "${text}"`);
             logger.debug(`TTS stderr: ${stderr}`);
-            resolve(null);
+            // Fallback to regular Python TTS
+            this.generateTTSAudioFallback(text, outputPath, cacheKey).then(resolve);
           }
         });
         
-        coquiTts.on('error', (error) => {
-          logger.debug(`TTS spawn error: ${error.message}`);
-          resolve(null);
+        dockerTts.on('error', (error) => {
+          logger.debug(`Docker TTS spawn error: ${error.message}, falling back to Python TTS`);
+          // Fallback to regular Python TTS
+          this.generateTTSAudioFallback(text, outputPath, cacheKey).then(resolve);
         });
       });
     } catch (error) {
       return null;
     }
+  }
+
+  /**
+   * Fallback TTS using Python command directly
+   */
+  private static async generateTTSAudioFallback(
+    text: string, 
+    outputPath: string, 
+    cacheKey: string
+  ): Promise<{ path: string; duration: number } | null> {
+    return new Promise((resolve) => {
+      const coquiTts = spawn(process.env.TTS_BINARY_PATH || 'tts', [
+        '--text', text,
+        '--model_name', 'tts_models/en/ljspeech/tacotron2-DDC',
+        '--out_path', outputPath
+      ], { stdio: ['pipe', 'pipe', 'pipe'] });
+      
+      let stderr = '';
+      coquiTts.stderr.on('data', (data) => {
+        stderr += data.toString();
+      });
+      
+      coquiTts.on('close', async (code) => {
+        if (code === 0 && fs.existsSync(outputPath)) {
+          this.ttsCache.set(cacheKey, outputPath);
+          const duration = await this.getAudioDuration(outputPath);
+          logger.debug(`Generated fallback TTS audio: ${outputPath}, duration: ${duration}ms`);
+          resolve({ path: outputPath, duration });
+        } else {
+          logger.debug(`Fallback TTS also failed with code ${code}`);
+          resolve(null);
+        }
+      });
+      
+      coquiTts.on('error', () => {
+        resolve(null);
+      });
+    });
   }
 
   /**
