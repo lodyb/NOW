@@ -81,6 +81,11 @@ export class VoiceAnnouncementService {
           '--out_path', outputPath
         ], { stdio: ['pipe', 'pipe', 'pipe'] });
         
+        let stderr = '';
+        coquiTts.stderr.on('data', (data) => {
+          stderr += data.toString();
+        });
+        
         coquiTts.on('close', async (code) => {
           if (code === 0 && fs.existsSync(outputPath)) {
             this.ttsCache.set(cacheKey, outputPath);
@@ -89,11 +94,13 @@ export class VoiceAnnouncementService {
             resolve({ path: outputPath, duration });
           } else {
             logger.debug(`Coqui TTS failed with code ${code} for text: "${text}"`);
+            logger.debug(`TTS stderr: ${stderr}`);
             resolve(null);
           }
         });
         
-        coquiTts.on('error', () => {
+        coquiTts.on('error', (error) => {
+          logger.debug(`TTS spawn error: ${error.message}`);
           resolve(null);
         });
       });
