@@ -40,6 +40,7 @@ interface RadioSession {
   currentTrackDuration: number;
   skipRequested: boolean; // Flag for skip handling
   voiceAnnouncementsEnabled: boolean; // New flag for voice announcements
+  introPlayed: boolean; // Track if intro has been played
 }
 
 interface EffectRender {
@@ -351,7 +352,8 @@ const startRadioSession = async (message: Message, voiceChannel: VoiceBasedChann
     playbackStartTime: 0,
     currentTrackDuration: 0,
     skipRequested: false,
-    voiceAnnouncementsEnabled: true, // Default to enabled
+    voiceAnnouncementsEnabled: true,
+    introPlayed: false, // Track if intro has been played
   };
   
   activeSessions.set(voiceChannel.guild.id, session);
@@ -450,6 +452,32 @@ const playNext = async (session: RadioSession, channel: any) => {
       } catch (error) {
         logger.debug('Failed to generate voice announcement');
         // Continue without announcement
+      }
+    }
+    
+    // Play intro announcement if not played yet
+    if (!session.introPlayed) {
+      session.introPlayed = true;
+      
+      try {
+        const introText = await VoiceAnnouncementService.generateRadioIntro();
+        if (introText) {
+          const ttsPath = await VoiceAnnouncementService.generateTTSAudio(introText);
+          if (ttsPath) {
+            const introEffect: EffectRender = {
+              type: 'voice_announcement',
+              filePath: ttsPath,
+              duration: 4000,
+              onComplete: () => {
+                logger.debug('Radio intro completed');
+              }
+            };
+            
+            session.effectQueue.push(introEffect);
+          }
+        }
+      } catch (error) {
+        logger.debug('Failed to generate radio intro');
       }
     }
     
@@ -1120,4 +1148,76 @@ export const handleAnnouncementsCommand = async (message: Message, action?: stri
   
   // Clean up TTS cache when toggling
   VoiceAnnouncementService.cleanupTTSCache();
+};
+
+export const handleAnnounceCommand = async (message: Message, announceText?: string) => {
+  if (!announceText) {
+    await message.reply('Please provide text for the announcement. Example: `NOW announce Welcome to our show!`');
+    return;
+  }
+
+  if (!message.guild || !activeSessions.has(message.guild.id)) {
+    await message.reply('No radio session active. Start one with `NOW radio`');
+    return;
+  }
+
+  const session = activeSessions.get(message.guild.id)!;
+
+  try {
+    const announcementText = await VoiceAnnouncementService.generateCustomAnnouncement(announceText);
+    
+    if (announcementText) {
+      const ttsPath = await VoiceAnnouncementService.generateTTSAudio(announcementText);
+      
+      if (ttsPath) {
+        const customEffect: EffectRender = {
+          type: 'voice_announcement',
+          filePath: ttsPath,
+          duration: 6000,
+          onComplete: () => {
+            logger.debug('Custom announcement completed');
+          }
+        };
+        
+        session.effectQueue.push(customEffect);
+        await message.reply(`📢 Queued announcement: "${announcementText}"`);
+      } else {
+        await message.reply('❌ Failed to generate voice clip');
+      }
+    } else {
+      await message.reply('❌ Failed to process announcement text');
+    }
+  } catch (error) {
+    logger.error('Error handling announce command');
+    await message.reply('❌ Failed to create announcement');
+  }
+};
+
+export const handleVoiceCommand = async (message: Message, voiceText?: string) => {
+  if (!voiceText) {
+    await message.reply('Please provide text for the voice clip. Example: `NOW voice Hello everyone!`');
+    return;
+  }
+
+  const statusMessage = await message.reply('🎙️ Generating voice clip...');
+
+  try {
+    const processedText = await VoiceAnnouncementService.generateCustomAnnouncement(voiceText);
+    const ttsPath = await VoiceAnnouncementService.generateTTSAudio(processedText || voiceText);
+    
+    if (ttsPath && fs.existsSync(ttsPath)) {
+      if ('send' in message.channel) {
+        await message.channel.send({
+          content: `🎙️ Voice clip: "${processedText || voiceText}"`,
+          files: [{ attachment: ttsPath, name: 'voice_clip.wav' }]
+        });
+      }
+      await statusMessage.delete();
+    } else {
+      await statusMessage.edit('❌ Failed to generate voice clip');
+    }
+  } catch (error) {
+    logger.error('Error handling voice command');
+    await statusMessage.edit('❌ Failed to create voice clip');
+  }
 };

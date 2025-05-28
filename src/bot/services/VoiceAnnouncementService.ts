@@ -119,6 +119,65 @@ export class VoiceAnnouncementService {
     }
   }
 
+  /**
+   * Generate a radio intro announcement using AI
+   */
+  static async generateRadioIntro(): Promise<string | null> {
+    try {
+      const prompts = [
+        'You\'re starting a radio show. Give a quick 10-word energetic intro announcement.',
+        'You\'re a radio DJ going live. Make a brief 8-word welcome announcement.',
+        'Radio station starting up. Give a short 12-word catchy intro.',
+        'You\'re launching a music stream. Make a punchy 10-word opening announcement.'
+      ];
+      
+      const prompt = prompts[Math.floor(Math.random() * prompts.length)] + ' Be conversational and natural. No quotes or formatting.';
+      
+      const response = await runInference(prompt);
+      
+      if (response && response.text && response.text.trim()) {
+        let announcement = response.text.trim()
+          .replace(/^["']|["']$/g, '')
+          .replace(/\n/g, ' ')
+          .substring(0, 150);
+        
+        logger.debug(`Generated radio intro: ${announcement}`);
+        return announcement;
+      }
+      
+      return null;
+    } catch (error) {
+      logger.error('Failed to generate radio intro');
+      return null;
+    }
+  }
+
+  /**
+   * Generate a custom announcement from user text
+   */
+  static async generateCustomAnnouncement(text: string): Promise<string | null> {
+    try {
+      const prompt = `You're a radio DJ. Take this request: "${text}" and make it sound like a professional radio announcement in 20 words or less. Be conversational and natural. No quotes or formatting.`;
+      
+      const response = await runInference(prompt);
+      
+      if (response && response.text && response.text.trim()) {
+        let announcement = response.text.trim()
+          .replace(/^["']|["']$/g, '')
+          .replace(/\n/g, ' ')
+          .substring(0, 250);
+        
+        logger.debug(`Generated custom announcement: ${announcement}`);
+        return announcement;
+      }
+      
+      return text; // Fallback to original text
+    } catch (error) {
+      logger.error('Failed to generate custom announcement');
+      return text; // Fallback to original text
+    }
+  }
+
   private static getMediaTitle(media: any): string {
     if (!media) return 'unknown track';
     
