@@ -439,6 +439,18 @@ const handleTrackEnd = async (session: RadioSession, channel: any) => {
     playNext(session, channel);
   } else {
     logger.debug('Track ended but already processing/transitioning, skipping playNext');
+    
+    // Add safety timeout to prevent permanent stuck state
+    const recoveryTimeout = setTimeout(() => {
+      if (session.isActive && session.isTransitioning) {
+        logger.debug('Recovery timeout: forcing transition reset');
+        session.isTransitioning = false;
+        session.isProcessingNext = false;
+        playNext(session, channel);
+      }
+    }, 10000); // 10 second recovery timeout
+    
+    session.pendingTimeouts.push(recoveryTimeout);
   }
 };
 
