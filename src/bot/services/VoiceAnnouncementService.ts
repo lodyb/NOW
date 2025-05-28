@@ -77,7 +77,7 @@ export class VoiceAnnouncementService {
       return new Promise((resolve) => {
         const coquiTts = spawn(process.env.TTS_BINARY_PATH || 'tts', [
           '--text', text,
-          '--model_name', 'tts_models/ja/kokoro/tacotron2-DDC',
+          '--model_name', 'tts_models/en/ljspeech/tacotron2-DDC',
           '--out_path', outputPath
         ], { stdio: ['pipe', 'pipe', 'pipe'] });
         
