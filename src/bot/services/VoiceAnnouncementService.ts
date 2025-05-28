@@ -63,8 +63,20 @@ export class VoiceAnnouncementService {
         return null;
       }
       
+      // Sanitize text for TTS - remove problematic characters
+      const sanitizedText = text
+        .replace(/[🎵🎶🎤🎧🎼🎹🥁🎺🎸🎻📻🔊🔉🔈❤️💖⭐✨🌟🎮🎯🎪🎭🎨🎬📺📱💻🖥️🙄😎🤖]/g, '') // Remove emojis
+        .replace(/[^\w\s\.,!?'-]/g, '') // Keep only safe characters
+        .replace(/\s+/g, ' ') // Normalize whitespace
+        .trim();
+      
+      if (!sanitizedText) {
+        logger.debug('Text became empty after sanitization');
+        return null;
+      }
+      
       // Check cache first
-      const cacheKey = crypto.createHash('md5').update(text).digest('hex');
+      const cacheKey = crypto.createHash('md5').update(sanitizedText).digest('hex');
       
       if (this.ttsCache.has(cacheKey)) {
         const cachedPath = this.ttsCache.get(cacheKey)!;
@@ -79,11 +91,11 @@ export class VoiceAnnouncementService {
       const outputPath = path.join(TTS_CACHE_DIR, `tts_${cacheKey}.wav`);
       
       try {
-        // Use HTTP request to persistent TTS server with timeout
+        // Use HTTP request to persistent TTS server with shorter timeout
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
+        const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 second timeout
         
-        const response = await fetch(`http://localhost:5002/api/tts?text=${encodeURIComponent(text)}`, {
+        const response = await fetch(`http://localhost:5002/api/tts?text=${encodeURIComponent(sanitizedText)}`, {
           method: 'GET',
           headers: { 
             'Accept': 'audio/wav',
@@ -104,23 +116,23 @@ export class VoiceAnnouncementService {
             logger.debug(`Generated TTS audio via server: ${outputPath}, duration: ${duration}ms`);
             return { path: outputPath, duration };
           } else {
-            logger.debug('TTS server returned empty response');
-            return this.generateTTSAudioFallback(text, outputPath, cacheKey);
+            logger.debug('TTS server returned empty response, trying fallback');
+            return this.generateTTSAudioFallback(sanitizedText, outputPath, cacheKey);
           }
         } else {
-          const errorText = await response.text().catch(() => 'Unknown error');
-          logger.debug(`TTS server request failed with status ${response.status}: ${errorText}`);
-          return this.generateTTSAudioFallback(text, outputPath, cacheKey);
+          logger.debug(`TTS server failed (${response.status}), trying fallback`);
+          return this.generateTTSAudioFallback(sanitizedText, outputPath, cacheKey);
         }
       } catch (error) {
         if ((error as { name?: string }).name === 'AbortError') {
-          logger.debug('TTS server request timed out, falling back to Python TTS');
+          logger.debug('TTS server timed out, trying fallback');
         } else {
-          logger.debug(`TTS server error: ${error}, falling back to Python TTS`);
+          logger.debug(`TTS server error: ${(error as Error).message}, trying fallback`);
         }
-        return this.generateTTSAudioFallback(text, outputPath, cacheKey);
+        return this.generateTTSAudioFallback(sanitizedText, outputPath, cacheKey);
       }
     } catch (error) {
+      logger.error('TTS generation failed completely', error);
       return null;
     }
   }
