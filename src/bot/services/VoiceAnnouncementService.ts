@@ -69,20 +69,59 @@ export class VoiceAnnouncementService {
       const outputPath = path.join(TTS_CACHE_DIR, `tts_${cacheKey}.wav`);
       
       return new Promise((resolve) => {
-        const say = spawn('say', ['-o', outputPath, text]);
+        // Use festival for Linux TTS
+        const festival = spawn('festival', ['--tts'], { stdio: ['pipe', 'pipe', 'pipe'] });
         
-        say.on('close', (code) => {
-          if (code === 0 && fs.existsSync(outputPath)) {
-            this.ttsCache.set(cacheKey, outputPath);
-            logger.debug(`Generated TTS audio: ${outputPath}`);
-            resolve(outputPath);
+        // Write text to festival stdin
+        festival.stdin.write(text);
+        festival.stdin.end();
+        
+        // Capture audio output and save to file
+        const audioChunks: Buffer[] = [];
+        
+        festival.stdout.on('data', (chunk) => {
+          audioChunks.push(chunk);
+        });
+        
+        festival.on('close', (code) => {
+          if (code === 0 && audioChunks.length > 0) {
+            // Convert festival output to wav using ffmpeg
+            const tempPath = path.join(TTS_CACHE_DIR, `temp_${cacheKey}.raw`);
+            fs.writeFileSync(tempPath, Buffer.concat(audioChunks));
+            
+            const ffmpeg = spawn('ffmpeg', [
+              '-f', 's16le',
+              '-ar', '16000',
+              '-ac', '1',
+              '-i', tempPath,
+              '-y',
+              outputPath
+            ]);
+            
+            ffmpeg.on('close', (ffmpegCode) => {
+              fs.unlinkSync(tempPath); // Clean up temp file
+              
+              if (ffmpegCode === 0 && fs.existsSync(outputPath)) {
+                this.ttsCache.set(cacheKey, outputPath);
+                logger.debug(`Generated TTS audio: ${outputPath}`);
+                resolve(outputPath);
+              } else {
+                logger.debug(`TTS conversion failed with code ${ffmpegCode}`);
+                resolve(null);
+              }
+            });
+            
+            ffmpeg.on('error', () => {
+              fs.unlink(tempPath, () => {});
+              resolve(null);
+            });
           } else {
-            logger.debug(`TTS generation failed with code ${code}`);
+            logger.debug(`Festival TTS failed with code ${code}`);
             resolve(null);
           }
         });
         
-        say.on('error', () => {
+        festival.on('error', () => {
           resolve(null);
         });
       });
