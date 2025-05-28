@@ -20,6 +20,7 @@ import crypto from 'crypto';
 import fetch from 'node-fetch';
 import { Stream } from 'stream';
 import { promisify } from 'util';
+import { VoiceAnnouncementService } from '../services/VoiceAnnouncementService';
 
 interface RadioSession {
   guildId: string;
@@ -38,10 +39,11 @@ interface RadioSession {
   playbackStartTime: number;
   currentTrackDuration: number;
   skipRequested: boolean; // Flag for skip handling
+  voiceAnnouncementsEnabled: boolean; // New flag for voice announcements
 }
 
 interface EffectRender {
-  type: 'rewind' | 'filter_transition' | 'crossfade';
+  type: 'rewind' | 'filter_transition' | 'crossfade' | 'voice_announcement';
   filePath: string;
   duration: number;
   onComplete?: () => void;
@@ -349,6 +351,7 @@ const startRadioSession = async (message: Message, voiceChannel: VoiceBasedChann
     playbackStartTime: 0,
     currentTrackDuration: 0,
     skipRequested: false,
+    voiceAnnouncementsEnabled: true, // Default to enabled
   };
   
   activeSessions.set(voiceChannel.guild.id, session);
@@ -415,6 +418,38 @@ const playNext = async (session: RadioSession, channel: any) => {
         filePath = await getOrCreateFilteredVersion(nextMedia, session.nextFilters);
       } else {
         filePath = await getNormalizedAudioPath(nextMedia);
+      }
+    }
+    
+    // Generate voice announcement if enabled and we have a current track
+    if (session.voiceAnnouncementsEnabled && session.currentMedia) {
+      try {
+        const announcementText = await VoiceAnnouncementService.generateRadioAnnouncement(
+          session.currentMedia,
+          nextMedia,
+          session.currentFilters.length > 0 ? `Filters: ${session.currentFilters.join(', ')}` : undefined
+        );
+        
+        if (announcementText) {
+          const ttsPath = await VoiceAnnouncementService.generateTTSAudio(announcementText);
+          
+          if (ttsPath) {
+            // Queue the voice announcement before the next track
+            const voiceEffect: EffectRender = {
+              type: 'voice_announcement',
+              filePath: ttsPath,
+              duration: 5000, // 5 seconds max
+              onComplete: () => {
+                logger.debug('Voice announcement completed');
+              }
+            };
+            
+            session.effectQueue.push(voiceEffect);
+          }
+        }
+      } catch (error) {
+        logger.debug('Failed to generate voice announcement');
+        // Continue without announcement
       }
     }
     
@@ -1057,4 +1092,32 @@ const extractMediaFromAttachment = async (attachment: any) => {
     isTemporary: true,
     answers: [{ answer: title }]
   };
+};
+
+export const handleAnnouncementsCommand = async (message: Message, action?: string) => {
+  if (!message.guild || !activeSessions.has(message.guild.id)) {
+    await message.reply('No radio session active. Start one with `NOW radio`');
+    return;
+  }
+  
+  const session = activeSessions.get(message.guild.id)!;
+  
+  if (!action || action === 'status') {
+    const status = session.voiceAnnouncementsEnabled ? 'enabled' : 'disabled';
+    await message.reply(`📢 Voice announcements are currently **${status}**`);
+    return;
+  }
+  
+  if (action === 'on' || action === 'enable') {
+    session.voiceAnnouncementsEnabled = true;
+    await message.reply('📢 Voice announcements enabled! AI will now generate quirky radio host clips between tracks');
+  } else if (action === 'off' || action === 'disable') {
+    session.voiceAnnouncementsEnabled = false;
+    await message.reply('📢 Voice announcements disabled');
+  } else {
+    await message.reply('Use `NOW announcements on/off` to toggle voice announcements');
+  }
+  
+  // Clean up TTS cache when toggling
+  VoiceAnnouncementService.cleanupTTSCache();
 };
