@@ -432,6 +432,9 @@ const playNext = async (session: RadioSession, channel: any) => {
       } catch (error) {
         logger.debug('Failed to generate radio intro, continuing with first track');
       }
+      
+      // If intro TTS failed, start first track immediately
+      prepareFirstTrack(session, channel);
     }
     
     let nextItem = session.nextItem;
