@@ -1361,21 +1361,16 @@ export const handleAnnounceCommand = async (message: Message, announceText?: str
   const session = activeSessions.get(message.guild.id)!;
 
   try {
-    const announcementText = await VoiceAnnouncementService.generateCustomAnnouncement(announceText);
+    // Use the exact text without AI processing
+    const announcementItem: QueueItem = {
+      type: 'announcement',
+      id: `announce_${Date.now()}`,
+      text: announceText,
+      isProcessed: false
+    };
     
-    if (announcementText) {
-      const announcementItem: QueueItem = {
-        type: 'announcement',
-        id: `announce_${Date.now()}`,
-        text: announcementText,
-        isProcessed: false
-      };
-      
-      session.queue.push(announcementItem);
-      await message.reply(`📢 Queued announcement: "${announcementText}"`);
-    } else {
-      await message.reply('❌ Failed to process announcement text');
-    }
+    session.queue.push(announcementItem);
+    await message.reply(`📢 Queued announcement: "${announceText}"`);
   } catch (error) {
     logger.error('Error handling announce command');
     await message.reply('❌ Failed to create announcement');
